@@ -14,6 +14,7 @@ import (
 	authService "github.com/ganasa18/go-template/internal/auth/service"
 	"github.com/ganasa18/go-template/internal/base/app"
 	"github.com/ganasa18/go-template/pkg/logger"
+	"github.com/ganasa18/go-template/pkg/secret"
 	"github.com/ganasa18/go-template/pkg/validator"
 )
 
@@ -46,7 +47,8 @@ func (h *HTTPHandler) Register(appCtx *app.Context) *app.CostumeResponse {
 		}
 	}
 
-	if err := h.auth.Register(appCtx.Request.Context(), req); err != nil {
+	user, err := h.auth.Register(appCtx.Request.Context(), req)
+	if err != nil {
 		return app.NewError(appCtx, err)
 	}
 
@@ -54,6 +56,12 @@ func (h *HTTPHandler) Register(appCtx *app.Context) *app.CostumeResponse {
 		RequestID: appCtx.APIReqID,
 		Status:    http.StatusCreated,
 		Message:   "registration successful",
+		Data: models.RegisterResponse{
+			ID:        user.UUID,
+			Username:  user.Username,
+			Email:     user.Email,
+			CreatedAt: user.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		},
 	}
 }
 
@@ -79,7 +87,7 @@ func (h *HTTPHandler) Login(appCtx *app.Context) *app.CostumeResponse {
 	pair, err := h.auth.Login(appCtx.Request.Context(), req)
 	if err != nil {
 		logger.FromContext(appCtx.Request.Context()).Error("login failed",
-			slog.String("email", req.Email),
+			slog.String("email", secret.MaskEmail(req.Email)),
 			slog.Any("error", err),
 		)
 		return app.NewError(appCtx, err)

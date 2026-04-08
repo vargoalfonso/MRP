@@ -40,3 +40,11 @@ type RegisterRequest struct {
 	Email    string `json:"email"    validate:"required,email"`
 	Password string `json:"password" validate:"required,min=6"`
 }
+
+// RegisterResponse is returned after a successful registration.
+type RegisterResponse struct {
+	ID        string `json:"id"`
+	Username  string `json:"username"`
+	Email     string `json:"email"`
+	CreatedAt string `json:"created_at"`
+}

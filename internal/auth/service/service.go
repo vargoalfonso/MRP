@@ -15,8 +15,8 @@ import (
 // Authenticator is the single interface for all JWT operations.
 // Stateless mode leaves RefreshTokens returning an error and RevokeToken a no-op.
 type Authenticator interface {
-	// Register creates a new local user account.
-	Register(ctx context.Context, req models.RegisterRequest) error
+	// Register creates a new local user account and returns the created user.
+	Register(ctx context.Context, req models.RegisterRequest) (*models.User, error)
 
 	// Login validates credentials and returns a token pair.
 	Login(ctx context.Context, req models.LoginRequest) (*models.TokenPair, error)

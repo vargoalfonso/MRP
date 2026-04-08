@@ -31,7 +31,7 @@ func newStateful(cfg *config.Config, repo authRepo.IRepository, rdb *redis.Clien
 
 func (s *stateful) Mode() string { return "stateful" }
 
-func (s *stateful) Register(ctx context.Context, req models.RegisterRequest) error {
+func (s *stateful) Register(ctx context.Context, req models.RegisterRequest) (*models.User, error) {
 	return registerUser(ctx, s.repo, req)
 }
 

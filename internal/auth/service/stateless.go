@@ -24,7 +24,7 @@ func newStateless(cfg *config.Config, repo authRepo.IRepository) Authenticator {
 
 func (s *stateless) Mode() string { return "stateless" }
 
-func (s *stateless) Register(ctx context.Context, req models.RegisterRequest) error {
+func (s *stateless) Register(ctx context.Context, req models.RegisterRequest) (*models.User, error) {
 	return registerUser(ctx, s.repo, req)
 }
 
