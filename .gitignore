@@ -1,0 +1,36 @@
+# Environment files — never commit real secrets
+.env
+.env.docker
+.env.local
+.env.*.local
+
+# Keep the example safe for git
+!.env.example
+
+# Build output
+bin/
+dist/
+*.exe
+*.out
+
+# Go
+vendor/
+*.test
+*.prof
+coverage.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp / logs
+tmp/
+temp/
+*.log

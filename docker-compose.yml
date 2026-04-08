@@ -1,0 +1,76 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: ci/Dockerfile
+      args:
+        APP_NAME: go-template
+    container_name: go-template-app
+    restart: unless-stopped
+    ports:
+      - "8899:8899"
+    environment:
+      _DEBUG: "no"
+    volumes:
+      # startup.sh di dalam container akan:
+      #   1. cp ci/env.conf → temp/env.conf (template production, sudah di-bake ke image)
+      #   2. Cek /opt/secret-volume → tidak ada (local dev)
+      #   3. Cek apakah .env sudah ada → sudah ada (dari mount ini) → skip overwrite
+      #   4. Jalankan binary
+      #
+      # Untuk production (Kubernetes): hapus volume ini, isi /opt/secret-volume/ dengan secret.
+      - ./.env.docker:/opt/app/go-template/.env:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - go-template-net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: go-template-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: go_template_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/migrations/00_init.sql:/docker-entrypoint-initdb.d/00_init.sql:ro
+      - ./scripts/migrations:/docker-entrypoint-initdb.d/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - go-template-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: go-template-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - go-template-net
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  go-template-net:
+    driver: bridge
