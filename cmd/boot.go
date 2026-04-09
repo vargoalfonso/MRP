@@ -5,15 +5,17 @@ import (
 	"log/slog"
 
 	appconf "github.com/ganasa18/go-template/config"
+	"github.com/ganasa18/go-template/http/server"
+	authModule "github.com/ganasa18/go-template/internal/auth"
 	authHandler "github.com/ganasa18/go-template/internal/auth/handler"
 	authRepository "github.com/ganasa18/go-template/internal/auth/repository"
 	authService "github.com/ganasa18/go-template/internal/auth/service"
+	baseModule "github.com/ganasa18/go-template/internal/base"
 	baseHandler "github.com/ganasa18/go-template/internal/base/handler"
-	"github.com/ganasa18/go-template/http/server"
+	appmodule "github.com/ganasa18/go-template/internal/module"
 )
 
-// initHTTP wires all dependencies and starts the HTTP server.
-// The *server.Server is returned so the caller can call Shutdown on signal.
+// initHTTP wires every module inside the modular monolith and returns an HTTP server.
 func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	// --- Database ---
 	db, err := appconf.NewDatabase(cfg)
@@ -38,18 +40,15 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		authSvc = authService.New(cfg, authRepo, nil)
 	}
 
-	// --- Handlers ---
-	// Tambah handler domain baru ke Handlers struct di http/server/router.go,
-	// lalu wire di sini — server.go tidak perlu disentuh.
-	h := &server.Handlers{
-		Base:          baseHandler.NewBaseHTTPHandler(db),
-		Auth:          authHandler.New(authSvc),
-		Authenticator: authSvc,
+	baseHTTPHandler := baseHandler.NewBaseHTTPHandler(db)
+	authHTTPHandler := authHandler.New(authSvc)
 
-		// Employee: employeeHandler.NewHTTPHandler(employeeSvc),
+	modules := []appmodule.HTTPModule{
+		baseModule.NewHTTPModule(baseHTTPHandler),
+		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
 	}
 
 	// --- Server ---
-	srv := server.New(cfg, h)
+	srv := server.New(cfg, modules)
 	return srv, nil
 }

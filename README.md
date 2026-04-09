@@ -1,6 +1,6 @@
 # go-template
 
-Production-ready Go REST API template using Gin + GORM with JWT authentication, structured logging, and clean architecture.
+Production-ready Go REST API template with a modular monolith structure, clean architecture boundaries, and JWT authentication using Gin + GORM.
 
 ## Stack
 
@@ -189,19 +189,20 @@ Switch mode with `JWT_MODE=stateless` in `.env`.
 go-template/
 ├── cmd/                    # Cobra CLI commands
 │   ├── http.go             # `http` subcommand — starts server
-│   └── boot.go             # Dependency injection / wiring
+│   └── boot.go             # Dependency injection / module composition
 ├── config/                 # Config loading + DB/Redis/Logger init
-├── http/server/
-│   ├── server.go           # HTTP server lifecycle (Start/Shutdown)
-│   └── router.go           # Route registration + Handlers struct
+├── http/server/            # Shared HTTP server bootstrap + module registry
+├── internal/module/        # Common module contracts
 ├── internal/
-│   ├── auth/               # Auth domain
+│   ├── auth/               # Auth module
+│   │   ├── module.go       # Auth route registration
 │   │   ├── handler/        # HTTP handlers (Register, Login, Refresh, Logout)
 │   │   ├── middleware/      # JWT middleware
-│   │   ├── models/         # User model, Token types, Request DTOs
-│   │   ├── repository/     # DB queries
-│   │   └── service/        # stateful.go / stateless.go / register.go
-│   └── base/
+│   │   ├── models/         # Entities + request/response DTOs
+│   │   ├── repository/     # Persistence adapter
+│   │   └── service/        # Use cases + auth policy
+│   └── base/               # Shared delivery helpers
+│       ├── module.go       # Health route registration
 │       ├── app/            # Context (request_id) + CostumeResponse envelope
 │       └── handler/        # RunAction wrapper (logging, panic recovery)
 ├── pkg/
@@ -220,42 +221,38 @@ go-template/
 
 ---
 
-## Adding a New Domain
+## Adding a New Module
 
 Three files to touch:
 
-1. **Create your handler/service/repository** under `internal/{domain}/`
+1. **Create your module folders** under `internal/{domain}/` with clear layers:
+  - `models/` for entities and DTOs
+  - `repository/` for data access adapters
+  - `service/` for use cases
+  - `handler/` for HTTP delivery
 
-2. **Register in `http/server/router.go`** — add to `Handlers` struct and wire routes:
-   ```go
-   type Handlers struct {
-       Base          *baseHandler.BaseHTTPHandler
-       Auth          *authHandler.HTTPHandler
-       Authenticator authService.Authenticator
-       // Add here:
-       Product *productHandler.HTTPHandler
-   }
-   ```
-   ```go
-   // In setupRoutes():
-   protected.GET("/products", h.Base.RunAction(h.Product.GetAll))
-   ```
+2. **Add `module.go` in `internal/{domain}/`** to register routes for that bounded context:
+  ```go
+  type HTTPModule struct {
+     base    *baseHandler.BaseHTTPHandler
+     handler *productHandler.HTTPHandler
+  }
+  ```
 
-3. **Wire in `cmd/boot.go`**:
-   ```go
-   productRepo := productRepository.New(db)
-   productSvc  := productService.New(productRepo)
-   productH    := productHandler.New(productSvc)
+3. **Compose it in `cmd/boot.go`**:
+  ```go
+  productRepo := productRepository.New(db)
+  productSvc := productService.New(productRepo)
+  productHandler := productHandler.New(productSvc)
 
-   return server.New(cfg, &server.Handlers{
-       Base:          baseH,
-       Auth:          authH,
-       Authenticator: authSvc,
-       Product:       productH,
-   })
-   ```
+  modules := []module.HTTPModule{
+     baseModule.NewHTTPModule(baseHTTPHandler),
+     authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
+     productModule.NewHTTPModule(baseHTTPHandler, productHandler),
+  }
+  ```
 
-`server.go` never needs to change.
+`http/server` stays unchanged because route ownership lives inside each module.
 
 ---
 

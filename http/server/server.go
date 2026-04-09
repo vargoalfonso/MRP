@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ganasa18/go-template/config"
+	appmodule "github.com/ganasa18/go-template/internal/module"
 	"github.com/ganasa18/go-template/pkg/middleware"
 	"github.com/gin-gonic/gin"
 )
@@ -19,11 +20,8 @@ type Server struct {
 }
 
 // New builds the Gin engine with the global middleware stack, registers all
-// routes (via router.go), then wraps it in an http.Server with configured timeouts.
-//
-// To add a new domain handler: add it to Handlers in router.go, wire it in
-// boot.go, then add the route in setupRoutes — this file never needs to change.
-func New(cfg *config.Config, h *Handlers) *Server {
+// module routes, then wraps it in an http.Server with configured timeouts.
+func New(cfg *config.Config, modules []appmodule.HTTPModule) *Server {
 	if cfg.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -49,8 +47,8 @@ func New(cfg *config.Config, h *Handlers) *Server {
 		c.Next()
 	})
 
-	// ── Routes (see router.go) ───────────────────────────────────────────────
-	setupRoutes(r, cfg, h)
+	// ── Routes (registered by each module) ──────────────────────────────────
+	setupRoutes(r, modules)
 
 	return &Server{
 		httpServer: &http.Server{
