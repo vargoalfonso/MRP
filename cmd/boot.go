@@ -6,6 +6,10 @@ import (
 
 	appconf "github.com/ganasa18/go-template/config"
 	"github.com/ganasa18/go-template/http/server"
+	userModule "github.com/ganasa18/go-template/internal/access_control"
+	userHandler "github.com/ganasa18/go-template/internal/access_control/handler"
+	userRepository "github.com/ganasa18/go-template/internal/access_control/repository"
+	userService "github.com/ganasa18/go-template/internal/access_control/service"
 	authModule "github.com/ganasa18/go-template/internal/auth"
 	authHandler "github.com/ganasa18/go-template/internal/auth/handler"
 	authRepository "github.com/ganasa18/go-template/internal/auth/repository"
@@ -46,19 +50,19 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 
 	// --- Redis (only required for stateful JWT mode) ---
 	var authSvc authService.Authenticator
-	if cfg.IsStateful() {
-		rdb, err := appconf.NewRedis(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("redis init: %w", err)
-		}
-		slog.Info("redis connected", slog.String("addr", cfg.RedisHost+":"+cfg.RedisPort))
+	// if cfg.IsStateful() {
+	// 	rdb, err := appconf.NewRedis(cfg)
+	// 	if err != nil {
+	// 		return nil, fmt.Errorf("redis init: %w", err)
+	// 	}
+	// 	slog.Info("redis connected", slog.String("addr", cfg.RedisHost+":"+cfg.RedisPort))
 
-		authRepo := authRepository.New(db)
-		authSvc = authService.New(cfg, authRepo, rdb)
-	} else {
-		authRepo := authRepository.New(db)
-		authSvc = authService.New(cfg, authRepo, nil)
-	}
+	// 	authRepo := authRepository.New(db)
+	// 	authSvc = authService.New(cfg, authRepo, rdb)
+	// } else {
+	// }
+	authRepo := authRepository.New(db)
+	authSvc = authService.New(cfg, authRepo, nil)
 
 	roleRepo := roleRepository.New(db)
 	roleSvc := roleService.New(roleRepo)
@@ -74,6 +78,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	employeeRepo := employeeRepository.New(db)
 	employeeSvc := employeeService.New(employeeRepo)
 	employeeHTTPHandler := employeeHandler.New(employeeSvc)
+
+	userRepo := userRepository.New(db)
+	userSvc := userService.New(userRepo, roleRepo, authRepo, employeeRepo, departementRepo)
+	userHTTPHandler := userHandler.New(userSvc, authSvc)
 
 	// BOM module
 	bomRepo := bomRepository.New(db)
@@ -93,6 +101,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		roleModule.NewHTTPModule(cfg, baseHTTPHandler, roleHTTPHandler, authSvc, roleSvc),
 		departementModule.NewHTTPModule(cfg, baseHTTPHandler, departementHTTPHandler, authSvc, roleSvc, departementSvc),
 		employeeModule.NewHTTPModule(cfg, baseHTTPHandler, employeeHTTPHandler, authSvc, roleSvc, employeeSvc),
+		userModule.NewHTTPModule(cfg, baseHTTPHandler, userHTTPHandler, authSvc, roleSvc, userSvc),
 	}
 
 	// --- Server ---

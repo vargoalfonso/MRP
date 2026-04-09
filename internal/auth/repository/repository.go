@@ -13,6 +13,8 @@ type IRepository interface {
 	FindByEmail(ctx context.Context, email string) (*models.User, error)
 	FindByUUID(ctx context.Context, uuid string) (*models.User, error)
 	Create(ctx context.Context, user *models.User) error
+	Update(ctx context.Context, id int64, user *models.User) error
+	Delete(ctx context.Context, email string) error
 }
 
 type repository struct {
@@ -54,4 +56,17 @@ func (r *repository) Create(ctx context.Context, user *models.User) error {
 		return apperror.InternalWrap("Create user failed", err)
 	}
 	return nil
+}
+
+func (r *repository) Update(ctx context.Context, id int64, user *models.User) error {
+	if err := r.db.WithContext(ctx).Where("id = ?", id).Save(user).Error; err != nil {
+		return apperror.InternalWrap("Update user failed", err)
+	}
+	return nil
+}
+
+func (r *repository) Delete(ctx context.Context, email string) error {
+	return r.db.WithContext(ctx).
+		Where("email = ?", email).
+		Delete(&models.User{}).Error
 }
