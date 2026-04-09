@@ -10,10 +10,10 @@ import (
 
 type IRoleRepository interface {
 	FindAll(ctx context.Context) ([]models.Role, error)
-	FindByID(ctx context.Context, id string) (*models.Role, error)
+	FindByID(ctx context.Context, id int64) (*models.Role, error)
 	Create(ctx context.Context, req models.CreateRoleRequest) (*models.Role, error)
-	Update(ctx context.Context, id string, req models.UpdateRoleRequest) (*models.Role, error)
-	Delete(ctx context.Context, id string) error
+	Update(ctx context.Context, id int64, req models.UpdateRoleRequest) (*models.Role, error)
+	Delete(ctx context.Context, id int64) error
 
 	GetPermissionsByRole(ctx context.Context, roleName string) (map[string]interface{}, error)
 }
@@ -37,7 +37,7 @@ func (r *repository) FindAll(ctx context.Context) ([]models.Role, error) {
 	return roles, nil
 }
 
-func (r *repository) FindByID(ctx context.Context, id string) (*models.Role, error) {
+func (r *repository) FindByID(ctx context.Context, id int64) (*models.Role, error) {
 	var role models.Role
 
 	err := r.db.WithContext(ctx).
@@ -72,7 +72,7 @@ func (r *repository) Create(ctx context.Context, req models.CreateRoleRequest) (
 	return &role, nil
 }
 
-func (r *repository) Update(ctx context.Context, id string, req models.UpdateRoleRequest) (*models.Role, error) {
+func (r *repository) Update(ctx context.Context, id int64, req models.UpdateRoleRequest) (*models.Role, error) {
 	var role models.Role
 
 	err := r.db.WithContext(ctx).
@@ -95,7 +95,7 @@ func (r *repository) Update(ctx context.Context, id string, req models.UpdateRol
 	return &role, nil
 }
 
-func (r *repository) Delete(ctx context.Context, id string) error {
+func (r *repository) Delete(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).
 		Where("id = ?", id).
 		Delete(&models.Role{}).Error
