@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/ganasa18/go-template/internal/base/app"
 	"github.com/ganasa18/go-template/internal/role/models"
@@ -70,11 +71,24 @@ func (h *HTTPHandler) CreateRole(appCtx *app.Context) *app.CostumeResponse {
 
 // GetRoleByID handles GET /roles/:id
 func (h *HTTPHandler) GetRoleByID(appCtx *app.Context) *app.CostumeResponse {
-	id := appCtx.Param("id")
+	idParam := appCtx.Param("id")
+
+	id, err := strconv.ParseInt(idParam, 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid id",
+		}
+	}
 
 	role, err := h.service.GetByID(appCtx.Request.Context(), id)
 	if err != nil {
-		return app.NewError(appCtx, err)
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusNotFound,
+			Message:   "Not Found. Employee does not exist",
+		}
 	}
 
 	return &app.CostumeResponse{
@@ -87,7 +101,25 @@ func (h *HTTPHandler) GetRoleByID(appCtx *app.Context) *app.CostumeResponse {
 
 // UpdateRole handles PUT /roles/:id
 func (h *HTTPHandler) UpdateRole(appCtx *app.Context) *app.CostumeResponse {
-	id := appCtx.Param("id")
+	idParam := appCtx.Param("id")
+
+	id, err := strconv.ParseInt(idParam, 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid id",
+		}
+	}
+
+	_, err = h.service.GetByID(appCtx.Request.Context(), id)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusNotFound,
+			Message:   "Not Found. Role does not exist",
+		}
+	}
 
 	var req models.UpdateRoleRequest
 	if err := appCtx.ShouldBindJSON(&req); err != nil {
@@ -122,9 +154,27 @@ func (h *HTTPHandler) UpdateRole(appCtx *app.Context) *app.CostumeResponse {
 
 // DeleteRole handles DELETE /roles/:id
 func (h *HTTPHandler) DeleteRole(appCtx *app.Context) *app.CostumeResponse {
-	id := appCtx.Param("id")
+	idParam := appCtx.Param("id")
 
-	err := h.service.Delete(appCtx.Request.Context(), id)
+	id, err := strconv.ParseInt(idParam, 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid id",
+		}
+	}
+
+	_, err = h.service.GetByID(appCtx.Request.Context(), id)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusNotFound,
+			Message:   "Not Found. Role does not exist",
+		}
+	}
+
+	err = h.service.Delete(appCtx.Request.Context(), id)
 	if err != nil {
 		return app.NewError(appCtx, err)
 	}
