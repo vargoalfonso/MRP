@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	"github.com/ganasa18/go-template/internal/billmaterial/models"
@@ -21,6 +22,21 @@ type IService interface {
 
 	// Detail — full tree with process routes and material spec
 	GetBomDetail(ctx context.Context, bomID int64) (*models.BomDetailResponse, error)
+
+	// Update BOM header and parent item fields (partial update)
+	UpdateBom(ctx context.Context, bomID int64, req models.UpdateBomRequest) (*models.BomDetailResponse, error)
+
+	// Update a child node (BomLine + its underlying Item)
+	UpdateBomChild(ctx context.Context, bomID, lineID int64, req models.UpdateBomChildRequest) (*models.BomDetailResponse, error)
+
+	// Delete parent BOM header (children lines are removed by cascade)
+	DeleteBom(ctx context.Context, bomID int64) error
+
+	// Delete a child subtree from BOM by child item id
+	DeleteBomChild(ctx context.Context, bomID, childItemID int64) (int64, error)
+
+	// Delete a subtree from BOM by line id (frontend-friendly unique node target)
+	DeleteBomLine(ctx context.Context, bomID, lineID int64) (int64, error)
 }
 
 type service struct{ repo repository.IRepository }
@@ -31,13 +47,12 @@ type lineTreeKey struct {
 }
 
 type bomPreload struct {
-	items         map[int64]models.Item
-	revisions     map[int64]models.ItemRevision
-	assets        map[int64]models.ItemAsset
-	specs         map[int64]models.ItemMaterialSpec
-	supplierNames map[uuid.UUID]string
-	routes        map[int64][]models.ProcessRouteDetail
-	children      map[lineTreeKey][]models.BomLine
+	items     map[int64]models.Item
+	revisions map[int64]models.ItemRevision
+	assets    map[int64]models.ItemAsset
+	specs     map[int64]models.ItemMaterialSpec
+	routes    map[int64][]models.ProcessRouteDetail
+	children  map[lineTreeKey][]models.BomLine
 }
 
 func New(repo repository.IRepository) IService { return &service{repo: repo} }
@@ -91,7 +106,6 @@ func (s *service) ListBom(ctx context.Context, q models.ListBomQuery) (*models.L
 	}
 
 	rows := make([]models.BomTreeRow, 0, len(bomItems))
-	totalChild := int64(len(lines))
 
 	for _, b := range bomItems {
 		parent, ok := preload.items[b.ItemID]
@@ -119,12 +133,11 @@ func (s *service) ListBom(ctx context.Context, q models.ListBomQuery) (*models.L
 	}
 
 	return &models.ListBomResponse{
-		Meta: pagination.NewMetaBom(total, pagination.BomPaginationInput{
+		Pagination: pagination.NewMetaBom(total, pagination.BomPaginationInput{
 			Page:  page,
 			Limit: limit,
 		}),
-		TotalChild: totalChild,
-		Items:      rows,
+		Items: rows,
 	}, nil
 }
 
@@ -141,6 +154,7 @@ func (s *service) buildChildTree(lines []models.BomLine, preload *bomPreload, pa
 		qpu := line.QtyPerUniq
 		row := models.BomTreeRow{
 			ID:         child.ID,
+			LineID:     &line.ID,
 			UniqCode:   child.UniqCode,
 			PartName:   child.PartName,
 			PartNumber: child.PartNumber,
@@ -358,6 +372,35 @@ func (s *service) resolveOrCreateItem(ctx context.Context, c models.ChildInput) 
 }
 
 func (s *service) createRouting(ctx context.Context, itemID, revID int64, routes []models.ProcessRouteInput) error {
+	// Validate that submitted routes follow ascending process master sequence.
+	processIDs := make([]int64, 0, len(routes))
+	seen := make(map[int64]struct{}, len(routes))
+	for _, pr := range routes {
+		if _, dup := seen[pr.ProcessID]; dup {
+			continue
+		}
+		seen[pr.ProcessID] = struct{}{}
+		processIDs = append(processIDs, pr.ProcessID)
+	}
+	seqMap, err := s.repo.GetProcessSequencesByIDs(ctx, processIDs)
+	if err != nil {
+		return err
+	}
+	prevSeq := -1
+	for i, pr := range routes {
+		seq, ok := seqMap[pr.ProcessID]
+		if !ok {
+			return apperror.BadRequest(fmt.Sprintf("process_id %d does not exist (op_seq %d)", pr.ProcessID, pr.OpSeq))
+		}
+		if seq < prevSeq {
+			return apperror.BadRequest(
+				fmt.Sprintf("route index %d (process_id %d) has master sequence %d which is smaller than the previous step sequence %d — routing must follow ascending process order",
+					i, pr.ProcessID, seq, prevSeq),
+			)
+		}
+		prevSeq = seq
+	}
+
 	rh := &models.RoutingHeader{ItemID: itemID, ItemRevisionID: &revID, Version: 1, Status: "Draft"}
 	if err := s.repo.CreateRoutingHeader(ctx, rh); err != nil {
 		return err
@@ -409,6 +452,9 @@ func (s *service) saveMaterialSpec(ctx context.Context, revID int64, ms *models.
 			return apperror.BadRequest("invalid supplier_id")
 		}
 		spec.SupplierID = &sid
+		if supplierName := s.repo.GetSupplierName(ctx, sid); supplierName != "" {
+			spec.SupplierName = &supplierName
+		}
 	}
 	return s.repo.UpsertMaterialSpec(ctx, spec)
 }
@@ -453,7 +499,7 @@ func (s *service) GetBomDetail(ctx context.Context, bomID int64) (*models.BomDet
 	if parentRev, ok := preload.revisions[parent.ID]; ok {
 		resp.Version = &parentRev.Revision
 		if spec, ok := preload.specs[parentRev.ID]; ok {
-			resp.MaterialSpec = s.toSpecDetail(&spec, preload.supplierNames)
+			resp.MaterialSpec = s.toSpecDetail(&spec)
 		}
 	}
 
@@ -464,6 +510,304 @@ func (s *service) GetBomDetail(ctx context.Context, bomID int64) (*models.BomDet
 	resp.Children = s.buildDetailTree(lines, preload, parent.ID, 1)
 
 	return resp, nil
+}
+
+func (s *service) UpdateBom(ctx context.Context, bomID int64, req models.UpdateBomRequest) (*models.BomDetailResponse, error) {
+	bom, err := s.repo.GetBomByID(ctx, bomID)
+	if err != nil {
+		return nil, err
+	}
+	item, err := s.repo.GetItemByID(ctx, bom.ItemID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update item fields
+	itemChanged := false
+	if req.PartName != nil {
+		item.PartName = *req.PartName
+		itemChanged = true
+	}
+	if req.PartNumber != nil {
+		item.PartNumber = req.PartNumber
+		itemChanged = true
+	}
+	if req.Status != nil {
+		item.Status = *req.Status
+		itemChanged = true
+	}
+	if itemChanged {
+		if err := s.repo.UpdateItem(ctx, item); err != nil {
+			return nil, err
+		}
+	}
+
+	// Update BOM header fields
+	bomChanged := false
+	if req.Description != nil {
+		bom.Description = req.Description
+		bomChanged = true
+	}
+	if req.BomStatus != nil {
+		bom.Status = *req.BomStatus
+		bomChanged = true
+	}
+	if bomChanged {
+		if err := s.repo.UpdateBomItem(ctx, bom); err != nil {
+			return nil, err
+		}
+	}
+
+	// Replace picture
+	if req.PictureURL != nil {
+		if err := s.repo.UpsertItemAssetURL(ctx, item.ID, "photo", *req.PictureURL); err != nil {
+			return nil, err
+		}
+	}
+
+	// Replace process routes when key is explicitly provided
+	if req.ProcessRoutes != nil {
+		if err := s.repo.DeleteRoutingByItemID(ctx, item.ID); err != nil {
+			return nil, err
+		}
+		if len(*req.ProcessRoutes) > 0 {
+			rev, err := s.repo.GetLatestRevision(ctx, item.ID)
+			if err != nil {
+				return nil, err
+			}
+			var revID int64
+			if rev != nil {
+				revID = rev.ID
+			}
+			if err := s.createRouting(ctx, item.ID, revID, *req.ProcessRoutes); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	// Upsert material spec when provided
+	if req.MaterialSpec != nil {
+		rev, err := s.repo.GetLatestRevision(ctx, item.ID)
+		if err != nil {
+			return nil, err
+		}
+		if rev != nil {
+			if err := s.saveMaterialSpec(ctx, rev.ID, req.MaterialSpec); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return s.GetBomDetail(ctx, bomID)
+}
+
+func (s *service) UpdateBomChild(ctx context.Context, bomID, lineID int64, req models.UpdateBomChildRequest) (*models.BomDetailResponse, error) {
+	// Validate BOM exists
+	if _, err := s.repo.GetBomByID(ctx, bomID); err != nil {
+		return nil, err
+	}
+
+	// Load the target line (validates it belongs to this BOM)
+	line, err := s.repo.GetBomLineByID(ctx, bomID, lineID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update BomLine fields
+	lineChanged := false
+	if req.QtyPerUniq != nil {
+		line.QtyPerUniq = *req.QtyPerUniq
+		lineChanged = true
+	}
+	if req.ScrapFactor != nil {
+		line.ScrapFactor = *req.ScrapFactor
+		lineChanged = true
+	}
+	if req.IsPhantom != nil {
+		line.IsPhantom = *req.IsPhantom
+		lineChanged = true
+	}
+	if lineChanged {
+		if err := s.repo.UpdateBomLine(ctx, line); err != nil {
+			return nil, err
+		}
+	}
+
+	// Load child item
+	item, err := s.repo.GetItemByID(ctx, line.ChildItemID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update child Item fields
+	itemChanged := false
+	if req.PartName != nil {
+		item.PartName = *req.PartName
+		itemChanged = true
+	}
+	if req.PartNumber != nil {
+		item.PartNumber = req.PartNumber
+		itemChanged = true
+	}
+	if req.Status != nil {
+		item.Status = *req.Status
+		itemChanged = true
+	}
+	if itemChanged {
+		if err := s.repo.UpdateItem(ctx, item); err != nil {
+			return nil, err
+		}
+	}
+
+	// Replace picture
+	if req.PictureURL != nil {
+		if err := s.repo.UpsertItemAssetURL(ctx, item.ID, "photo", *req.PictureURL); err != nil {
+			return nil, err
+		}
+	}
+
+	// Replace process routes when key is explicitly provided
+	if req.ProcessRoutes != nil {
+		if err := s.repo.DeleteRoutingByItemID(ctx, item.ID); err != nil {
+			return nil, err
+		}
+		if len(*req.ProcessRoutes) > 0 {
+			rev, err := s.repo.GetLatestRevision(ctx, item.ID)
+			if err != nil {
+				return nil, err
+			}
+			var revID int64
+			if rev != nil {
+				revID = rev.ID
+			}
+			if err := s.createRouting(ctx, item.ID, revID, *req.ProcessRoutes); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	// Upsert material spec when provided
+	if req.MaterialSpec != nil {
+		rev, err := s.repo.GetLatestRevision(ctx, item.ID)
+		if err != nil {
+			return nil, err
+		}
+		if rev != nil {
+			if err := s.saveMaterialSpec(ctx, rev.ID, req.MaterialSpec); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return s.GetBomDetail(ctx, bomID)
+}
+
+func (s *service) DeleteBom(ctx context.Context, bomID int64) error {
+	if _, err := s.repo.GetBomByID(ctx, bomID); err != nil {
+		return err
+	}
+	return s.repo.DeleteBomItem(ctx, bomID)
+}
+
+func (s *service) DeleteBomChild(ctx context.Context, bomID, childItemID int64) (int64, error) {
+	if _, err := s.repo.GetBomByID(ctx, bomID); err != nil {
+		return 0, err
+	}
+
+	lines, err := s.repo.GetBomLines(ctx, bomID)
+	if err != nil {
+		return 0, err
+	}
+
+	roots := make([]models.BomLine, 0)
+	childrenByParentLevel := make(map[lineTreeKey][]models.BomLine)
+	for _, line := range lines {
+		childrenByParentLevel[lineTreeKey{parentItemID: line.ParentItemID, level: line.Level}] = append(childrenByParentLevel[lineTreeKey{parentItemID: line.ParentItemID, level: line.Level}], line)
+		if line.ChildItemID == childItemID {
+			roots = append(roots, line)
+		}
+	}
+
+	if len(roots) == 0 {
+		return 0, apperror.NotFound("child item not found in bom")
+	}
+
+	lineIDs := collectSubtreeLineIDs(lines, roots)
+	deleted, err := s.repo.DeleteBomLinesByIDs(ctx, bomID, lineIDs)
+	if err != nil {
+		return 0, err
+	}
+	if deleted == 0 {
+		return 0, apperror.NotFound("child item not found in bom")
+	}
+
+	return deleted, nil
+}
+
+func (s *service) DeleteBomLine(ctx context.Context, bomID, lineID int64) (int64, error) {
+	if _, err := s.repo.GetBomByID(ctx, bomID); err != nil {
+		return 0, err
+	}
+
+	lines, err := s.repo.GetBomLines(ctx, bomID)
+	if err != nil {
+		return 0, err
+	}
+
+	var root *models.BomLine
+	for i := range lines {
+		if lines[i].ID == lineID {
+			root = &lines[i]
+			break
+		}
+	}
+	if root == nil {
+		return 0, apperror.NotFound("line not found in bom")
+	}
+
+	lineIDs := collectSubtreeLineIDs(lines, []models.BomLine{*root})
+	deleted, err := s.repo.DeleteBomLinesByIDs(ctx, bomID, lineIDs)
+	if err != nil {
+		return 0, err
+	}
+	if deleted == 0 {
+		return 0, apperror.NotFound("line not found in bom")
+	}
+
+	return deleted, nil
+}
+
+func collectSubtreeLineIDs(lines []models.BomLine, roots []models.BomLine) []int64 {
+	childrenByParentLevel := make(map[lineTreeKey][]models.BomLine)
+	for _, line := range lines {
+		childrenByParentLevel[lineTreeKey{parentItemID: line.ParentItemID, level: line.Level}] = append(childrenByParentLevel[lineTreeKey{parentItemID: line.ParentItemID, level: line.Level}], line)
+	}
+
+	deleteSet := make(map[int64]struct{})
+	queue := make([]models.BomLine, 0, len(roots))
+	queue = append(queue, roots...)
+
+	for len(queue) > 0 {
+		curr := queue[0]
+		queue = queue[1:]
+
+		if _, seen := deleteSet[curr.ID]; seen {
+			continue
+		}
+		deleteSet[curr.ID] = struct{}{}
+
+		next := childrenByParentLevel[lineTreeKey{parentItemID: curr.ChildItemID, level: curr.Level + 1}]
+		if len(next) > 0 {
+			queue = append(queue, next...)
+		}
+	}
+
+	lineIDs := make([]int64, 0, len(deleteSet))
+	for lineID := range deleteSet {
+		lineIDs = append(lineIDs, lineID)
+	}
+	sort.Slice(lineIDs, func(i, j int) bool { return lineIDs[i] < lineIDs[j] })
+	return lineIDs
 }
 
 func (s *service) buildDetailTree(lines []models.BomLine, preload *bomPreload, parentItemID int64, level int16) []models.BomDetailChild {
@@ -477,6 +821,7 @@ func (s *service) buildDetailTree(lines []models.BomLine, preload *bomPreload, p
 
 		row := models.BomDetailChild{
 			ID:         child.ID,
+			LineID:     line.ID,
 			UniqCode:   child.UniqCode,
 			PartName:   child.PartName,
 			PartNumber: child.PartNumber,
@@ -488,7 +833,7 @@ func (s *service) buildDetailTree(lines []models.BomLine, preload *bomPreload, p
 		if rev, ok := preload.revisions[child.ID]; ok {
 			row.Version = &rev.Revision
 			if spec, ok := preload.specs[rev.ID]; ok {
-				row.MaterialSpec = s.toSpecDetail(&spec, preload.supplierNames)
+				row.MaterialSpec = s.toSpecDetail(&spec)
 			}
 		}
 		if routes, ok := preload.routes[child.ID]; ok {
@@ -502,7 +847,7 @@ func (s *service) buildDetailTree(lines []models.BomLine, preload *bomPreload, p
 	return rows
 }
 
-func (s *service) toSpecDetail(spec *models.ItemMaterialSpec, supplierNames map[uuid.UUID]string) *models.MaterialSpecDetail {
+func (s *service) toSpecDetail(spec *models.ItemMaterialSpec) *models.MaterialSpecDetail {
 	d := &models.MaterialSpecDetail{
 		MaterialGrade: spec.MaterialGrade,
 		Form:          spec.Form,
@@ -513,11 +858,7 @@ func (s *service) toSpecDetail(spec *models.ItemMaterialSpec, supplierNames map[
 		WeightKg:      spec.WeightKg,
 		CycleTimeSec:  spec.CycleTimeSec,
 		SetupTimeMin:  spec.SetupTimeMin,
-	}
-	if spec.SupplierID != nil {
-		if name, ok := supplierNames[*spec.SupplierID]; ok {
-			d.SupplierName = &name
-		}
+		SupplierName:  spec.SupplierName,
 	}
 	return d
 }
@@ -609,17 +950,8 @@ func (s *service) preloadBomData(ctx context.Context, bomItems []models.BomItem,
 		return nil, err
 	}
 	specMap := make(map[int64]models.ItemMaterialSpec, len(specs))
-	supplierIDSet := make(map[uuid.UUID]struct{})
 	for _, spec := range specs {
 		specMap[spec.ItemRevisionID] = spec
-		if spec.SupplierID != nil {
-			supplierIDSet[*spec.SupplierID] = struct{}{}
-		}
-	}
-
-	supplierNames, err := s.repo.GetSupplierNamesByIDs(ctx, uniqueUUIDKeys(supplierIDSet))
-	if err != nil {
-		return nil, err
 	}
 
 	headers, err := s.repo.GetLatestRoutingHeadersByItemIDs(ctx, itemIDs)
@@ -682,13 +1014,12 @@ func (s *service) preloadBomData(ctx context.Context, bomItems []models.BomItem,
 	}
 
 	return &bomPreload{
-		items:         itemMap,
-		revisions:     revisionMap,
-		assets:        assetMap,
-		specs:         specMap,
-		supplierNames: supplierNames,
-		routes:        routes,
-		children:      children,
+		items:     itemMap,
+		revisions: revisionMap,
+		assets:    assetMap,
+		specs:     specMap,
+		routes:    routes,
+		children:  children,
 	}, nil
 }
 
@@ -723,14 +1054,5 @@ func uniqueInt64Keys(values map[int64]struct{}) []int64 {
 		result = append(result, value)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
-	return result
-}
-
-func uniqueUUIDKeys(values map[uuid.UUID]struct{}) []uuid.UUID {
-	result := make([]uuid.UUID, 0, len(values))
-	for value := range values {
-		result = append(result, value)
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].String() < result[j].String() })
 	return result
 }

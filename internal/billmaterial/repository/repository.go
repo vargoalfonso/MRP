@@ -22,7 +22,14 @@ type IRepository interface {
 	CreateOperation(ctx context.Context, op *models.RoutingOperation) error
 	CreateTooling(ctx context.Context, t *models.RoutingOperationTooling) error
 	CreateBomItem(ctx context.Context, b *models.BomItem) error
+	UpdateBomItem(ctx context.Context, bom *models.BomItem) error
 	CreateBomLine(ctx context.Context, line *models.BomLine) error
+	DeleteBomItem(ctx context.Context, bomID int64) error
+	DeleteBomLinesByIDs(ctx context.Context, bomID int64, lineIDs []int64) (int64, error)
+	DeleteRoutingByItemID(ctx context.Context, itemID int64) error
+	UpsertItemAssetURL(ctx context.Context, itemID int64, assetType, url string) error
+	UpdateBomLine(ctx context.Context, line *models.BomLine) error
+	GetBomLineByID(ctx context.Context, bomID, lineID int64) (*models.BomLine, error)
 
 	// Reads
 	GetItemByID(ctx context.Context, id int64) (*models.Item, error)
@@ -44,6 +51,7 @@ type IRepository interface {
 	GetToolingsByOperationIDs(ctx context.Context, operationIDs []int64) ([]models.RoutingOperationTooling, error)
 	GetSupplierNamesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
 	GetProcessNamesByIDs(ctx context.Context, ids []int64) (map[int64]string, error)
+	GetProcessSequencesByIDs(ctx context.Context, ids []int64) (map[int64]int, error)
 	GetMachineNamesByIDs(ctx context.Context, ids []int64) (map[int64]string, error)
 
 	// BOM list — returns parent bom_items with their item info
@@ -151,6 +159,109 @@ func (r *repository) CreateBomLine(ctx context.Context, line *models.BomLine) er
 	return nil
 }
 
+func (r *repository) DeleteBomItem(ctx context.Context, bomID int64) error {
+	res := r.db.WithContext(ctx).Where("id = ?", bomID).Delete(&models.BomItem{})
+	if res.Error != nil {
+		return apperror.InternalWrap("DeleteBomItem", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return apperror.NotFound("bom item not found")
+	}
+	return nil
+}
+
+func (r *repository) DeleteBomLinesByIDs(ctx context.Context, bomID int64, lineIDs []int64) (int64, error) {
+	if len(lineIDs) == 0 {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).
+		Where("bom_item_id = ? AND id IN ?", bomID, lineIDs).
+		Delete(&models.BomLine{})
+	if res.Error != nil {
+		return 0, apperror.InternalWrap("DeleteBomLinesByIDs", res.Error)
+	}
+	return res.RowsAffected, nil
+}
+
+func (r *repository) UpdateBomItem(ctx context.Context, bom *models.BomItem) error {
+	if err := r.db.WithContext(ctx).Save(bom).Error; err != nil {
+		return apperror.InternalWrap("UpdateBomItem", err)
+	}
+	return nil
+}
+
+// DeleteRoutingByItemID removes all routing headers, operations, and toolings for an item.
+func (r *repository) DeleteRoutingByItemID(ctx context.Context, itemID int64) error {
+	var headers []models.RoutingHeader
+	if err := r.db.WithContext(ctx).Where("item_id = ?", itemID).Find(&headers).Error; err != nil {
+		return apperror.InternalWrap("DeleteRoutingByItemID find headers", err)
+	}
+	if len(headers) == 0 {
+		return nil
+	}
+
+	headerIDs := make([]int64, len(headers))
+	for i, h := range headers {
+		headerIDs[i] = h.ID
+	}
+
+	var ops []models.RoutingOperation
+	if err := r.db.WithContext(ctx).Where("routing_header_id IN ?", headerIDs).Find(&ops).Error; err != nil {
+		return apperror.InternalWrap("DeleteRoutingByItemID find ops", err)
+	}
+	if len(ops) > 0 {
+		opIDs := make([]int64, len(ops))
+		for i, op := range ops {
+			opIDs[i] = op.ID
+		}
+		if err := r.db.WithContext(ctx).Where("routing_operation_id IN ?", opIDs).Delete(&models.RoutingOperationTooling{}).Error; err != nil {
+			return apperror.InternalWrap("DeleteRoutingByItemID delete toolings", err)
+		}
+		if err := r.db.WithContext(ctx).Where("id IN ?", opIDs).Delete(&models.RoutingOperation{}).Error; err != nil {
+			return apperror.InternalWrap("DeleteRoutingByItemID delete ops", err)
+		}
+	}
+	if err := r.db.WithContext(ctx).Where("item_id = ?", itemID).Delete(&models.RoutingHeader{}).Error; err != nil {
+		return apperror.InternalWrap("DeleteRoutingByItemID delete headers", err)
+	}
+	return nil
+}
+
+// UpsertItemAssetURL updates the first active asset for the item or creates one if none exists.
+func (r *repository) UpsertItemAssetURL(ctx context.Context, itemID int64, assetType, url string) error {
+	res := r.db.WithContext(ctx).
+		Model(&models.ItemAsset{}).
+		Where("item_id = ? AND status = 'Active'", itemID).
+		Updates(map[string]interface{}{"file_url": url, "asset_type": assetType})
+	if res.Error != nil {
+		return apperror.InternalWrap("UpsertItemAssetURL", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return r.CreateAsset(ctx, &models.ItemAsset{
+			ItemID:    itemID,
+			AssetType: assetType,
+			FileURL:   url,
+			Status:    "Active",
+		})
+	}
+	return nil
+}
+
+func (r *repository) UpdateBomLine(ctx context.Context, line *models.BomLine) error {
+	if err := r.db.WithContext(ctx).Save(line).Error; err != nil {
+		return apperror.InternalWrap("UpdateBomLine", err)
+	}
+	return nil
+}
+
+func (r *repository) GetBomLineByID(ctx context.Context, bomID, lineID int64) (*models.BomLine, error) {
+	var line models.BomLine
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND bom_item_id = ?", lineID, bomID).
+		First(&line).Error
+	return one(&line, err, "bom line")
+}
+
 // ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
@@ -205,7 +316,11 @@ func (r *repository) GetRoutingWithOps(ctx context.Context, itemID int64) (*mode
 	}
 
 	var ops []models.RoutingOperation
-	if err := r.db.WithContext(ctx).Where("routing_header_id = ?", header.ID).Order("op_seq ASC").Find(&ops).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Joins("JOIN process_parameters pp ON pp.id = routing_operations.process_id").
+		Where("routing_header_id = ?", header.ID).
+		Order("pp.sequence ASC, routing_operations.op_seq ASC").
+		Find(&ops).Error; err != nil {
 		return nil, nil, nil, apperror.InternalWrap("GetRoutingOps", err)
 	}
 
@@ -352,8 +467,9 @@ func (r *repository) GetRoutingOperationsByHeaderIDs(ctx context.Context, header
 	}
 	var ops []models.RoutingOperation
 	if err := r.db.WithContext(ctx).
+		Joins("JOIN process_parameters pp ON pp.id = routing_operations.process_id").
 		Where("routing_header_id IN ?", headerIDs).
-		Order("routing_header_id ASC, op_seq ASC").
+		Order("routing_header_id ASC, pp.sequence ASC, routing_operations.op_seq ASC").
 		Find(&ops).Error; err != nil {
 		return nil, apperror.InternalWrap("GetRoutingOperationsByHeaderIDs", err)
 	}
@@ -408,6 +524,24 @@ func (r *repository) GetProcessNamesByIDs(ctx context.Context, ids []int64) (map
 	}
 	for _, process := range processes {
 		result[process.ID] = process.ProcessName
+	}
+	return result, nil
+}
+
+func (r *repository) GetProcessSequencesByIDs(ctx context.Context, ids []int64) (map[int64]int, error) {
+	result := make(map[int64]int)
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var processes []models.ProcessParameter
+	if err := r.db.WithContext(ctx).
+		Select("id", "sequence").
+		Where("id IN ?", ids).
+		Find(&processes).Error; err != nil {
+		return nil, apperror.InternalWrap("GetProcessSequencesByIDs", err)
+	}
+	for _, p := range processes {
+		result[p.ID] = p.Sequence
 	}
 	return result, nil
 }
