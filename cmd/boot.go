@@ -13,6 +13,10 @@ import (
 	baseModule "github.com/ganasa18/go-template/internal/base"
 	baseHandler "github.com/ganasa18/go-template/internal/base/handler"
 	appmodule "github.com/ganasa18/go-template/internal/module"
+	roleModule "github.com/ganasa18/go-template/internal/role"
+	roleHandler "github.com/ganasa18/go-template/internal/role/handler"
+	roleRepository "github.com/ganasa18/go-template/internal/role/repository"
+	roleService "github.com/ganasa18/go-template/internal/role/service"
 )
 
 // initHTTP wires every module inside the modular monolith and returns an HTTP server.
@@ -40,12 +44,17 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		authSvc = authService.New(cfg, authRepo, nil)
 	}
 
+	roleRepo := roleRepository.New(db)
+	roleSvc := roleService.New(roleRepo)
+
 	baseHTTPHandler := baseHandler.NewBaseHTTPHandler(db)
 	authHTTPHandler := authHandler.New(authSvc)
+	roleHTTPHandler := roleHandler.New(roleSvc)
 
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
+		roleModule.NewHTTPModule(cfg, baseHTTPHandler, roleHTTPHandler, authSvc, roleSvc),
 	}
 
 	// --- Server ---
