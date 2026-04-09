@@ -33,6 +33,10 @@ import (
 	roleHandler "github.com/ganasa18/go-template/internal/role/handler"
 	roleRepository "github.com/ganasa18/go-template/internal/role/repository"
 	roleService "github.com/ganasa18/go-template/internal/role/service"
+	safetyStockModule "github.com/ganasa18/go-template/internal/safety_stock_parameter"
+	safetyStockHandler "github.com/ganasa18/go-template/internal/safety_stock_parameter/handler"
+	safetyStockRepo "github.com/ganasa18/go-template/internal/safety_stock_parameter/repository"
+	safetyStockService "github.com/ganasa18/go-template/internal/safety_stock_parameter/service"
 	uploadModule "github.com/ganasa18/go-template/internal/upload"
 	uploadHandler "github.com/ganasa18/go-template/internal/upload/handler"
 	uploadRepository "github.com/ganasa18/go-template/internal/upload/repository"
@@ -93,6 +97,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	uploadSvc := uploadService.New(uploadRepo, bomRepo)
 	uploadHTTPHandler := uploadHandler.New(uploadSvc)
 
+	safetyStockRepository := safetyStockRepo.New(db)
+	safetyStockService := safetyStockService.New(safetyStockRepository)
+	safetyStockHandler := safetyStockHandler.New(safetyStockService)
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -102,6 +110,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		departementModule.NewHTTPModule(cfg, baseHTTPHandler, departementHTTPHandler, authSvc, roleSvc, departementSvc),
 		employeeModule.NewHTTPModule(cfg, baseHTTPHandler, employeeHTTPHandler, authSvc, roleSvc, employeeSvc),
 		userModule.NewHTTPModule(cfg, baseHTTPHandler, userHTTPHandler, authSvc, roleSvc, userSvc),
+		safetyStockModule.NewHTTPModule(cfg, baseHTTPHandler, safetyStockHandler, authSvc, roleSvc, safetyStockService),
 	}
 
 	// --- Server ---
