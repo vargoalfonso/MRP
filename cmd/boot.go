@@ -12,6 +12,15 @@ import (
 	authService "github.com/ganasa18/go-template/internal/auth/service"
 	baseModule "github.com/ganasa18/go-template/internal/base"
 	baseHandler "github.com/ganasa18/go-template/internal/base/handler"
+	bomModule "github.com/ganasa18/go-template/internal/billmaterial"
+	bomHandler "github.com/ganasa18/go-template/internal/billmaterial/handler"
+	bomRepository "github.com/ganasa18/go-template/internal/billmaterial/repository"
+	bomService "github.com/ganasa18/go-template/internal/billmaterial/service"
+	appmodule "github.com/ganasa18/go-template/internal/module"
+	uploadModule "github.com/ganasa18/go-template/internal/upload"
+	uploadHandler "github.com/ganasa18/go-template/internal/upload/handler"
+	uploadRepository "github.com/ganasa18/go-template/internal/upload/repository"
+	uploadService "github.com/ganasa18/go-template/internal/upload/service"
 	departementModule "github.com/ganasa18/go-template/internal/departement"
 	departementHandler "github.com/ganasa18/go-template/internal/departement/handler"
 	departementRepository "github.com/ganasa18/go-template/internal/departement/repository"
@@ -59,9 +68,21 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	authHTTPHandler := authHandler.New(authSvc)
 	roleHTTPHandler := roleHandler.New(roleSvc)
 
+	// BOM module
+	bomRepo := bomRepository.New(db)
+	bomSvc := bomService.New(bomRepo)
+	bomHTTPHandler := bomHandler.New(bomSvc)
+
+	// Upload module (chunked / resumable)
+	uploadRepo := uploadRepository.New(db)
+	uploadSvc := uploadService.New(uploadRepo, bomRepo)
+	uploadHTTPHandler := uploadHandler.New(uploadSvc)
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
+		bomModule.NewHTTPModule(baseHTTPHandler, bomHTTPHandler, bomSvc),
+		uploadModule.NewHTTPModule(baseHTTPHandler, uploadHTTPHandler, uploadSvc),
 		roleModule.NewHTTPModule(cfg, baseHTTPHandler, roleHTTPHandler, authSvc, roleSvc),
 		departementModule.NewHTTPModule(cfg, baseHTTPHandler, departementHTTPHandler, authSvc, roleSvc, departementSvc),
 	}
