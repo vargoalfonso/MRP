@@ -5,7 +5,7 @@ type CreateDepartmentRequest struct {
 	DepartmentName     string  `json:"department_name" validate:"required,max=100"`
 	Description        *string `json:"description"`
 	ManagerID          *int64  `json:"manager_id"`
-	ParentDepartmentID *string `json:"parent_department_id"`
+	ParentDepartmentID *int64  `json:"parent_department_id"`
 	Status             string  `json:"status" validate:"required"`
 }
 
@@ -14,6 +14,6 @@ type UpdateDepartmentRequest struct {
 	DepartmentName     string  `json:"department_name" validate:"required,max=100"`
 	Description        *string `json:"description"`
 	ManagerID          *int64  `json:"manager_id"`
-	ParentDepartmentID *string `json:"parent_department_id"`
+	ParentDepartmentID *int64  `json:"parent_department_id"`
 	Status             string  `json:"status" validate:"required"`
 }

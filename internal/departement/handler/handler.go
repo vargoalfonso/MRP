@@ -54,6 +54,17 @@ func (h *HTTPHandler) CreateDepartment(appCtx *app.Context) *app.CostumeResponse
 		}
 	}
 
+	if req.ParentDepartmentID != nil {
+		_, err := h.service.GetByID(appCtx.Request.Context(), *req.ParentDepartmentID)
+		if err != nil {
+			return &app.CostumeResponse{
+				RequestID: appCtx.APIReqID,
+				Status:    http.StatusNotFound,
+				Message:   "Error : Parent Department ID Department does not exist",
+			}
+		}
+	}
+
 	data, err := h.service.Create(appCtx.Request.Context(), req)
 	if err != nil {
 		return app.NewError(appCtx, err)

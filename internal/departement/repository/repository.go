@@ -26,9 +26,32 @@ func New(db *gorm.DB) IDepartementRepository {
 func (r *repository) FindAll(ctx context.Context) ([]models.Department, error) {
 	var departments []models.Department
 
+	// ambil semua department
 	err := r.db.WithContext(ctx).Find(&departments).Error
 	if err != nil {
 		return nil, err
+	}
+
+	// bikin map id → department
+	deptMap := make(map[int64]models.Department)
+	for _, d := range departments {
+		deptMap[d.ID] = d
+	}
+
+	// assign parent
+	for i := range departments {
+		if departments[i].ParentDepartmentID != nil {
+			parent, ok := deptMap[*departments[i].ParentDepartmentID]
+			if ok {
+				// ambil field yang perlu aja (optional)
+				departments[i].Parent = &models.Department{
+					ID:             parent.ID,
+					DepartmentCode: parent.DepartmentCode,
+					DepartmentName: parent.DepartmentName,
+					Status:         parent.Status,
+				}
+			}
+		}
 	}
 
 	return departments, nil
@@ -37,12 +60,23 @@ func (r *repository) FindAll(ctx context.Context) ([]models.Department, error) {
 func (r *repository) FindByID(ctx context.Context, id int64) (*models.Department, error) {
 	var department models.Department
 
-	err := r.db.WithContext(ctx).
-		Where("id = ?", id).
-		First(&department).Error
-
+	// ambil department utama
+	err := r.db.WithContext(ctx).First(&department, id).Error
 	if err != nil {
 		return nil, err
+	}
+
+	if department.ParentDepartmentID != nil {
+		var parent models.Department
+
+		err := r.db.WithContext(ctx).
+			Select("id", "department_name").
+			First(&parent, *department.ParentDepartmentID).Error
+		if err != nil {
+			return nil, err
+		}
+
+		department.Parent = &parent
 	}
 
 	return &department, nil

@@ -13,7 +13,7 @@ CREATE TABLE
   department_name VARCHAR(100),
   description TEXT,
   manager_id BIGINT,
-  parent_department_id UUID,
+  parent_department_id BIGINT,
   status VARCHAR(20),
   created_at TIMESTAMPTZ DEFAULT NOW (),
   updated_at TIMESTAMPTZ DEFAULT NOW ()
