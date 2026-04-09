@@ -93,3 +93,133 @@ func (h *HTTPHandler) GetBomDetail(ctx *app.Context) *app.CostumeResponse {
 		Data:      result,
 	}
 }
+
+// UpdateBom  PUT /api/v1/products/bom/:id
+func (h *HTTPHandler) UpdateBom(ctx *app.Context) *app.CostumeResponse {
+	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+	var req models.UpdateBomRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body"}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+	}
+	result, err := h.svc.UpdateBom(ctx.Request.Context(), id, req)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      result,
+	}
+}
+
+// DeleteBom DELETE /api/v1/products/bom/:id
+func (h *HTTPHandler) DeleteBom(ctx *app.Context) *app.CostumeResponse {
+	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+	if err := h.svc.DeleteBom(ctx.Request.Context(), id); err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      map[string]interface{}{"deleted": true, "bom_id": id},
+	}
+}
+
+// UpdateBomChild  PUT /api/v1/products/bom/:id/lines/:line_id
+func (h *HTTPHandler) UpdateBomChild(ctx *app.Context) *app.CostumeResponse {
+	bomID, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+	lineID, err := strconv.ParseInt(ctx.Param("line_id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid line_id"}
+	}
+	var req models.UpdateBomChildRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body"}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+	}
+	result, err := h.svc.UpdateBomChild(ctx.Request.Context(), bomID, lineID, req)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      result,
+	}
+}
+
+// DeleteBomChild DELETE /api/v1/products/bom/:id/children/:child_id
+func (h *HTTPHandler) DeleteBomChild(ctx *app.Context) *app.CostumeResponse {
+	bomID, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+	childID, err := strconv.ParseInt(ctx.Param("child_id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid child_id"}
+	}
+
+	deletedLines, err := h.svc.DeleteBomChild(ctx.Request.Context(), bomID, childID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data: map[string]interface{}{
+			"deleted":       true,
+			"bom_id":        bomID,
+			"child_item_id": childID,
+			"deleted_lines": deletedLines,
+		},
+	}
+}
+
+// DeleteBomLine DELETE /api/v1/products/bom/:id/lines/:line_id
+func (h *HTTPHandler) DeleteBomLine(ctx *app.Context) *app.CostumeResponse {
+	bomID, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+	lineID, err := strconv.ParseInt(ctx.Param("line_id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid line_id"}
+	}
+
+	deletedLines, err := h.svc.DeleteBomLine(ctx.Request.Context(), bomID, lineID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data: map[string]interface{}{
+			"deleted":        true,
+			"delete_scope":   "subtree",
+			"bom_id":         bomID,
+			"target_line_id": lineID,
+			"deleted_lines":  deletedLines,
+		},
+	}
+}
