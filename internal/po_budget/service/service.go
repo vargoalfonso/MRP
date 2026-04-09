@@ -19,6 +19,7 @@ type IService interface {
 	ListEntries(ctx context.Context, q models.ListBudgetQuery) (*models.ListEntryResponse, error)
 	CreateEntry(ctx context.Context, req models.CreateEntryRequest, createdBy string) (*models.EntryResponse, error)
 	GetEntry(ctx context.Context, id int64) (*models.EntryResponse, error)
+	GetEntryDetail(ctx context.Context, budgetType string, id int64) (*models.EntryDetailResponse, error)
 	UpdateEntry(ctx context.Context, id int64, req models.UpdateEntryRequest, updatedBy string) (*models.EntryResponse, error)
 	DeleteEntry(ctx context.Context, id int64) error
 
@@ -139,6 +140,15 @@ func (s *svc) CreateEntry(ctx context.Context, req models.CreateEntryRequest, cr
 		return nil, apperror.InternalWrap("database error", err)
 	}
 
+	// History: Created + Submitted
+	cb := createdBy
+	if err := s.repo.CreateLog(ctx, &models.POBudgetEntryLog{EntryID: e.ID, Action: "Created", Username: &cb, Notes: strPtr("Initial creation")}); err != nil {
+		return nil, apperror.InternalWrap("database error", err)
+	}
+	if err := s.repo.CreateLog(ctx, &models.POBudgetEntryLog{EntryID: e.ID, Action: "Submitted", Username: &cb, Notes: strPtr("Submitted for approval")}); err != nil {
+		return nil, apperror.InternalWrap("database error", err)
+	}
+
 	// Re-fetch to get generated columns
 	created, err := s.repo.GetEntryByID(ctx, e.ID)
 	if err != nil {
@@ -159,6 +169,36 @@ func (s *svc) GetEntry(ctx context.Context, id int64) (*models.EntryResponse, er
 	}
 	resp := toResponse(*e)
 	return &resp, nil
+}
+
+func (s *svc) GetEntryDetail(ctx context.Context, budgetType string, id int64) (*models.EntryDetailResponse, error) {
+	e, err := s.repo.GetEntryByID(ctx, id)
+	if err != nil {
+		return nil, apperror.NotFound(fmt.Sprintf("entry %d not found", id))
+	}
+	if e.BudgetType != budgetType {
+		return nil, apperror.NotFound(fmt.Sprintf("entry %d not found", id))
+	}
+	entry := toResponse(*e)
+
+	summary, err := s.repo.GetSummary(ctx, budgetType, e.Period)
+	if err != nil {
+		return nil, apperror.InternalWrap("database error", err)
+	}
+	logs, err := s.repo.ListLogsByEntryID(ctx, id)
+	if err != nil {
+		return nil, apperror.InternalWrap("database error", err)
+	}
+	hist := make([]models.HistoryLogItem, len(logs))
+	for i, l := range logs {
+		hist[i] = models.HistoryLogItem{
+			DateTime: l.CreatedAt.Format(time.RFC3339),
+			Action:   l.Action,
+			User:     l.Username,
+			Notes:    l.Notes,
+		}
+	}
+	return &models.EntryDetailResponse{Entry: entry, Summary: *summary, History: hist}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +271,8 @@ func (s *svc) UpdateEntry(ctx context.Context, id int64, req models.UpdateEntryR
 	if err := s.repo.UpdateEntry(ctx, e); err != nil {
 		return nil, apperror.InternalWrap("database error", err)
 	}
+	ub := updatedBy
+	_ = s.repo.CreateLog(ctx, &models.POBudgetEntryLog{EntryID: id, Action: "Updated", Username: &ub, Notes: strPtr("Updated budget details")})
 
 	updated, err := s.repo.GetEntryByID(ctx, id)
 	if err != nil {
@@ -329,6 +371,10 @@ func (s *svc) ApproveEntry(ctx context.Context, id int64, req models.ApproveRequ
 	if err := s.repo.UpdateEntry(ctx, e); err != nil {
 		return nil, apperror.InternalWrap("database error", err)
 	}
+	user := req.ApprovedBy
+	notes := req.Notes
+	// Best-effort history log
+	_ = s.repo.CreateLog(ctx, &models.POBudgetEntryLog{EntryID: id, Action: req.Status, Username: &user, Notes: notes})
 
 	updated, err := s.repo.GetEntryByID(ctx, id)
 	if err != nil {
@@ -434,6 +480,12 @@ func (s *svc) ImportEntries(ctx context.Context, budgetType, period string, rows
 		if err := s.repo.BulkCreateEntries(ctx, entries); err != nil {
 			return nil, apperror.InternalWrap("database error", err)
 		}
+		// Best-effort logs
+		for _, e := range entries {
+			cb := createdBy
+			_ = s.repo.CreateLog(ctx, &models.POBudgetEntryLog{EntryID: e.ID, Action: "Created", Username: &cb, Notes: strPtr("Bulk from PRL")})
+			_ = s.repo.CreateLog(ctx, &models.POBudgetEntryLog{EntryID: e.ID, Action: "Submitted", Username: &cb, Notes: strPtr("Submitted for approval")})
+		}
 	}
 
 	result.Imported = len(entries)
@@ -534,8 +586,13 @@ func toResponse(e models.POBudgetEntry) models.EntryResponse {
 		Prl:             e.Prl,
 		DeltaApoPrl:     total - e.Prl,
 		Status:          e.Status,
+		BudgetSubtype:   e.BudgetSubtype,
+		PrlRef:          e.PrlRef,
+		PrlRowID:        e.PrlRowID,
 		ApprovedBy:      e.ApprovedBy,
 		ApprovedAt:      e.ApprovedAt,
+		SubmittedBy:     e.CreatedBy,
+		SubmittedAt:     e.CreatedAt,
 		CreatedBy:       e.CreatedBy,
 		CreatedAt:       e.CreatedAt,
 		UpdatedAt:       e.UpdatedAt,

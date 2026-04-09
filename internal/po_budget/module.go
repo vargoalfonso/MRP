@@ -91,6 +91,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		budget.POST("", roleMiddleware.RequirePermission(m.roleService, "po_budget", "create"), m.base.RunAction(m.handler.CreateEntry))
 		budget.POST("/bulk", roleMiddleware.RequirePermission(m.roleService, "po_budget", "create"), m.base.RunAction(m.handler.BulkCreateFromPRL))
 		budget.GET("/:id", roleMiddleware.RequirePermission(m.roleService, "po_budget", "view"), m.base.RunAction(m.handler.GetEntry))
+		budget.GET("/:id/detail", roleMiddleware.RequirePermission(m.roleService, "po_budget", "view"), m.base.RunAction(m.handler.GetEntryDetail))
 		budget.PUT("/:id", roleMiddleware.RequirePermission(m.roleService, "po_budget", "update"), m.base.RunAction(m.handler.UpdateEntry))
 		budget.DELETE("/:id", roleMiddleware.RequirePermission(m.roleService, "po_budget", "delete"), m.base.RunAction(m.handler.DeleteEntry))
 		budget.POST("/clear", roleMiddleware.RequirePermission(m.roleService, "po_budget", "delete"), m.base.RunAction(m.handler.ClearEntries))

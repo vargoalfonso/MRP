@@ -168,6 +168,28 @@ func (h *HTTPHandler) GetEntry(ctx *app.Context) *app.CostumeResponse {
 }
 
 // ---------------------------------------------------------------------------
+// GET detail + summary  GET /{type}/budget/:id/detail
+// ---------------------------------------------------------------------------
+
+func (h *HTTPHandler) GetEntryDetail(ctx *app.Context) *app.CostumeResponse {
+	id, err := parseID(ctx.Param("id"))
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+	budgetType := normalizeBudgetType(ctx.Param("type"))
+	result, err := h.svc.GetEntryDetail(ctx.Request.Context(), budgetType, id)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      result,
+	}
+}
+
+// ---------------------------------------------------------------------------
 // UPDATE entry  PUT /{type}/budget/:id
 // ---------------------------------------------------------------------------
 

@@ -45,6 +45,10 @@ type IRepository interface {
 	DeleteEntriesByFilter(ctx context.Context, budgetType, period string) error
 	ListEntries(ctx context.Context, f ListFilter) ([]models.POBudgetEntry, int64, error)
 
+	// History logs
+	CreateLog(ctx context.Context, log *models.POBudgetEntryLog) error
+	ListLogsByEntryID(ctx context.Context, entryID int64) ([]models.POBudgetEntryLog, error)
+
 	// Aggregated view
 	ListAggregated(ctx context.Context, f AggFilter) ([]models.AggregatedRow, int64, error)
 	// Summary cards
@@ -122,6 +126,25 @@ func (r *repo) UpdateEntry(ctx context.Context, e *models.POBudgetEntry) error {
 	return r.db.WithContext(ctx).
 		Omit("PrlID", "PrlItemID", "PrlRef", "PrlRowID", "BudgetQty", "BudgetSubtype").
 		Save(e).Error
+}
+
+// ---------------------------------------------------------------------------
+// History logs
+// ---------------------------------------------------------------------------
+
+func (r *repo) CreateLog(ctx context.Context, log *models.POBudgetEntryLog) error {
+	return r.db.WithContext(ctx).Create(log).Error
+}
+
+func (r *repo) ListLogsByEntryID(ctx context.Context, entryID int64) ([]models.POBudgetEntryLog, error) {
+	var rows []models.POBudgetEntryLog
+	if err := r.db.WithContext(ctx).
+		Where("entry_id = ?", entryID).
+		Order("created_at ASC, id ASC").
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func (r *repo) DeleteEntry(ctx context.Context, id int64) error {

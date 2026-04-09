@@ -58,6 +58,7 @@ type UpdateEntryRequest struct {
 	Description     *string  `json:"description"`
 	SupplierID      *string  `json:"supplier_id"`
 	SupplierName    *string  `json:"supplier_name"`
+	Period          *string  `json:"period"`
 	SalesPlan       *float64 `json:"sales_plan"`
 	PurchaseRequest *float64 `json:"purchase_request"`
 	Po1Pct          *float64 `json:"po1_pct"`
@@ -81,8 +82,9 @@ type UpdateSplitSettingRequest struct {
 // ---------------------------------------------------------------------------
 
 type ApproveRequest struct {
-	Status     string `json:"status"      validate:"required,oneof=Approved Rejected"`
-	ApprovedBy string `json:"approved_by" validate:"required"`
+	Status     string  `json:"status"      validate:"required,oneof=Approved Rejected"`
+	ApprovedBy string  `json:"approved_by" validate:"required"`
+	Notes      *string `json:"notes"`
 }
 
 // ---------------------------------------------------------------------------

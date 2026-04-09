@@ -34,8 +34,13 @@ type EntryResponse struct {
 	Prl             float64    `json:"prl"`
 	DeltaApoPrl     float64    `json:"delta_apo_prl"` // total_po - prl
 	Status          string     `json:"status"`
+	BudgetSubtype   *string    `json:"budget_subtype,omitempty"` // adhoc | regular | null
+	PrlRef          *string    `json:"prl_ref,omitempty"`        // prls.prl_id
+	PrlRowID        *int64     `json:"prl_row_id,omitempty"`     // prls.id
 	ApprovedBy      *string    `json:"approved_by"`
 	ApprovedAt      *time.Time `json:"approved_at"`
+	SubmittedBy     *string    `json:"submitted_by,omitempty"`
+	SubmittedAt     time.Time  `json:"submitted_at"`
 	CreatedBy       *string    `json:"created_by"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
@@ -94,6 +99,19 @@ type SummaryResponse struct {
 	TotalPRL         float64 `json:"total_prl"`
 	DeltaApoPrl      float64 `json:"delta_apo_prl"`
 	PendingApprovals int64   `json:"pending_approvals"`
+}
+
+type EntryDetailResponse struct {
+	Entry   EntryResponse    `json:"entry"`
+	Summary SummaryResponse  `json:"summary"`
+	History []HistoryLogItem `json:"history"`
+}
+
+type HistoryLogItem struct {
+	DateTime string  `json:"date_time"` // RFC3339
+	Action   string  `json:"action"`
+	User     *string `json:"user"`
+	Notes    *string `json:"notes"`
 }
 
 // ---------------------------------------------------------------------------

@@ -77,6 +77,18 @@ type POBudgetEntry struct {
 
 func (POBudgetEntry) TableName() string { return "po_budget_entries" }
 
+// POBudgetEntryLog records the audit/history trail for a PO budget entry.
+type POBudgetEntryLog struct {
+	ID        int64     `gorm:"primaryKey;autoIncrement"`
+	EntryID   int64     `gorm:"not null;index"`
+	Action    string    `gorm:"size:32;not null"` // Created|Submitted|Updated|Approved|Rejected
+	Username  *string   `gorm:"size:255"`
+	Notes     *string   `gorm:"type:text"`
+	CreatedAt time.Time `gorm:"not null;default:now()"`
+}
+
+func (POBudgetEntryLog) TableName() string { return "po_budget_entry_logs" }
+
 // ---------------------------------------------------------------------------
 // PRL Forecast
 // ---------------------------------------------------------------------------
