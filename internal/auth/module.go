@@ -43,12 +43,11 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		authGroup.POST("/register", m.base.RunAction(m.handler.Register))
 		authGroup.POST("/login", m.base.RunAction(m.handler.Login))
 
-		if m.cfg.IsStateful() {
-			authGroup.POST("/refresh", m.base.RunAction(m.handler.Refresh))
+		authGroup.POST("/refresh", m.base.RunAction(m.handler.Refresh))
 
-			logoutGroup := authGroup.Group("")
-			logoutGroup.Use(authMiddleware.JWTMiddleware(m.authenticator))
-			logoutGroup.POST("/logout", m.base.RunAction(m.handler.Logout))
-		}
+		logoutGroup := authGroup.Group("")
+		logoutGroup.Use(authMiddleware.JWTMiddleware(m.authenticator))
+		logoutGroup.POST("/logout", m.base.RunAction(m.handler.Logout))
+
 	}
 }
