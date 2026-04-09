@@ -20,6 +20,10 @@ import (
 	bomHandler "github.com/ganasa18/go-template/internal/billmaterial/handler"
 	bomRepository "github.com/ganasa18/go-template/internal/billmaterial/repository"
 	bomService "github.com/ganasa18/go-template/internal/billmaterial/service"
+	poBudgetModule "github.com/ganasa18/go-template/internal/po_budget"
+	poBudgetHandler "github.com/ganasa18/go-template/internal/po_budget/handler"
+	poBudgetRepository "github.com/ganasa18/go-template/internal/po_budget/repository"
+	poBudgetService "github.com/ganasa18/go-template/internal/po_budget/service"
 	departementModule "github.com/ganasa18/go-template/internal/departement"
 	departementHandler "github.com/ganasa18/go-template/internal/departement/handler"
 	departementRepository "github.com/ganasa18/go-template/internal/departement/repository"
@@ -93,6 +97,11 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	uploadSvc := uploadService.New(uploadRepo, bomRepo)
 	uploadHTTPHandler := uploadHandler.New(uploadSvc)
 
+	// PO Budget module
+	poBudgetRepo := poBudgetRepository.New(db)
+	poBudgetSvc := poBudgetService.New(poBudgetRepo)
+	poBudgetHTTPHandler := poBudgetHandler.New(poBudgetSvc)
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -102,6 +111,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		departementModule.NewHTTPModule(cfg, baseHTTPHandler, departementHTTPHandler, authSvc, roleSvc, departementSvc),
 		employeeModule.NewHTTPModule(cfg, baseHTTPHandler, employeeHTTPHandler, authSvc, roleSvc, employeeSvc),
 		userModule.NewHTTPModule(cfg, baseHTTPHandler, userHTTPHandler, authSvc, roleSvc, userSvc),
+		poBudgetModule.NewHTTPModule(cfg, baseHTTPHandler, poBudgetHTTPHandler, authSvc, roleSvc),
 	}
 
 	// --- Server ---
