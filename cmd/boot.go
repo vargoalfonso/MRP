@@ -21,6 +21,15 @@ import (
 	uploadHandler "github.com/ganasa18/go-template/internal/upload/handler"
 	uploadRepository "github.com/ganasa18/go-template/internal/upload/repository"
 	uploadService "github.com/ganasa18/go-template/internal/upload/service"
+	departementModule "github.com/ganasa18/go-template/internal/departement"
+	departementHandler "github.com/ganasa18/go-template/internal/departement/handler"
+	departementRepository "github.com/ganasa18/go-template/internal/departement/repository"
+	departementService "github.com/ganasa18/go-template/internal/departement/service"
+	appmodule "github.com/ganasa18/go-template/internal/module"
+	roleModule "github.com/ganasa18/go-template/internal/role"
+	roleHandler "github.com/ganasa18/go-template/internal/role/handler"
+	roleRepository "github.com/ganasa18/go-template/internal/role/repository"
+	roleService "github.com/ganasa18/go-template/internal/role/service"
 )
 
 // initHTTP wires every module inside the modular monolith and returns an HTTP server.
@@ -48,8 +57,16 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		authSvc = authService.New(cfg, authRepo, nil)
 	}
 
+	roleRepo := roleRepository.New(db)
+	roleSvc := roleService.New(roleRepo)
+
+	departementRepo := departementRepository.New(db)
+	departementSvc := departementService.New(departementRepo)
+	departementHTTPHandler := departementHandler.New(departementSvc)
+
 	baseHTTPHandler := baseHandler.NewBaseHTTPHandler(db)
 	authHTTPHandler := authHandler.New(authSvc)
+	roleHTTPHandler := roleHandler.New(roleSvc)
 
 	// BOM module
 	bomRepo := bomRepository.New(db)
@@ -66,6 +83,8 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
 		bomModule.NewHTTPModule(baseHTTPHandler, bomHTTPHandler, bomSvc),
 		uploadModule.NewHTTPModule(baseHTTPHandler, uploadHTTPHandler, uploadSvc),
+		roleModule.NewHTTPModule(cfg, baseHTTPHandler, roleHTTPHandler, authSvc, roleSvc),
+		departementModule.NewHTTPModule(cfg, baseHTTPHandler, departementHTTPHandler, authSvc, roleSvc, departementSvc),
 	}
 
 	// --- Server ---
