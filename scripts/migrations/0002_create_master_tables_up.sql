@@ -8,7 +8,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- =========================
 CREATE TABLE
  IF NOT EXISTS departments (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
+  id BIGSERIAL PRIMARY KEY,
   department_code VARCHAR(50),
   department_name VARCHAR(100),
   description TEXT,
@@ -24,7 +24,7 @@ CREATE TABLE
 -- =========================
 CREATE TABLE
  IF NOT EXISTS roles (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
+  id BIGSERIAL PRIMARY KEY,
   name VARCHAR(100),
   description TEXT,
   permissions JSONB,
@@ -45,8 +45,8 @@ CREATE TABLE
   job_title VARCHAR(100),
   unit_cost NUMERIC(15, 2),
   join_date DATE,
-  role_id UUID,
-  department_id UUID,
+  role_id BIGINT,
+  department_id BIGINT,
   reports_to_id BIGINT,
   status VARCHAR(20),
   notes TEXT,
@@ -65,8 +65,8 @@ CREATE TABLE
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
   full_name VARCHAR(150),
   employee_id BIGINT,
-  role_id UUID,
-  department_id UUID,
+  role_id BIGINT,
+  department_id BIGINT,
   status VARCHAR(20),
   created_at TIMESTAMPTZ DEFAULT NOW (),
   updated_at TIMESTAMPTZ DEFAULT NOW (),
