@@ -46,7 +46,12 @@ func (h *HTTPHandler) ListBom(ctx *app.Context) *app.CostumeResponse {
 	if err != nil {
 		return app.NewError(ctx, err)
 	}
-	return app.NewSuccess(ctx, http.StatusOK, resp)
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      resp,
+	}
 }
 
 // CreateBom  POST /api/v1/products/bom
@@ -63,7 +68,12 @@ func (h *HTTPHandler) CreateBom(ctx *app.Context) *app.CostumeResponse {
 	if err != nil {
 		return app.NewError(ctx, err)
 	}
-	return app.NewSuccess(ctx, http.StatusCreated, result)
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusCreated,
+		Message:   http.StatusText(http.StatusCreated),
+		Data:      result,
+	}
 }
 
 // GetBomDetail  GET /api/v1/products/bom/:id
@@ -76,5 +86,10 @@ func (h *HTTPHandler) GetBomDetail(ctx *app.Context) *app.CostumeResponse {
 	if err != nil {
 		return app.NewError(ctx, err)
 	}
-	return app.NewSuccess(ctx, http.StatusOK, result)
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      result,
+	}
 }
