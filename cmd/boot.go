@@ -12,6 +12,10 @@ import (
 	authService "github.com/ganasa18/go-template/internal/auth/service"
 	baseModule "github.com/ganasa18/go-template/internal/base"
 	baseHandler "github.com/ganasa18/go-template/internal/base/handler"
+	departementModule "github.com/ganasa18/go-template/internal/departement"
+	departementHandler "github.com/ganasa18/go-template/internal/departement/handler"
+	departementRepository "github.com/ganasa18/go-template/internal/departement/repository"
+	departementService "github.com/ganasa18/go-template/internal/departement/service"
 	appmodule "github.com/ganasa18/go-template/internal/module"
 	roleModule "github.com/ganasa18/go-template/internal/role"
 	roleHandler "github.com/ganasa18/go-template/internal/role/handler"
@@ -47,6 +51,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	roleRepo := roleRepository.New(db)
 	roleSvc := roleService.New(roleRepo)
 
+	departementRepo := departementRepository.New(db)
+	departementSvc := departementService.New(departementRepo)
+	departementHTTPHandler := departementHandler.New(departementSvc)
+
 	baseHTTPHandler := baseHandler.NewBaseHTTPHandler(db)
 	authHTTPHandler := authHandler.New(authSvc)
 	roleHTTPHandler := roleHandler.New(roleSvc)
@@ -55,6 +63,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
 		roleModule.NewHTTPModule(cfg, baseHTTPHandler, roleHTTPHandler, authSvc, roleSvc),
+		departementModule.NewHTTPModule(cfg, baseHTTPHandler, departementHTTPHandler, authSvc, roleSvc, departementSvc),
 	}
 
 	// --- Server ---
