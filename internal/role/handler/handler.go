@@ -67,3 +67,71 @@ func (h *HTTPHandler) CreateRole(appCtx *app.Context) *app.CostumeResponse {
 		Data:      role,
 	}
 }
+
+// GetRoleByID handles GET /roles/:id
+func (h *HTTPHandler) GetRoleByID(appCtx *app.Context) *app.CostumeResponse {
+	id := appCtx.Param("id")
+
+	role, err := h.service.GetByID(appCtx.Request.Context(), id)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      role,
+	}
+}
+
+// UpdateRole handles PUT /roles/:id
+func (h *HTTPHandler) UpdateRole(appCtx *app.Context) *app.CostumeResponse {
+	id := appCtx.Param("id")
+
+	var req models.UpdateRoleRequest
+	if err := appCtx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body",
+		}
+	}
+
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": errs},
+		}
+	}
+
+	role, err := h.service.Update(appCtx.Request.Context(), id, req)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "role updated successfully",
+		Data:      role,
+	}
+}
+
+// DeleteRole handles DELETE /roles/:id
+func (h *HTTPHandler) DeleteRole(appCtx *app.Context) *app.CostumeResponse {
+	id := appCtx.Param("id")
+
+	err := h.service.Delete(appCtx.Request.Context(), id)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "role deleted successfully",
+	}
+}
