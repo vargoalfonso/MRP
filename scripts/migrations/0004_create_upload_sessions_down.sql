@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS upload_chunks   CASCADE;
+DROP TABLE IF EXISTS upload_sessions CASCADE;
