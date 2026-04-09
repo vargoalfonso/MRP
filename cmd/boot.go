@@ -25,6 +25,10 @@ import (
 	departementHandler "github.com/ganasa18/go-template/internal/departement/handler"
 	departementRepository "github.com/ganasa18/go-template/internal/departement/repository"
 	departementService "github.com/ganasa18/go-template/internal/departement/service"
+	employeeModule "github.com/ganasa18/go-template/internal/employee"
+	employeeHandler "github.com/ganasa18/go-template/internal/employee/handler"
+	employeeRepository "github.com/ganasa18/go-template/internal/employee/repository"
+	employeeService "github.com/ganasa18/go-template/internal/employee/service"
 	appmodule "github.com/ganasa18/go-template/internal/module"
 	roleModule "github.com/ganasa18/go-template/internal/role"
 	roleHandler "github.com/ganasa18/go-template/internal/role/handler"
@@ -68,6 +72,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	authHTTPHandler := authHandler.New(authSvc)
 	roleHTTPHandler := roleHandler.New(roleSvc)
 
+  employeeRepo := employeeRepository.New(db)
+	employeeSvc := employeeService.New(employeeRepo)
+	employeeHTTPHandler := employeeHandler.New(employeeSvc)
+
 	// BOM module
 	bomRepo := bomRepository.New(db)
 	bomSvc := bomService.New(bomRepo)
@@ -78,6 +86,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	uploadSvc := uploadService.New(uploadRepo, bomRepo)
 	uploadHTTPHandler := uploadHandler.New(uploadSvc)
 
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -85,6 +94,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		uploadModule.NewHTTPModule(baseHTTPHandler, uploadHTTPHandler, uploadSvc),
 		roleModule.NewHTTPModule(cfg, baseHTTPHandler, roleHTTPHandler, authSvc, roleSvc),
 		departementModule.NewHTTPModule(cfg, baseHTTPHandler, departementHTTPHandler, authSvc, roleSvc, departementSvc),
+		employeeModule.NewHTTPModule(cfg, baseHTTPHandler, employeeHTTPHandler, authSvc, roleSvc, employeeSvc),
 	}
 
 	// --- Server ---
