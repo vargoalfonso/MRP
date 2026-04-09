@@ -16,11 +16,6 @@ import (
 	bomHandler "github.com/ganasa18/go-template/internal/billmaterial/handler"
 	bomRepository "github.com/ganasa18/go-template/internal/billmaterial/repository"
 	bomService "github.com/ganasa18/go-template/internal/billmaterial/service"
-	appmodule "github.com/ganasa18/go-template/internal/module"
-	uploadModule "github.com/ganasa18/go-template/internal/upload"
-	uploadHandler "github.com/ganasa18/go-template/internal/upload/handler"
-	uploadRepository "github.com/ganasa18/go-template/internal/upload/repository"
-	uploadService "github.com/ganasa18/go-template/internal/upload/service"
 	departementModule "github.com/ganasa18/go-template/internal/departement"
 	departementHandler "github.com/ganasa18/go-template/internal/departement/handler"
 	departementRepository "github.com/ganasa18/go-template/internal/departement/repository"
@@ -34,6 +29,10 @@ import (
 	roleHandler "github.com/ganasa18/go-template/internal/role/handler"
 	roleRepository "github.com/ganasa18/go-template/internal/role/repository"
 	roleService "github.com/ganasa18/go-template/internal/role/service"
+	uploadModule "github.com/ganasa18/go-template/internal/upload"
+	uploadHandler "github.com/ganasa18/go-template/internal/upload/handler"
+	uploadRepository "github.com/ganasa18/go-template/internal/upload/repository"
+	uploadService "github.com/ganasa18/go-template/internal/upload/service"
 )
 
 // initHTTP wires every module inside the modular monolith and returns an HTTP server.
@@ -72,7 +71,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	authHTTPHandler := authHandler.New(authSvc)
 	roleHTTPHandler := roleHandler.New(roleSvc)
 
-  employeeRepo := employeeRepository.New(db)
+	employeeRepo := employeeRepository.New(db)
 	employeeSvc := employeeService.New(employeeRepo)
 	employeeHTTPHandler := employeeHandler.New(employeeSvc)
 
@@ -85,7 +84,6 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	uploadRepo := uploadRepository.New(db)
 	uploadSvc := uploadService.New(uploadRepo, bomRepo)
 	uploadHTTPHandler := uploadHandler.New(uploadSvc)
-
 
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
