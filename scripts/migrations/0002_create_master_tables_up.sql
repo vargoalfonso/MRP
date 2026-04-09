@@ -58,11 +58,11 @@ CREATE TABLE
  );
 
 -- =========================
--- TABLE: access_control_matrix
+-- TABLE: access_control_matrices
 -- =========================
 CREATE TABLE
- IF NOT EXISTS access_control_matrix (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4 (),
+ IF NOT EXISTS access_control_matrices (
+  id BIGSERIAL PRIMARY KEY,
   full_name VARCHAR(150),
   employee_id BIGINT,
   role_id BIGINT,
