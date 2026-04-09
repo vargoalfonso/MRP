@@ -79,6 +79,15 @@ func (h *HTTPHandler) GetDepartmentByID(appCtx *app.Context) *app.CostumeRespons
 		}
 	}
 
+	_, err = h.service.GetByID(appCtx.Request.Context(), id)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusNotFound,
+			Message:   "Not Found. Department does not exist",
+		}
+	}
+
 	data, err := h.service.GetByID(appCtx.Request.Context(), id)
 	if err != nil {
 		return app.NewError(appCtx, err)
@@ -101,6 +110,15 @@ func (h *HTTPHandler) UpdateDepartment(appCtx *app.Context) *app.CostumeResponse
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusBadRequest,
 			Message:   "invalid id",
+		}
+	}
+
+	_, err = h.service.GetByID(appCtx.Request.Context(), id)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusNotFound,
+			Message:   "Not Found. Department does not exist",
 		}
 	}
 
@@ -144,6 +162,15 @@ func (h *HTTPHandler) DeleteDepartment(appCtx *app.Context) *app.CostumeResponse
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusBadRequest,
 			Message:   "invalid id",
+		}
+	}
+
+	_, err = h.service.GetByID(appCtx.Request.Context(), id)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusNotFound,
+			Message:   "Not Found. Department does not exist",
 		}
 	}
 
