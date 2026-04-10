@@ -415,6 +415,14 @@ func (r *repo) ListLegacySuppliersForBudget(ctx context.Context, budgetType, per
 }
 
 func (r *repo) GetSupplierUUIDByLegacyID(ctx context.Context, legacySupplierID int64) (*string, error) {
+	var mapTableExists bool
+	if err := r.db.WithContext(ctx).Raw("SELECT to_regclass('supplier_legacy_map') IS NOT NULL").Scan(&mapTableExists).Error; err != nil {
+		return nil, fmt.Errorf("GetSupplierUUIDByLegacyID/check table: %w", err)
+	}
+	if !mapTableExists {
+		return nil, nil
+	}
+
 	var supplierUUID string
 	err := r.db.WithContext(ctx).
 		Table("supplier_legacy_map").
