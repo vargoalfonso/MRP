@@ -41,6 +41,7 @@ func (s *service) Create(ctx context.Context, req models.CreatePOSplitRequest) (
 		MinOrderQty:   req.MinOrderQty,
 		MaxSplitLines: req.MaxSplitLines,
 		SplitRule:     req.SplitRule,
+		Status:        req.Status,
 	}
 
 	if err := s.repo.Create(ctx, &data); err != nil {

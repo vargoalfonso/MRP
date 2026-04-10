@@ -10,6 +10,7 @@ type POSplitSetting struct {
 	MinOrderQty   int       `json:"min_order_qty"`
 	MaxSplitLines int       `json:"max_split_lines"`
 	SplitRule     string    `json:"split_rule"`
+	Status        string    `json:"status"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
