@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/ganasa18/go-template/internal/kanban/models"
 	kanbanRepo "github.com/ganasa18/go-template/internal/kanban/repository"
@@ -29,7 +31,11 @@ func New(repo kanbanRepo.IKanbanParameterRepository) IKanbanParameterService {
 // CRUD
 // =========================
 func (s *service) Create(ctx context.Context, req models.CreateKanbanParameterRequest) (*models.KanbanParameter, error) {
+	totalPO := "004"
+	kanbanNumber := fmt.Sprintf("KBN-%s-%d", totalPO, time.Now().Year())
+
 	data := models.KanbanParameter{
+		KanbanNumber: kanbanNumber,
 		ItemUniqCode: req.ItemUniqCode,
 		KanbanQty:    req.KanbanQty,
 		MinStock:     req.MinStock,
