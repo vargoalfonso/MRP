@@ -158,6 +158,54 @@ func BomPagination(c *app.Context) BomPaginationInput {
 	}
 }
 
+// POBudgetPaginationInput extends PaginationInput with PO Budget-specific filters.
+type POBudgetPaginationInput struct {
+	Limit          int           `json:"limit"`
+	Page           int           `json:"page"`
+	Search         string        `json:"search"`
+	Filter         []FilterInput `json:"filter"`
+	OrderBy        string        `json:"order_by"`
+	OrderDirection string        `json:"order_direction"`
+	UniqCode       string        `json:"uniq_code"`
+	CustomerID     int64         `json:"customer_id"`
+	Period         string        `json:"period"` // e.g. "October 2025"
+	Status         string        `json:"status"` // Draft | Pending | Approved | Rejected
+}
+
+func (p POBudgetPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// POBudgetPagination parses PO Budget-specific pagination params.
+//
+//	?limit=20&page=1&search=RM-001&uniq_code=RM-001&customer_id=5&period=October+2025&status=Draft
+func POBudgetPagination(c *app.Context) POBudgetPaginationInput {
+	base := Pagination(c)
+
+	var customerID int64
+	if v := c.Query("customer_id"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			customerID = n
+		}
+	}
+
+	return POBudgetPaginationInput{
+		Limit:          base.Limit,
+		Page:           base.Page,
+		Search:         base.Search,
+		Filter:         base.Filter,
+		OrderBy:        base.OrderBy,
+		OrderDirection: base.OrderDirection,
+		UniqCode:       c.Query("uniq_code"),
+		CustomerID:     customerID,
+		Period:         c.Query("period"),
+		Status:         c.Query("status"),
+	}
+}
+
 // DateRangePagination parses pagination with start/end date filters.
 //
 //	?limit=20&page=1&startDate=2025-01-01&endDate=2025-12-31

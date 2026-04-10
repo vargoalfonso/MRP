@@ -20,6 +20,10 @@ import (
 	bomHandler "github.com/ganasa18/go-template/internal/billmaterial/handler"
 	bomRepository "github.com/ganasa18/go-template/internal/billmaterial/repository"
 	bomService "github.com/ganasa18/go-template/internal/billmaterial/service"
+	poBudgetModule "github.com/ganasa18/go-template/internal/po_budget"
+	poBudgetHandler "github.com/ganasa18/go-template/internal/po_budget/handler"
+	poBudgetRepository "github.com/ganasa18/go-template/internal/po_budget/repository"
+	poBudgetService "github.com/ganasa18/go-template/internal/po_budget/service"
 	departementModule "github.com/ganasa18/go-template/internal/departement"
 	departementHandler "github.com/ganasa18/go-template/internal/departement/handler"
 	departementRepository "github.com/ganasa18/go-template/internal/departement/repository"
@@ -37,7 +41,15 @@ import (
 	roleHandler "github.com/ganasa18/go-template/internal/role/handler"
 	roleRepository "github.com/ganasa18/go-template/internal/role/repository"
 	roleService "github.com/ganasa18/go-template/internal/role/service"
-	typeParameterModule "github.com/ganasa18/go-template/internal/type_parameter"
+	safetyStockModule "github.com/ganasa18/go-template/internal/safety_stock_parameter"
+	safetyStockHandler "github.com/ganasa18/go-template/internal/safety_stock_parameter/handler"
+	safetyStockRepo "github.com/ganasa18/go-template/internal/safety_stock_parameter/repository"
+	safetyStockService "github.com/ganasa18/go-template/internal/safety_stock_parameter/service"
+	uploadModule "github.com/ganasa18/go-template/internal/upload"
+	uploadHandler "github.com/ganasa18/go-template/internal/upload/handler"
+	uploadRepository "github.com/ganasa18/go-template/internal/upload/repository"
+	uploadService "github.com/ganasa18/go-template/internal/upload/service"
+  	typeParameterModule "github.com/ganasa18/go-template/internal/type_parameter"
 	typeParameterHandler "github.com/ganasa18/go-template/internal/type_parameter/handler"
 	typeParameterRepository "github.com/ganasa18/go-template/internal/type_parameter/repository"
 	typeParameterService "github.com/ganasa18/go-template/internal/type_parameter/service"
@@ -45,10 +57,6 @@ import (
 	UnitMeasureHandler "github.com/ganasa18/go-template/internal/unit_measurement/handler"
 	UnitMeasureRepository "github.com/ganasa18/go-template/internal/unit_measurement/repository"
 	UnitMeasureService "github.com/ganasa18/go-template/internal/unit_measurement/service"
-	uploadModule "github.com/ganasa18/go-template/internal/upload"
-	uploadHandler "github.com/ganasa18/go-template/internal/upload/handler"
-	uploadRepository "github.com/ganasa18/go-template/internal/upload/repository"
-	uploadService "github.com/ganasa18/go-template/internal/upload/service"
 )
 
 // initHTTP wires every module inside the modular monolith and returns an HTTP server.
@@ -105,7 +113,16 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	uploadSvc := uploadService.New(uploadRepo, bomRepo)
 	uploadHTTPHandler := uploadHandler.New(uploadSvc)
 
-	typeParameterRepo := typeParameterRepository.New(db)
+	// PO Budget module
+	poBudgetRepo := poBudgetRepository.New(db)
+	poBudgetSvc := poBudgetService.New(poBudgetRepo)
+	poBudgetHTTPHandler := poBudgetHandler.New(poBudgetSvc)
+
+  safetyStockRepository := safetyStockRepo.New(db)
+	safetyStockService := safetyStockService.New(safetyStockRepository)
+	safetyStockHandler := safetyStockHandler.New(safetyStockService)
+  
+  typeParameterRepo := typeParameterRepository.New(db)
 	typeParameterSvc := typeParameterService.New(typeParameterRepo)
 	typeParameterHTTPHandler := typeParameterHandler.New(typeParameterSvc)
 
@@ -120,13 +137,15 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
-		bomModule.NewHTTPModule(baseHTTPHandler, bomHTTPHandler, bomSvc),
+		bomModule.NewHTTPModule(cfg, baseHTTPHandler, bomHTTPHandler, authSvc, roleSvc, bomSvc),
 		uploadModule.NewHTTPModule(baseHTTPHandler, uploadHTTPHandler, uploadSvc),
 		roleModule.NewHTTPModule(cfg, baseHTTPHandler, roleHTTPHandler, authSvc, roleSvc),
 		departementModule.NewHTTPModule(cfg, baseHTTPHandler, departementHTTPHandler, authSvc, roleSvc, departementSvc),
 		employeeModule.NewHTTPModule(cfg, baseHTTPHandler, employeeHTTPHandler, authSvc, roleSvc, employeeSvc),
 		userModule.NewHTTPModule(cfg, baseHTTPHandler, userHTTPHandler, authSvc, roleSvc, userSvc),
-		typeParameterModule.NewHTTPModule(cfg, baseHTTPHandler, typeParameterHTTPHandler, authSvc, roleSvc, typeParameterSvc),
+		poBudgetModule.NewHTTPModule(cfg, baseHTTPHandler, poBudgetHTTPHandler, authSvc, roleSvc),
+    safetyStockModule.NewHTTPModule(cfg, baseHTTPHandler, safetyStockHandler, authSvc, roleSvc, safetyStockService),
+    typeParameterModule.NewHTTPModule(cfg, baseHTTPHandler, typeParameterHTTPHandler, authSvc, roleSvc, typeParameterSvc),
 		UnitMeasureModule.NewHTTPModule(cfg, baseHTTPHandler, unitMeasureHTTPHandler, authSvc, roleSvc, unitMeasureSvc),
 		poSplitSettingModule.NewHTTPModule(cfg, baseHTTPHandler, poSplitSettingHTTPHandler, authSvc, roleSvc, poSplitSettingSvc),
 	}

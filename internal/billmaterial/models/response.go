@@ -25,6 +25,7 @@ type AssetInfo struct {
 
 type BomTreeRow struct {
 	ID         int64        `json:"id"`
+	LineID     *int64       `json:"line_id,omitempty"`
 	UniqCode   string       `json:"uniq_code"`
 	PartName   string       `json:"part_name"`
 	PartNumber *string      `json:"part_number"`
@@ -37,9 +38,8 @@ type BomTreeRow struct {
 }
 
 type ListBomResponse struct {
-	Meta       pagination.Meta `json:"meta"`        // total, page, limit, total_pages
-	TotalChild int64           `json:"total_child"` // child component count across shown parents
 	Items      []BomTreeRow    `json:"items"`
+	Pagination pagination.Meta `json:"pagination"` // page, limit, total, total_pages
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +78,7 @@ type MaterialSpecDetail struct {
 
 type BomDetailChild struct {
 	ID            int64                `json:"id"`
+	LineID        int64                `json:"line_id"`
 	UniqCode      string               `json:"uniq_code"`
 	PartName      string               `json:"part_name"`
 	PartNumber    *string              `json:"part_number"`
