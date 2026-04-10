@@ -184,6 +184,56 @@ func (h *HTTPHandler) GetEntryDetail(ctx *app.Context) *app.CostumeResponse {
 	if err != nil {
 		return app.NewError(ctx, err)
 	}
+
+	if strings.EqualFold(ctx.Query("format"), "grouped") {
+		e := result.Entry
+		grouped := models.EntryDetailGroupedResponse{
+			BasicInformation: models.EntryBasicInformation{
+				ID:           e.ID,
+				CustomerName: e.CustomerName,
+				Uniq:         e.Uniq,
+				ProductModel: e.ProductModel,
+				PartName:     e.PartName,
+				PartNumber:   e.PartNumber,
+				SupplierName: e.SupplierName,
+				BudgetType:   e.BudgetType,
+				TypeLabel:    e.BudgetSubtype,
+				Period:       e.Period,
+			},
+			BudgetCalculations: models.EntryBudgetCalculations{
+				SalesPlan:       e.SalesPlan,
+				PurchaseRequest: e.PurchaseRequest,
+				PrlAmount:       e.Prl,
+				Po1Pct:          e.Po1Pct,
+				Po2Pct:          e.Po2Pct,
+			},
+			CalculationResults: models.EntryCalculationResults{
+				Po1Amount:   e.Po1Amount,
+				Po2Amount:   e.Po2Amount,
+				TotalPO:     e.TotalPO,
+				ApoPrlAbs:   result.Summary.ApoPrlAbs,
+				ApoPrlState: result.Summary.ApoPrlState,
+			},
+			AdditionalInformation: models.EntryAdditionalInformation{
+				SubmittedBy:     e.SubmittedBy,
+				SubmittedByName: e.SubmittedByName,
+				SubmittedAt:     e.SubmittedAt,
+				ApprovedBy:      e.ApprovedBy,
+				ApprovedByName:  e.ApprovedByName,
+				ApprovedAt:      e.ApprovedAt,
+				Notes:           e.Description,
+			},
+			Summary: result.Summary,
+			History: result.History,
+		}
+
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusOK,
+			Message:   http.StatusText(http.StatusOK),
+			Data:      grouped,
+		}
+	}
 	return &app.CostumeResponse{
 		RequestID: ctx.APIReqID,
 		Status:    http.StatusOK,
