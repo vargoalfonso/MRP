@@ -6,6 +6,7 @@ import (
 
 type KanbanParameter struct {
 	ID           int64     `json:"id" gorm:"primaryKey"`
+	KanbanNumber string    `json:"kanban_number"`
 	ItemUniqCode string    `json:"item_uniq_code"`
 	KanbanQty    int       `json:"kanban_qty"`
 	MinStock     int       `json:"min_stock"`

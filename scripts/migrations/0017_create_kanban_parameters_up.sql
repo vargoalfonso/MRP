@@ -6,6 +6,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- global_parameters
 CREATE TABLE IF NOT EXISTS kanban_parameters (
     id BIGSERIAL PRIMARY KEY,
+    kanban_number VARCHAR(50) NOT NULL,
     item_uniq_code VARCHAR(100) NOT NULL,
     kanban_qty INT NOT NULL,
     min_stock INT DEFAULT 0,

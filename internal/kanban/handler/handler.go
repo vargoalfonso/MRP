@@ -60,6 +60,15 @@ func (h *HTTPHandler) CreateKanbanParameter(appCtx *app.Context) *app.CostumeRes
 		}
 	}
 
+	_, err := h.service.GetByItemCode(appCtx.Request.Context(), req.ItemUniqCode)
+	if err == nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusConflict,
+			Message:   "Conflict. Kanban parameter with the same item code already exists",
+		}
+	}
+
 	data, err := h.service.Create(appCtx.Request.Context(), req)
 	if err != nil {
 		return app.NewError(appCtx, err)
