@@ -13,6 +13,7 @@ import (
 // ListFilter carries all query params for listing entries.
 type ListFilter struct {
 	BudgetType     string
+	BudgetSubtype  string
 	UniqCode       string
 	CustomerID     int64
 	Period         string
@@ -26,12 +27,13 @@ type ListFilter struct {
 
 // AggFilter carries filter params for the aggregated view.
 type AggFilter struct {
-	BudgetType string
-	UniqCode   string
-	CustomerID int64
-	Period     string
-	Page       int
-	Limit      int
+	BudgetType    string
+	BudgetSubtype string
+	UniqCode      string
+	CustomerID    int64
+	Period        string
+	Page          int
+	Limit         int
 }
 
 // IRepository is the data-access contract for the PO Budget module.
@@ -48,6 +50,8 @@ type IRepository interface {
 	// History logs
 	CreateLog(ctx context.Context, log *models.POBudgetEntryLog) error
 	ListLogsByEntryID(ctx context.Context, entryID int64) ([]models.POBudgetEntryLog, error)
+	// Resolve user UUIDs (uid) to usernames for UI display.
+	ResolveUsernames(ctx context.Context, userUUIDs []string) (map[string]string, error)
 
 	// Aggregated view
 	ListAggregated(ctx context.Context, f AggFilter) ([]models.AggregatedRow, int64, error)
@@ -108,7 +112,7 @@ func (r *repo) CreateEntry(ctx context.Context, e *models.POBudgetEntry) error {
 	// Manual entry creation must not depend on PRL-linkage columns.
 	// Bulk-from-PRL uses BulkCreateEntries (no omit) and will set linkage fields.
 	return r.db.WithContext(ctx).
-		Omit("PrlID", "PrlItemID", "PrlRef", "PrlRowID", "BudgetQty", "BudgetSubtype").
+		Omit("PrlID", "PrlItemID", "PrlRef", "PrlRowID", "BudgetQty").
 		Create(e).Error
 }
 
@@ -124,7 +128,7 @@ func (r *repo) GetEntryByID(ctx context.Context, id int64) (*models.POBudgetEntr
 
 func (r *repo) UpdateEntry(ctx context.Context, e *models.POBudgetEntry) error {
 	return r.db.WithContext(ctx).
-		Omit("PrlID", "PrlItemID", "PrlRef", "PrlRowID", "BudgetQty", "BudgetSubtype").
+		Omit("PrlID", "PrlItemID", "PrlRef", "PrlRowID", "BudgetQty").
 		Save(e).Error
 }
 
@@ -145,6 +149,43 @@ func (r *repo) ListLogsByEntryID(ctx context.Context, entryID int64) ([]models.P
 		return nil, err
 	}
 	return rows, nil
+}
+
+func (r *repo) ResolveUsernames(ctx context.Context, userUUIDs []string) (map[string]string, error) {
+	ids := make([]string, 0, len(userUUIDs))
+	seen := make(map[string]struct{}, len(userUUIDs))
+	for _, id := range userUUIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return map[string]string{}, nil
+	}
+
+	type row struct {
+		UUID     string
+		Username string
+	}
+	var rows []row
+	if err := r.db.WithContext(ctx).
+		Table("users").
+		Select("uuid, username").
+		Where("uuid IN ?", ids).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		out[r.UUID] = r.Username
+	}
+	return out, nil
 }
 
 func (r *repo) DeleteEntry(ctx context.Context, id int64) error {
@@ -230,6 +271,17 @@ func (r *repo) GetSummary(ctx context.Context, budgetType, period string) (*mode
 		TotalPRL         float64
 		DeltaApoPrl      float64
 		PendingApprovals int64
+
+		TotalEntriesRegular     int64
+		TotalEntriesAdhoc       int64
+		TotalPRRegular          float64
+		TotalPRAdhoc            float64
+		TotalPORegular          float64
+		TotalPOAdhoc            float64
+		TotalPRLRegular         float64
+		TotalPRLAdhoc           float64
+		PendingApprovalsRegular int64
+		PendingApprovalsAdhoc   int64
 	}
 
 	q := r.db.WithContext(ctx).Table("po_budget_entries").Where("budget_type = ?", budgetType)
@@ -246,8 +298,31 @@ func (r *repo) GetSummary(ctx context.Context, budgetType, period string) (*mode
 		"COALESCE(SUM(prl), 0) AS total_prl",
 		"COALESCE(SUM(total_po), 0) - COALESCE(SUM(prl), 0) AS delta_apo_prl",
 		"COALESCE(SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END), 0) AS pending_approvals",
+
+		"COALESCE(SUM(CASE WHEN COALESCE(budget_subtype,'regular') = 'regular' THEN 1 ELSE 0 END), 0) AS total_entries_regular",
+		"COALESCE(SUM(CASE WHEN COALESCE(budget_subtype,'regular') = 'adhoc' THEN 1 ELSE 0 END), 0) AS total_entries_adhoc",
+		"COALESCE(SUM(CASE WHEN COALESCE(budget_subtype,'regular') = 'regular' THEN purchase_request ELSE 0 END), 0) AS total_pr_regular",
+		"COALESCE(SUM(CASE WHEN COALESCE(budget_subtype,'regular') = 'adhoc' THEN purchase_request ELSE 0 END), 0) AS total_pr_adhoc",
+		"COALESCE(SUM(CASE WHEN COALESCE(budget_subtype,'regular') = 'regular' THEN total_po ELSE 0 END), 0) AS total_po_regular",
+		"COALESCE(SUM(CASE WHEN COALESCE(budget_subtype,'regular') = 'adhoc' THEN total_po ELSE 0 END), 0) AS total_po_adhoc",
+		"COALESCE(SUM(CASE WHEN COALESCE(budget_subtype,'regular') = 'regular' THEN prl ELSE 0 END), 0) AS total_prl_regular",
+		"COALESCE(SUM(CASE WHEN COALESCE(budget_subtype,'regular') = 'adhoc' THEN prl ELSE 0 END), 0) AS total_prl_adhoc",
+		"COALESCE(SUM(CASE WHEN status = 'Pending' AND COALESCE(budget_subtype,'regular') = 'regular' THEN 1 ELSE 0 END), 0) AS pending_approvals_regular",
+		"COALESCE(SUM(CASE WHEN status = 'Pending' AND COALESCE(budget_subtype,'regular') = 'adhoc' THEN 1 ELSE 0 END), 0) AS pending_approvals_adhoc",
 	}, ", ")).Scan(&out).Error; err != nil {
 		return nil, err
+	}
+
+	apo := out.DeltaApoPrl
+	abs := apo
+	if abs < 0 {
+		abs = -abs
+	}
+	state := "match"
+	if apo > 0 {
+		state = "over"
+	} else if apo < 0 {
+		state = "under"
 	}
 
 	return &models.SummaryResponse{
@@ -257,7 +332,21 @@ func (r *repo) GetSummary(ctx context.Context, budgetType, period string) (*mode
 		TotalPO:          out.TotalPO,
 		TotalPRL:         out.TotalPRL,
 		DeltaApoPrl:      out.DeltaApoPrl,
+		ApoPrlAmount:     apo,
+		ApoPrlAbs:        abs,
+		ApoPrlState:      state,
 		PendingApprovals: out.PendingApprovals,
+
+		TotalEntriesRegular:     out.TotalEntriesRegular,
+		TotalEntriesAdhoc:       out.TotalEntriesAdhoc,
+		TotalPurchaseReqRegular: out.TotalPRRegular,
+		TotalPurchaseReqAdhoc:   out.TotalPRAdhoc,
+		TotalPORegular:          out.TotalPORegular,
+		TotalPOAdhoc:            out.TotalPOAdhoc,
+		TotalPRLRegular:         out.TotalPRLRegular,
+		TotalPRLAdhoc:           out.TotalPRLAdhoc,
+		PendingApprovalsRegular: out.PendingApprovalsRegular,
+		PendingApprovalsAdhoc:   out.PendingApprovalsAdhoc,
 	}, nil
 }
 

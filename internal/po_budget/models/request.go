@@ -6,6 +6,7 @@ package models
 
 type ListBudgetQuery struct {
 	BudgetType     string // raw_material | subcon | indirect
+	BudgetSubtype  string // regular | adhoc (empty = all)
 	UniqCode       string
 	CustomerID     int64
 	Period         string // "October 2025"
@@ -22,7 +23,10 @@ type ListBudgetQuery struct {
 // ---------------------------------------------------------------------------
 
 type CreateEntryRequest struct {
-	BudgetType      string   `json:"budget_type"      validate:"required,oneof=raw_material subcon indirect"`
+	BudgetType string `json:"budget_type"      validate:"required,oneof=raw_material subcon indirect"`
+	// BudgetSubtype distinguishes regular plan vs additional (adhoc) purchase.
+	// If omitted, backend defaults to "regular".
+	BudgetSubtype   *string  `json:"budget_subtype"   validate:"omitempty,oneof=adhoc regular"`
 	CustomerID      *int64   `json:"customer_id"`
 	CustomerName    *string  `json:"customer_name"`
 	UniqCode        string   `json:"uniq_code"        validate:"required"`
@@ -46,6 +50,7 @@ type CreateEntryRequest struct {
 }
 
 type UpdateEntryRequest struct {
+	BudgetSubtype   *string  `json:"budget_subtype"   validate:"omitempty,oneof=adhoc regular"`
 	CustomerID      *int64   `json:"customer_id"`
 	CustomerName    *string  `json:"customer_name"`
 	ProductModel    *string  `json:"product_model"`
@@ -72,9 +77,13 @@ type UpdateEntryRequest struct {
 // ---------------------------------------------------------------------------
 
 type UpdateSplitSettingRequest struct {
-	Po1Pct      float64 `json:"po1_pct"  validate:"required,gte=0,lte=100"`
-	Po2Pct      float64 `json:"po2_pct"  validate:"required,gte=0,lte=100"`
-	Description *string `json:"description"`
+	Po1Pct        *float64 `json:"po1_pct"        validate:"omitempty,gte=0,lte=100"`
+	Po2Pct        *float64 `json:"po2_pct"        validate:"omitempty,gte=0,lte=100"`
+	MinOrderQty   *int64   `json:"min_order_qty"  validate:"omitempty,gte=0"`
+	MaxSplitLines *int64   `json:"max_split_lines" validate:"omitempty,gte=0"`
+	SplitRule     *string  `json:"split_rule"     validate:"omitempty"`
+	Status        *string  `json:"status"         validate:"omitempty,oneof=Active Inactive"`
+	Description   *string  `json:"description"    validate:"omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -82,8 +91,9 @@ type UpdateSplitSettingRequest struct {
 // ---------------------------------------------------------------------------
 
 type ApproveRequest struct {
-	Status     string  `json:"status"      validate:"required,oneof=Approved Rejected"`
-	ApprovedBy string  `json:"approved_by" validate:"required"`
+	Status string `json:"status"      validate:"required,oneof=Approved Rejected"`
+	// NOTE: this is always overwritten by backend from JWT uid (claims.uid).
+	ApprovedBy string  `json:"approved_by,omitempty"`
 	Notes      *string `json:"notes"`
 }
 

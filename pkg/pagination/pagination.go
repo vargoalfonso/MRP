@@ -168,8 +168,9 @@ type POBudgetPaginationInput struct {
 	OrderDirection string        `json:"order_direction"`
 	UniqCode       string        `json:"uniq_code"`
 	CustomerID     int64         `json:"customer_id"`
-	Period         string        `json:"period"` // e.g. "October 2025"
-	Status         string        `json:"status"` // Draft | Pending | Approved | Rejected
+	Period         string        `json:"period"`         // e.g. "October 2025"
+	Status         string        `json:"status"`         // Draft | Pending | Approved | Rejected
+	BudgetSubtype  string        `json:"budget_subtype"` // regular | adhoc
 }
 
 func (p POBudgetPaginationInput) Offset() int {
@@ -203,6 +204,7 @@ func POBudgetPagination(c *app.Context) POBudgetPaginationInput {
 		CustomerID:     customerID,
 		Period:         c.Query("period"),
 		Status:         c.Query("status"),
+		BudgetSubtype:  c.Query("budget_subtype"),
 	}
 }
 
