@@ -31,11 +31,14 @@ type IRepository interface {
 
 	// Supplier lookup (legacy)
 	GetLegacySupplier(ctx context.Context, supplierID int64) (*models.LegacySupplier, error)
+	ListLegacySuppliersByIDs(ctx context.Context, supplierIDs []int64) ([]models.LegacySupplier, error)
 	ListLegacySuppliersForBudget(ctx context.Context, budgetType, period string) ([]models.LegacySupplier, error)
+	GetSupplierUUIDByLegacyID(ctx context.Context, legacySupplierID int64) (*string, error)
 
 	// Budget entries (read-only from po_budget_entries for form_options / generate)
 	ListBudgetEntriesForGenerate(ctx context.Context, budgetType, period string, supplierUUIDs []string, entryIDs []int64) ([]models.POBudgetEntry, error)
 	GetSplitSetting(ctx context.Context, budgetType string) (float64, float64, error) // po1Pct, po2Pct
+	GetSplitPolicy(ctx context.Context, budgetType string) (*POSplitPolicy, error)
 
 	// PO generation writes
 	CreatePO(ctx context.Context, po *models.PurchaseOrder) error
@@ -44,6 +47,15 @@ type IRepository interface {
 
 	// PO number sequence helper
 	NextPONumber(ctx context.Context, poType, period string) (string, error)
+}
+
+// POSplitPolicy contains active generation rules from po_split_settings.
+type POSplitPolicy struct {
+	Po1Pct        float64 `gorm:"column:po1_pct"`
+	Po2Pct        float64 `gorm:"column:po2_pct"`
+	MinOrderQty   int     `gorm:"column:min_order_qty"`
+	MaxSplitLines int     `gorm:"column:max_split_lines"`
+	SplitRule     string  `gorm:"column:split_rule"`
 }
 
 // POBoardFilter holds all filter options for the PO board list query.
@@ -62,7 +74,7 @@ type POBoardFilter struct {
 }
 
 func poTypeCode(poType string) string {
-	switch strings.ToLower(strings.TrimSpace(poType)) {
+	switch normalizeBudgetType(poType) {
 	case "raw_material":
 		return "RM"
 	case "subcon":
@@ -72,6 +84,15 @@ func poTypeCode(poType string) string {
 	default:
 		return strings.ToUpper(strings.TrimSpace(poType))
 	}
+}
+
+func normalizeBudgetType(v string) string {
+	v = strings.TrimSpace(strings.ToLower(v))
+	v = strings.ReplaceAll(v, " ", "_")
+	for strings.Contains(v, "__") {
+		v = strings.ReplaceAll(v, "__", "_")
+	}
+	return v
 }
 
 func extractYear(period string) string {
@@ -141,6 +162,14 @@ func (r *repo) GetSummary(ctx context.Context, poType, period string) (models.PO
 // ---------------------------------------------------------------------------
 
 func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoardRow, int64, error) {
+	// Some environments may not have DN tables yet; avoid hard failure in PO board query.
+	var hasDNTables bool
+	if err := r.db.WithContext(ctx).
+		Raw("SELECT to_regclass('incoming_dns') IS NOT NULL AND to_regclass('incoming_dn_items') IS NOT NULL").
+		Scan(&hasDNTables).Error; err != nil {
+		hasDNTables = false
+	}
+
 	base := r.db.WithContext(ctx).
 		Table("purchase_orders po").
 		Joins("LEFT JOIN supplier s ON s.supplier_id = po.supplier_id").
@@ -148,14 +177,17 @@ func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoa
 			SELECT COALESCE(SUM(poi.ordered_qty), 0) AS total_budget_po
 			FROM   purchase_order_items poi
 			WHERE  poi.po_id = po.po_id
-		) budget ON true`).
-		Joins(`LEFT JOIN LATERAL (
+		) budget ON true`)
+
+	if hasDNTables {
+		base = base.Joins(`LEFT JOIN LATERAL (
 			SELECT COALESCE(SUM(idi.qty_received::numeric), 0) AS qty_delivered,
 			       MIN(idi.item_uniq_code)                      AS uniq_code
 			FROM   incoming_dns idn
 			JOIN   incoming_dn_items idi ON idi.incoming_dn_id = idn.id
 			WHERE  idn.po_number = po.po_number
 		) dn_agg ON true`)
+	}
 
 	// Apply filters
 	if f.PoType != "" {
@@ -206,17 +238,24 @@ func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoa
 	}
 
 	today := time.Now().Format("2006-01-02")
+	dnQtySelect := "COALESCE(dn_agg.qty_delivered, 0)                AS qty_delivered"
+	dnUniqSelect := "dn_agg.uniq_code"
+	if !hasDNTables {
+		dnQtySelect = "0::numeric                                       AS qty_delivered"
+		dnUniqSelect = "NULL::varchar                                   AS uniq_code"
+	}
+
 	var rows []models.POBoardRow
 	err := base.
-		Select(`
+		Select(fmt.Sprintf(`
 			po.po_id,
 			po.po_type,
 			po.po_stage,
 			po.period,
 			po.po_number,
 			COALESCE(budget.total_budget_po, 0)              AS total_budget_po,
-			COALESCE(dn_agg.qty_delivered, 0)                AS qty_delivered,
-			dn_agg.uniq_code,
+			%s,
+			%s,
 			po.supplier_id,
 			s.supplier_name,
 			po.dn_created,
@@ -225,7 +264,7 @@ func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoa
 			(po.expected_delivery_date IS NOT NULL
 			  AND po.expected_delivery_date < ?
 			  AND po.status NOT IN ('closed','cancelled'))   AS is_late
-		`, today).
+		`, dnQtySelect, dnUniqSelect), today).
 		Order(fmt.Sprintf("%s %s", orderBy, dir)).
 		Limit(limit).
 		Offset(offset).
@@ -339,6 +378,23 @@ func (r *repo) GetLegacySupplier(ctx context.Context, supplierID int64) (*models
 	return &s, nil
 }
 
+func (r *repo) ListLegacySuppliersByIDs(ctx context.Context, supplierIDs []int64) ([]models.LegacySupplier, error) {
+	if len(supplierIDs) == 0 {
+		return []models.LegacySupplier{}, nil
+	}
+
+	var suppliers []models.LegacySupplier
+	err := r.db.WithContext(ctx).
+		Table("supplier").
+		Select("supplier_id, supplier_name").
+		Where("supplier_id IN ?", supplierIDs).
+		Find(&suppliers).Error
+	if err != nil {
+		return nil, fmt.Errorf("ListLegacySuppliersByIDs: %w", err)
+	}
+	return suppliers, nil
+}
+
 // ListLegacySuppliersForBudget returns legacy suppliers that have budget entries
 // for the given budget_type + period (via supplier_legacy_map bridge).
 func (r *repo) ListLegacySuppliersForBudget(ctx context.Context, budgetType, period string) ([]models.LegacySupplier, error) {
@@ -347,7 +403,7 @@ func (r *repo) ListLegacySuppliersForBudget(ctx context.Context, budgetType, per
 		Table("supplier s").
 		Joins(`JOIN supplier_legacy_map slm ON slm.legacy_supplier_id = s.supplier_id`).
 		Joins(`JOIN po_budget_entries pbe ON pbe.supplier_id::text = slm.supplier_uuid::text`).
-		Where("pbe.budget_type = ? AND pbe.period ILIKE ?", budgetType, "%"+period+"%").
+		Where("LOWER(REPLACE(pbe.budget_type, ' ', '_')) = LOWER(REPLACE(?, ' ', '_')) AND pbe.period ILIKE ?", budgetType, "%"+period+"%").
 		Where("pbe.status = 'Approved'").
 		Distinct("s.supplier_id, s.supplier_name").
 		Select("s.supplier_id, s.supplier_name").
@@ -356,6 +412,24 @@ func (r *repo) ListLegacySuppliersForBudget(ctx context.Context, budgetType, per
 		return nil, fmt.Errorf("ListLegacySuppliersForBudget: %w", err)
 	}
 	return suppliers, nil
+}
+
+func (r *repo) GetSupplierUUIDByLegacyID(ctx context.Context, legacySupplierID int64) (*string, error) {
+	var supplierUUID string
+	err := r.db.WithContext(ctx).
+		Table("supplier_legacy_map").
+		Select("supplier_uuid").
+		Where("legacy_supplier_id = ?", legacySupplierID).
+		Limit(1).
+		Scan(&supplierUUID).Error
+	if err != nil {
+		return nil, fmt.Errorf("GetSupplierUUIDByLegacyID: %w", err)
+	}
+	supplierUUID = strings.TrimSpace(supplierUUID)
+	if supplierUUID == "" {
+		return nil, nil
+	}
+	return &supplierUUID, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -368,9 +442,13 @@ func (r *repo) ListLegacySuppliersForBudget(ctx context.Context, budgetType, per
 func (r *repo) ListBudgetEntriesForGenerate(ctx context.Context, budgetType, period string, supplierUUIDs []string, entryIDs []int64) ([]models.POBudgetEntry, error) {
 	q := r.db.WithContext(ctx).
 		Table("po_budget_entries pbe").
-		Select("pbe.*, kp.kanban_qty AS pcs_per_kanban").
+		Select(`
+			pbe.*,
+			kp.kanban_qty AS pcs_per_kanban,
+			COALESCE(NULLIF(to_jsonb(kp)->>'kanban_number', ''), NULLIF(to_jsonb(pbe)->>'packing_number', '')) AS kanban_number
+		`).
 		Joins("LEFT JOIN kanban_parameters kp ON kp.item_uniq_code = pbe.uniq_code AND kp.status ILIKE 'active'").
-		Where("pbe.budget_type = ?", budgetType).
+		Where("LOWER(REPLACE(pbe.budget_type, ' ', '_')) = LOWER(REPLACE(?, ' ', '_'))", budgetType).
 		Where("pbe.status = 'Approved'")
 
 	if len(entryIDs) > 0 {
@@ -391,23 +469,37 @@ func (r *repo) ListBudgetEntriesForGenerate(ctx context.Context, budgetType, per
 }
 
 // GetSplitSetting returns po1_pct, po2_pct for the given budget type.
-// Falls back to 60/40 if no record found.
 func (r *repo) GetSplitSetting(ctx context.Context, budgetType string) (float64, float64, error) {
-	type row struct {
-		Po1Pct float64 `gorm:"column:po1_pct"`
-		Po2Pct float64 `gorm:"column:po2_pct"`
-	}
-	var s row
-	err := r.db.WithContext(ctx).
-		Table("po_split_settings").
-		Select("po1_pct, po2_pct").
-		Where("budget_type = ? AND status = 'Active'", budgetType).
-		First(&s).Error
+	policy, err := r.GetSplitPolicy(ctx, budgetType)
 	if err != nil {
-		// Fallback to global 60/40
-		return 60, 40, nil
+		return 0, 0, err
 	}
-	return s.Po1Pct, s.Po2Pct, nil
+	return policy.Po1Pct, policy.Po2Pct, nil
+}
+
+func (r *repo) GetSplitPolicy(ctx context.Context, budgetType string) (*POSplitPolicy, error) {
+	var s POSplitPolicy
+	err := r.db.WithContext(ctx).
+		Table("po_split_settings ps").
+		Select(`
+			COALESCE(NULLIF(to_jsonb(ps)->>'po1_pct', '')::numeric, 60)::float8 AS po1_pct,
+			COALESCE(NULLIF(to_jsonb(ps)->>'po2_pct', '')::numeric, 40)::float8 AS po2_pct,
+			COALESCE(NULLIF(to_jsonb(ps)->>'min_order_qty', '')::int, 0)        AS min_order_qty,
+			COALESCE(NULLIF(to_jsonb(ps)->>'max_split_lines', '')::int, 0)      AS max_split_lines,
+			COALESCE(NULLIF(to_jsonb(ps)->>'split_rule', ''), '')               AS split_rule
+		`).
+		Where("LOWER(REPLACE(ps.budget_type, ' ', '_')) = LOWER(REPLACE(?, ' ', '_'))", budgetType).
+		Where("LOWER(COALESCE(NULLIF(to_jsonb(ps)->>'status', ''), 'Active')) = 'active'").
+		Order("ps.id DESC").
+		Limit(1).
+		Scan(&s).Error
+	if err != nil {
+		return nil, fmt.Errorf("GetSplitPolicy: %w", err)
+	}
+	if s.Po1Pct == 0 && s.Po2Pct == 0 && s.MinOrderQty == 0 && s.MaxSplitLines == 0 && s.SplitRule == "" {
+		return nil, fmt.Errorf("no active po_split_settings found for budget_type=%s", budgetType)
+	}
+	return &s, nil
 }
 
 // ---------------------------------------------------------------------------

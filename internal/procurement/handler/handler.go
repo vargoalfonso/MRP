@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ganasa18/go-template/internal/base/app"
 	authModels "github.com/ganasa18/go-template/internal/auth/models"
+	"github.com/ganasa18/go-template/internal/base/app"
 	"github.com/ganasa18/go-template/internal/procurement/models"
 	"github.com/ganasa18/go-template/internal/procurement/service"
 	"github.com/ganasa18/go-template/pkg/pagination"
@@ -219,7 +219,10 @@ func (h *HTTPHandler) GeneratePO(ctx *app.Context) *app.CostumeResponse {
 		}
 	}
 	if req.GenerateMode == "" {
-		req.GenerateMode = "both_stages"
+		req.GenerateMode = "stage_only"
+		if req.Stage == 0 {
+			req.Stage = 1
+		}
 	}
 
 	// Validate line_strategy
@@ -269,6 +272,9 @@ func (h *HTTPHandler) GeneratePO(ctx *app.Context) *app.CostumeResponse {
 func isBusinessError(msg string) bool {
 	return strings.Contains(msg, "type mismatch") ||
 		strings.Contains(msg, "no approved budget entries found") ||
+		strings.Contains(msg, "po_split_settings") ||
+		strings.Contains(msg, "min_order_qty") ||
+		strings.Contains(msg, "max_split_lines") ||
 		strings.Contains(msg, "generate_mode") ||
 		strings.Contains(msg, "stage=1 or stage=2")
 }
