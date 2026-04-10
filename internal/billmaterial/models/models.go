@@ -104,6 +104,7 @@ type ItemMaterialSpec struct {
 	LengthMm       *float64   `gorm:"type:numeric(18,4)"`
 	WeightKg       *float64   `gorm:"type:numeric(18,6)"`
 	SupplierID     *uuid.UUID `gorm:"type:uuid"`
+	SupplierName   *string    `gorm:"size:255"`
 	CycleTimeSec   *float64   `gorm:"type:numeric(18,4)"`
 	SetupTimeMin   *float64   `gorm:"type:numeric(18,4)"`
 	CreatedAt      time.Time
