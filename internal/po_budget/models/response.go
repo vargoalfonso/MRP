@@ -148,7 +148,6 @@ type EntryDetailGroupedResponse struct {
 	BudgetCalculations    EntryBudgetCalculations    `json:"budget_calculations"`
 	CalculationResults    EntryCalculationResults    `json:"calculation_results"`
 	AdditionalInformation EntryAdditionalInformation `json:"additional_information"`
-	Summary               SummaryResponse            `json:"summary"`
 	History               []HistoryLogItem           `json:"history"`
 }
 
