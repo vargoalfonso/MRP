@@ -36,6 +36,10 @@ import (
 	globalParameterHandler "github.com/ganasa18/go-template/internal/global_parameter/handler"
 	globalParameterRepository "github.com/ganasa18/go-template/internal/global_parameter/repository"
 	globalParameterService "github.com/ganasa18/go-template/internal/global_parameter/service"
+	kanbanModule "github.com/ganasa18/go-template/internal/kanban"
+	kanbanHandler "github.com/ganasa18/go-template/internal/kanban/handler"
+	kanbanRepository "github.com/ganasa18/go-template/internal/kanban/repository"
+	kanbanService "github.com/ganasa18/go-template/internal/kanban/service"
 	appmodule "github.com/ganasa18/go-template/internal/module"
 	poBudgetModule "github.com/ganasa18/go-template/internal/po_budget"
 	poBudgetHandler "github.com/ganasa18/go-template/internal/po_budget/handler"
@@ -158,6 +162,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	processParameterSvc := processParameterService.New(processParameterRepo)
 	processParameterHTTPHandler := processParameterHandler.New(processParameterSvc)
 
+	kanbanRepo := kanbanRepository.New(db)
+	kanbanSvc := kanbanService.New(kanbanRepo)
+	kanbanHTTPHandler := kanbanHandler.New(kanbanSvc)
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -175,6 +183,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		approvalWorkflowModule.NewHTTPModule(cfg, baseHTTPHandler, approvalWorkflowHTTPHandler, authSvc, roleSvc, approvalWorkflowSvc),
 		globalParameterModule.NewHTTPModule(cfg, baseHTTPHandler, globalParameterHTTPHandler, authSvc, roleSvc, globalParameterSvc),
 		processParameterModule.NewHTTPModule(cfg, baseHTTPHandler, processParameterHTTPHandler, authSvc, roleSvc, processParameterSvc),
+		kanbanModule.NewHTTPModule(cfg, baseHTTPHandler, kanbanHTTPHandler, authSvc, roleSvc, kanbanSvc),
 	}
 
 	// --- Server ---
