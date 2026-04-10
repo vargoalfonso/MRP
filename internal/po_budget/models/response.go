@@ -7,7 +7,10 @@ import "time"
 // ---------------------------------------------------------------------------
 
 type EntryResponse struct {
-	ID           int64   `json:"id"`
+	ID int64 `json:"id"`
+	// PoBudgetRef is a server-generated human-friendly identifier.
+	// Format: POB-{YYYY}-{TYPE}-{id}, e.g. POB-2026-RM-000123
+	PoBudgetRef  string  `json:"po_budget_ref"`
 	BudgetType   string  `json:"budget_type"`
 	CustomerID   *int64  `json:"customer_id"`
 	CustomerName *string `json:"customer_name"`
@@ -153,6 +156,7 @@ type EntryDetailGroupedResponse struct {
 
 type EntryBasicInformation struct {
 	ID           int64   `json:"id"`
+	PoBudgetRef  string  `json:"po_budget_ref"`
 	CustomerName *string `json:"customer_name"`
 	Uniq         string  `json:"uniq"`
 	ProductModel *string `json:"product_model"`

@@ -190,6 +190,7 @@ func (h *HTTPHandler) GetEntryDetail(ctx *app.Context) *app.CostumeResponse {
 		grouped := models.EntryDetailGroupedResponse{
 			BasicInformation: models.EntryBasicInformation{
 				ID:           e.ID,
+				PoBudgetRef:  e.PoBudgetRef,
 				CustomerName: e.CustomerName,
 				Uniq:         e.Uniq,
 				ProductModel: e.ProductModel,
