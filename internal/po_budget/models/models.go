@@ -11,13 +11,17 @@ import "time"
 // Default: PO1=60%, PO2=40% (kanban packing logic).
 // One PO is always split into two stages — e.g. 60% at first delivery, 40% on completion.
 type POSplitSetting struct {
-	ID          int64     `gorm:"primaryKey;autoIncrement"`
-	BudgetType  string    `gorm:"size:32;uniqueIndex;not null"`
-	Po1Pct      float64   `gorm:"type:numeric(5,2);not null;default:60"`
-	Po2Pct      float64   `gorm:"type:numeric(5,2);not null;default:40"`
-	Description string    `gorm:"type:text"`
-	CreatedAt   time.Time `gorm:"not null;default:now()"`
-	UpdatedAt   time.Time `gorm:"not null;default:now()"`
+	ID            int64     `gorm:"primaryKey;autoIncrement"`
+	BudgetType    string    `gorm:"size:32;uniqueIndex;not null"`
+	Po1Pct        float64   `gorm:"type:numeric(5,2);not null;default:60"`
+	Po2Pct        float64   `gorm:"type:numeric(5,2);not null;default:40"`
+	MinOrderQty   *int64    `gorm:""`        // optional; for PO line splitting rules
+	MaxSplitLines *int64    `gorm:""`        // optional; for PO line splitting rules
+	SplitRule     *string   `gorm:"size:64"` // optional; e.g. "By Supplier Capacity"
+	Status        string    `gorm:"size:20;not null;default:Active"`
+	Description   string    `gorm:"type:text"`
+	CreatedAt     time.Time `gorm:"not null;default:now()"`
+	UpdatedAt     time.Time `gorm:"not null;default:now()"`
 }
 
 func (POSplitSetting) TableName() string { return "po_split_settings" }
