@@ -33,6 +33,10 @@ import (
 	employeeRepository "github.com/ganasa18/go-template/internal/employee/repository"
 	employeeService "github.com/ganasa18/go-template/internal/employee/service"
 	appmodule "github.com/ganasa18/go-template/internal/module"
+	poSplitSettingModule "github.com/ganasa18/go-template/internal/po_split_setting"
+	poSplitSettingHandler "github.com/ganasa18/go-template/internal/po_split_setting/handler"
+	poSplitSettingRepository "github.com/ganasa18/go-template/internal/po_split_setting/repository"
+	poSplitSettingService "github.com/ganasa18/go-template/internal/po_split_setting/service"
 	roleModule "github.com/ganasa18/go-template/internal/role"
 	roleHandler "github.com/ganasa18/go-template/internal/role/handler"
 	roleRepository "github.com/ganasa18/go-template/internal/role/repository"
@@ -45,6 +49,14 @@ import (
 	uploadHandler "github.com/ganasa18/go-template/internal/upload/handler"
 	uploadRepository "github.com/ganasa18/go-template/internal/upload/repository"
 	uploadService "github.com/ganasa18/go-template/internal/upload/service"
+  	typeParameterModule "github.com/ganasa18/go-template/internal/type_parameter"
+	typeParameterHandler "github.com/ganasa18/go-template/internal/type_parameter/handler"
+	typeParameterRepository "github.com/ganasa18/go-template/internal/type_parameter/repository"
+	typeParameterService "github.com/ganasa18/go-template/internal/type_parameter/service"
+	UnitMeasureModule "github.com/ganasa18/go-template/internal/unit_measurement"
+	UnitMeasureHandler "github.com/ganasa18/go-template/internal/unit_measurement/handler"
+	UnitMeasureRepository "github.com/ganasa18/go-template/internal/unit_measurement/repository"
+	UnitMeasureService "github.com/ganasa18/go-template/internal/unit_measurement/service"
 )
 
 // initHTTP wires every module inside the modular monolith and returns an HTTP server.
@@ -106,9 +118,21 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	poBudgetSvc := poBudgetService.New(poBudgetRepo)
 	poBudgetHTTPHandler := poBudgetHandler.New(poBudgetSvc)
 
-  	safetyStockRepository := safetyStockRepo.New(db)
+  safetyStockRepository := safetyStockRepo.New(db)
 	safetyStockService := safetyStockService.New(safetyStockRepository)
 	safetyStockHandler := safetyStockHandler.New(safetyStockService)
+  
+  typeParameterRepo := typeParameterRepository.New(db)
+	typeParameterSvc := typeParameterService.New(typeParameterRepo)
+	typeParameterHTTPHandler := typeParameterHandler.New(typeParameterSvc)
+
+	unitMeasureRepo := UnitMeasureRepository.New(db)
+	unitMeasureSvc := UnitMeasureService.New(unitMeasureRepo)
+	unitMeasureHTTPHandler := UnitMeasureHandler.New(unitMeasureSvc)
+
+	poSplitSettingRepo := poSplitSettingRepository.New(db)
+	poSplitSettingSvc := poSplitSettingService.New(poSplitSettingRepo)
+	poSplitSettingHTTPHandler := poSplitSettingHandler.New(poSplitSettingSvc)
 
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
@@ -121,6 +145,9 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		userModule.NewHTTPModule(cfg, baseHTTPHandler, userHTTPHandler, authSvc, roleSvc, userSvc),
 		poBudgetModule.NewHTTPModule(cfg, baseHTTPHandler, poBudgetHTTPHandler, authSvc, roleSvc),
     safetyStockModule.NewHTTPModule(cfg, baseHTTPHandler, safetyStockHandler, authSvc, roleSvc, safetyStockService),
+    typeParameterModule.NewHTTPModule(cfg, baseHTTPHandler, typeParameterHTTPHandler, authSvc, roleSvc, typeParameterSvc),
+		UnitMeasureModule.NewHTTPModule(cfg, baseHTTPHandler, unitMeasureHTTPHandler, authSvc, roleSvc, unitMeasureSvc),
+		poSplitSettingModule.NewHTTPModule(cfg, baseHTTPHandler, poSplitSettingHTTPHandler, authSvc, roleSvc, poSplitSettingSvc),
 	}
 
 	// --- Server ---
