@@ -139,6 +139,58 @@ type EntryDetailResponse struct {
 	History []HistoryLogItem `json:"history"`
 }
 
+// EntryDetailGroupedResponse is a UI-friendly, de-duplicated response for the
+// PO Budget detail screen.
+//
+// Use query param: ?format=grouped
+type EntryDetailGroupedResponse struct {
+	BasicInformation      EntryBasicInformation      `json:"basic_information"`
+	BudgetCalculations    EntryBudgetCalculations    `json:"budget_calculations"`
+	CalculationResults    EntryCalculationResults    `json:"calculation_results"`
+	AdditionalInformation EntryAdditionalInformation `json:"additional_information"`
+	Summary               SummaryResponse            `json:"summary"`
+	History               []HistoryLogItem           `json:"history"`
+}
+
+type EntryBasicInformation struct {
+	ID           int64   `json:"id"`
+	CustomerName *string `json:"customer_name"`
+	Uniq         string  `json:"uniq"`
+	ProductModel *string `json:"product_model"`
+	PartName     *string `json:"part_name"`
+	PartNumber   *string `json:"part_number"`
+	SupplierName *string `json:"supplier_name"`
+	BudgetType   string  `json:"budget_type"`
+	TypeLabel    *string `json:"type_label,omitempty"` // budget_subtype: regular|adhoc
+	Period       string  `json:"period"`
+}
+
+type EntryBudgetCalculations struct {
+	SalesPlan       float64 `json:"sales_plan"`
+	PurchaseRequest float64 `json:"purchase_request"`
+	PrlAmount       float64 `json:"prl_amount"`
+	Po1Pct          float64 `json:"po1_pct"`
+	Po2Pct          float64 `json:"po2_pct"`
+}
+
+type EntryCalculationResults struct {
+	Po1Amount   float64 `json:"po1_amount"`
+	Po2Amount   float64 `json:"po2_amount"`
+	TotalPO     float64 `json:"total_po"`
+	ApoPrlAbs   float64 `json:"apo_prl_abs"`
+	ApoPrlState string  `json:"apo_prl_state"` // over|under|match
+}
+
+type EntryAdditionalInformation struct {
+	SubmittedBy     *string    `json:"submitted_by,omitempty"`
+	SubmittedByName *string    `json:"submitted_by_name,omitempty"`
+	SubmittedAt     time.Time  `json:"submitted_at"`
+	ApprovedBy      *string    `json:"approved_by,omitempty"`
+	ApprovedByName  *string    `json:"approved_by_name,omitempty"`
+	ApprovedAt      *time.Time `json:"approved_at,omitempty"`
+	Notes           *string    `json:"notes,omitempty"`
+}
+
 type HistoryLogItem struct {
 	DateTime string `json:"date_time"` // RFC3339
 	Action   string `json:"action"`
