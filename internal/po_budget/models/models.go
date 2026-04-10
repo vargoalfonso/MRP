@@ -29,7 +29,9 @@ func (POSplitSetting) TableName() string { return "po_split_settings" }
 // POBudgetEntry is one row in the PO budget for a given Uniq / customer / period.
 // Multiple rows with the same uniq_code + period are aggregated for the summary view.
 type POBudgetEntry struct {
-	ID              int64     `gorm:"primaryKey;autoIncrement"`
+	ID int64 `gorm:"primaryKey;autoIncrement"`
+	// PoBudgetRef is a DB-generated identifier: POB-{YYYY}-{TYPE}-{id}
+	PoBudgetRef     string    `gorm:"size:32;->"`
 	BudgetType      string    `gorm:"size:32;not null"` // raw_material | subcon | indirect
 	CustomerID      *int64    `gorm:"index"`
 	CustomerName    *string   `gorm:"size:255"`

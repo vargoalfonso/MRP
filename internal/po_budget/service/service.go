@@ -642,6 +642,7 @@ func toResponse(e models.POBudgetEntry) models.EntryResponse {
 	}
 	return models.EntryResponse{
 		ID:              e.ID,
+		PoBudgetRef:     firstNonEmpty(e.PoBudgetRef, poBudgetRef(e)),
 		BudgetType:      e.BudgetType,
 		CustomerID:      e.CustomerID,
 		CustomerName:    e.CustomerName,
@@ -685,6 +686,34 @@ func toResponse(e models.POBudgetEntry) models.EntryResponse {
 		CreatedAt:       e.CreatedAt,
 		UpdatedAt:       e.UpdatedAt,
 	}
+}
+
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
+}
+
+func poBudgetRef(e models.POBudgetEntry) string {
+	// Use the budget period year for easier tracing.
+	y := e.PeriodDate.Year()
+	if y <= 0 {
+		y = time.Now().Year()
+	}
+
+	code := "UNK"
+	switch strings.ToLower(strings.TrimSpace(e.BudgetType)) {
+	case "raw_material":
+		code = "RM"
+	case "subcon":
+		code = "SC"
+	case "indirect":
+		code = "IB"
+	}
+
+	// id is already unique; we just format it nicely.
+	return fmt.Sprintf("POB-%04d-%s-%06d", y, code, e.ID)
 }
 
 func toSettingResponse(s models.POSplitSetting) models.SplitSettingResponse {
