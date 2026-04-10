@@ -223,7 +223,6 @@ func (h *HTTPHandler) GetEntryDetail(ctx *app.Context) *app.CostumeResponse {
 				ApprovedAt:      e.ApprovedAt,
 				Notes:           e.Description,
 			},
-			Summary: result.Summary,
 			History: result.History,
 		}
 
