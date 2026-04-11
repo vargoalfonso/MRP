@@ -70,6 +70,9 @@ type Config struct {
 	// Logging
 	LogLevel  string
 	LogFormat string
+
+	// External integrations
+	RobotSplitURL string // URL of the robot split-percentage service
 }
 
 // IsDevelopment returns true when AppEnv == "development".
@@ -137,6 +140,8 @@ func InitAppConfig() *Config {
 
 		LogLevel:  getEnv("LOG_LEVEL", "info"),
 		LogFormat: getEnv("LOG_FORMAT", "text"),
+
+		RobotSplitURL: getEnv("ROBOT_SPLIT_URL", ""),
 	}
 
 	// Stateful mode requires a separate refresh secret.

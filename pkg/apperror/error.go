@@ -13,16 +13,16 @@ import (
 type Code string
 
 const (
-	CodeBadRequest       Code = "BAD_REQUEST"
-	CodeUnauthorized     Code = "UNAUTHORIZED"
-	CodeForbidden        Code = "FORBIDDEN"
-	CodeNotFound         Code = "NOT_FOUND"
-	CodeConflict         Code = "CONFLICT"
-	CodeUnprocessable    Code = "UNPROCESSABLE_ENTITY"
-	CodeInternalError    Code = "INTERNAL_SERVER_ERROR"
-	CodeServiceUnavail   Code = "SERVICE_UNAVAILABLE"
-	CodeTokenExpired     Code = "TOKEN_EXPIRED"
-	CodeTokenInvalid     Code = "TOKEN_INVALID"
+	CodeBadRequest     Code = "BAD_REQUEST"
+	CodeUnauthorized   Code = "UNAUTHORIZED"
+	CodeForbidden      Code = "FORBIDDEN"
+	CodeNotFound       Code = "NOT_FOUND"
+	CodeConflict       Code = "CONFLICT"
+	CodeUnprocessable  Code = "UNPROCESSABLE_ENTITY"
+	CodeInternalError  Code = "INTERNAL_SERVER_ERROR"
+	CodeServiceUnavail Code = "SERVICE_UNAVAILABLE"
+	CodeTokenExpired   Code = "TOKEN_EXPIRED"
+	CodeTokenInvalid   Code = "TOKEN_INVALID"
 )
 
 // AppError is the standard application error. It carries an HTTP status code,
@@ -84,6 +84,10 @@ func NotFound(msg string) *AppError {
 
 func Conflict(msg string) *AppError {
 	return New(http.StatusConflict, CodeConflict, msg)
+}
+
+func UnprocessableEntity(msg string) *AppError {
+	return New(http.StatusUnprocessableEntity, CodeUnprocessable, msg)
 }
 
 func Internal(msg string) *AppError {

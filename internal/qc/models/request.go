@@ -1,0 +1,21 @@
+package models
+
+type ListTasksRequest struct {
+	TaskType string `json:"task_type"`
+	Status   string `json:"status"`
+}
+
+type StartTaskResponse struct {
+	TaskID int64  `json:"task_id"`
+	Status string `json:"status"`
+}
+
+type ApproveIncomingTaskRequest struct {
+	NumberOfDefects int    `json:"number_of_defects"`
+	DateChecked     string `json:"date_checked" binding:"required"` // format: YYYY-MM-DD
+}
+
+type RejectIncomingTaskRequest struct {
+	NumberOfDefects int    `json:"number_of_defects" binding:"required"`
+	DateChecked     string `json:"date_checked" binding:"required"` // format: YYYY-MM-DD
+}
