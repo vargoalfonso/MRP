@@ -147,7 +147,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 
 	// PO Budget module
 	poBudgetRepo := poBudgetRepository.New(db)
-	poBudgetSvc := poBudgetService.New(poBudgetRepo)
+	poBudgetSvc := poBudgetService.New(poBudgetRepo, cfg.RobotSplitURL)
 	poBudgetHTTPHandler := poBudgetHandler.New(poBudgetSvc)
 
 	// Procurement module

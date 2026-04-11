@@ -47,11 +47,21 @@ type IService interface {
 	GetPRLWithAllocation(ctx context.Context, prlID string, budgetType string) (*models.PrlForecastResponse, error)
 	// Step 2+3: create entries; enforces quantity ceiling per PRL item
 	BulkCreateFromPRL(ctx context.Context, budgetType string, req models.BulkFromPRLRequest, createdBy string) (*models.BulkFromPRLResult, error)
+
+	// Robot split preview
+	// source="manual" → { robot: false }
+	// source="robot"  → call external robot URL → { robot: true, po1_pct, po2_pct }
+	GetRobotSplit(ctx context.Context, budgetType string, req models.RobotSplitRequest) (*models.RobotSplitResponse, error)
 }
 
-type svc struct{ repo repository.IRepository }
+type svc struct {
+	repo     repository.IRepository
+	robotURL string // ROBOT_SPLIT_URL env
+}
 
-func New(r repository.IRepository) IService { return &svc{repo: r} }
+func New(r repository.IRepository, robotURL string) IService {
+	return &svc{repo: r, robotURL: robotURL}
+}
 
 // ---------------------------------------------------------------------------
 // List entries
@@ -1059,4 +1069,33 @@ func toPrlResponse(p models.PrlForecast) models.PrlForecastResponse {
 		Period:       p.Period,
 		Status:       p.Status,
 	}
+}
+
+// ---------------------------------------------------------------------------
+// GetRobotSplit
+// ---------------------------------------------------------------------------
+
+// robotSplitPayload is the request body sent to the external robot service.
+type robotSplitPayload struct {
+	UniqCode string `json:"uniq_code"`
+}
+
+// robotSplitResult is the expected response from the external robot service.
+type robotSplitResult struct {
+	Po1Pct float64 `json:"po1_pct"`
+	Po2Pct float64 `json:"po2_pct"`
+}
+
+func (s *svc) GetRobotSplit(ctx context.Context, budgetType string, req models.RobotSplitRequest) (*models.RobotSplitResponse, error) {
+	if req.PoType == "manual" {
+		return &models.RobotSplitResponse{Robot: false}, nil
+	}
+
+	// TODO: replace with real robot HTTP call when ROBOT_SPLIT_URL is ready.
+	// Mock response — hardcoded split 60/40.
+	return &models.RobotSplitResponse{
+		Robot:  true,
+		Po1Pct: 60,
+		Po2Pct: 40,
+	}, nil
 }

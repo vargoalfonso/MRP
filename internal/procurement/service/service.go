@@ -172,7 +172,6 @@ func (s *svc) GetPODetail(ctx context.Context, poID int64) (*models.PODetailResp
 		TotalQuantity:    totalQty,
 		DnCreated:        po.DnCreated,
 		DnIncoming:       po.DnIncoming,
-		TotalIncoming:    po.TotalIncoming,
 		Status:           po.Status,
 		ExternalSystem:   po.ExternalSystem,
 		ExternalPoNumber: po.ExternalPoNumber,
@@ -181,17 +180,17 @@ func (s *svc) GetPODetail(ctx context.Context, poID int64) (*models.PODetailResp
 	itemDetails := make([]models.POItemDetail, 0, len(items))
 	for _, it := range items {
 		itemDetails = append(itemDetails, models.POItemDetail{
-			ID:            it.ID,
-			LineNo:        it.LineNo,
-			UniqCode:      it.ItemUniqCode,
-			PartNumber:    it.PartNumber,
-			PartName:      it.PartName,
-			Model:         it.ProductModel,
-			Qty:           it.OrderedQty,
-			Uom:           it.Uom,
-			PackingNumber: it.PackingNumber,
-			PcsPerKanban:  it.PcsPerKanban,
-			UnitPrice:     it.UnitPrice,
+			ID:           it.ID,
+			LineNo:       it.LineNo,
+			UniqCode:     it.ItemUniqCode,
+			PartNumber:   it.PartNumber,
+			PartName:     it.PartName,
+			Model:        it.ProductModel,
+			Qty:          it.OrderedQty,
+			Uom:          it.Uom,
+			PcsPerKanban: it.PcsPerKanban,
+			WeightKg:     it.WeightKg,
+			UnitPrice:    it.UnitPrice,
 		})
 	}
 
@@ -391,42 +390,8 @@ func (s *svc) GetFormOptions(ctx context.Context, poType, period string) (*model
 //   - All resolved budget entries must have budget_type matching the request po_type.
 //   - If ANY entry mismatches → return 422 (enforced here, not at DB level).
 func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, createdBy string) (*models.GeneratePOResponse, error) {
-	// req.PoType IS the budget_type (raw_material|indirect|subcon) — no conversion needed
-
-	// Generate PO must follow active configuration from po_split_settings.
-	policy, err := s.repo.GetSplitPolicy(ctx, req.PoType)
-	if err != nil {
-		return nil, fmt.Errorf("generate requires active po_split_settings for po_type=%s: %w", req.PoType, err)
-	}
-
-	if policy.MinOrderQty > 0 && req.TotalIncoming < policy.MinOrderQty {
-		return nil, fmt.Errorf(
-			"total_incoming (%d) is below min_order_qty (%d) from po_split_settings",
-			req.TotalIncoming,
-			policy.MinOrderQty,
-		)
-	}
-
-	// Resolve split %
-	po1Pct, po2Pct := policy.Po1Pct, policy.Po2Pct
-	if po1Pct+po2Pct <= 0 {
-		return nil, fmt.Errorf("invalid split percentage in po_split_settings for po_type=%s", req.PoType)
-	}
-
-	// Determine supplier UUID filter (for budget entry lookup via supplier_legacy_map).
-	// If generate_mode = "bulk_all_suppliers" we don't filter by supplier.
-	var supplierUUIDs []string
-	if req.GenerateMode != "bulk_all_suppliers" && req.SupplierID > 0 {
-		uuid, mapErr := s.repo.GetSupplierUUIDByLegacyID(ctx, req.SupplierID)
-		if mapErr != nil {
-			return nil, mapErr
-		}
-		if uuid != nil {
-			supplierUUIDs = []string{*uuid}
-		}
-	}
-
-	entries, err := s.repo.ListBudgetEntriesForGenerate(ctx, req.PoType, req.Period, supplierUUIDs, req.PoBudgetEntryIDs)
+	// Fetch budget entries — supplier resolved from entries, not from request.
+	entries, err := s.repo.ListBudgetEntriesForGenerate(ctx, req.PoType, req.Period, nil, req.PoBudgetEntryIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -434,7 +399,7 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 		return nil, fmt.Errorf("no approved budget entries found for type=%s period=%s", req.PoType, req.Period)
 	}
 
-	// ── Type-safety: reject mixed budget_type in one generate call ──────────
+	// Type-safety: all entries must share the same budget_type.
 	reqBudgetType := normalizeBudgetType(req.PoType)
 	for _, e := range entries {
 		if normalizeBudgetType(e.BudgetType) != reqBudgetType {
@@ -445,133 +410,137 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 		}
 	}
 
-	// Generate single PO per supplier with po1_qty + po2_qty items
-
-	// ── Group entries by supplier (for bulk) ────────────────────────────────
-	// For single-supplier mode, all entries go into one group keyed by req.SupplierID.
+	// ── Group entries by supplier UUID (from budget entry) ────────────────
 	type supplierGroup struct {
-		legacyID int64
-		entries  []models.POBudgetEntry
+		supplierUUID string // UUID from po_budget_entries.supplier_id
+		legacyID     int64  // resolved from supplier_legacy_map
+		supplierName string
+		entries      []models.POBudgetEntry
 	}
 
-	groupMap := map[int64]*supplierGroup{}
-
-	if req.GenerateMode == "bulk_all_suppliers" {
-		// Group by supplier_name / supplier_id (best effort via entry.SupplierName)
-		// We group by the entry.SupplierID (UUID string) and resolve legacy ID separately.
-		// Simplified: group by SupplierName if SupplierID UUID not in legacy map.
-		for _, e := range entries {
-			// Use 0 as placeholder key per supplier name.
-			// In practice you'd resolve UUID→legacy BIGINT via supplier_legacy_map.
-			// Here we use a hash of supplier name as the key.
-			key := hashSupplierKey(e.SupplierID, e.SupplierName)
-			if _, ok := groupMap[key]; !ok {
-				groupMap[key] = &supplierGroup{legacyID: key}
+	groupByUUID := map[string]*supplierGroup{}
+	for _, e := range entries {
+		key := ""
+		if e.SupplierID != nil {
+			key = *e.SupplierID
+		}
+		if _, ok := groupByUUID[key]; !ok {
+			name := ""
+			if e.SupplierName != nil {
+				name = *e.SupplierName
 			}
-			groupMap[key].entries = append(groupMap[key].entries, e)
+			groupByUUID[key] = &supplierGroup{supplierUUID: key, supplierName: name}
 		}
-	} else {
-		groupMap[req.SupplierID] = &supplierGroup{
-			legacyID: req.SupplierID,
-			entries:  entries,
+		groupByUUID[key].entries = append(groupByUUID[key].entries, e)
+	}
+
+	// Resolve UUID → legacy BIGINT for each group.
+	for _, grp := range groupByUUID {
+		if grp.supplierUUID != "" {
+			legacyID, lerr := s.repo.GetLegacyIDBySupplierUUID(ctx, grp.supplierUUID)
+			if lerr == nil {
+				grp.legacyID = legacyID
+			}
 		}
 	}
 
-	// ── Resolve supplier names ────────────────────────────────────────────
-	supplierNames := map[int64]string{}
-	legacyIDs := make([]int64, 0, len(groupMap))
-	for legacyID := range groupMap {
-		if legacyID > 0 {
-			legacyIDs = append(legacyIDs, legacyID)
+	// ── Determine which stages to generate ───────────────────────────────
+	stagesToGenerate := []int{1, 2}
+	if req.GenerateMode == "stage_only" {
+		if req.Stage != 1 && req.Stage != 2 {
+			return nil, fmt.Errorf("stage_only mode requires stage=1 or stage=2, got %d", req.Stage)
 		}
-	}
-	if len(legacyIDs) > 0 {
-		suppliers, serr := s.repo.ListLegacySuppliersByIDs(ctx, legacyIDs)
-		if serr != nil {
-			return nil, serr
-		}
-		for _, sup := range suppliers {
-			supplierNames[sup.SupplierID] = sup.SupplierName
-		}
-	}
-
-	// ── Build line strategy helper ────────────────────────────────────────
-	lineStrategy := req.LineStrategy
-	if lineStrategy == "" {
-		lineStrategy = "keep_granular"
+		stagesToGenerate = []int{req.Stage}
 	}
 
 	// ── Generate PO for each supplier × stage ────────────────────────────
 	var result models.GeneratePOResponse
 
-	for _, grp := range groupMap {
-		po, poItems, err := s.buildSimplePO(ctx, grp.legacyID, grp.entries, supplierNames[grp.legacyID], req, createdBy, policy.Po1Pct, policy.Po2Pct)
-		if err != nil {
-			return nil, err
-		}
+	for _, grp := range groupByUUID {
+		// Compute budget-level stats (same for PO1 and PO2).
+		stats := computeGroupStats(grp.entries)
 
-		if err := s.repo.CreatePO(ctx, po); err != nil {
-			return nil, err
-		}
+		for _, stage := range stagesToGenerate {
+			po, poItems, err := s.buildStagePO(ctx, grp.legacyID, grp.entries, req, createdBy, stage)
+			if err != nil {
+				return nil, err
+			}
+			if len(poItems) == 0 {
+				continue
+			}
 
-		for i := range poItems {
-			poItems[i].PoID = po.PoID
-		}
-		if err := s.repo.CreatePOItems(ctx, poItems); err != nil {
-			return nil, err
-		}
+			if err := s.repo.CreatePO(ctx, po); err != nil {
+				return nil, err
+			}
+			for i := range poItems {
+				poItems[i].PoID = po.PoID
+			}
+			if err := s.repo.CreatePOItems(ctx, poItems); err != nil {
+				return nil, err
+			}
+			_ = s.repo.CreatePOLog(ctx, &models.PurchaseOrderLog{
+				PoID:     po.PoID,
+				Action:   "Created",
+				Notes:    strPtr(fmt.Sprintf("Generated from budget — stage %d", stage)),
+				Username: &createdBy,
+			})
 
-		logEntry := &models.PurchaseOrderLog{
-			PoID:     po.PoID,
-			Action:   "Created",
-			Notes:    strPtr(fmt.Sprintf("Generated from budget")),
-			Username: &createdBy,
-		}
-		_ = s.repo.CreatePOLog(ctx, logEntry)
+			budgetRef := buildBudgetRef(req.PoType, req.Period, po.PoBudgetEntryID)
+			var totalQty float64
+			itemDetails := make([]models.POItemDetail, 0, len(poItems))
+			for _, it := range poItems {
+				totalQty += it.OrderedQty
+				itemDetails = append(itemDetails, models.POItemDetail{
+					ID:           it.ID,
+					LineNo:       it.LineNo,
+					UniqCode:     it.ItemUniqCode,
+					PartNumber:   it.PartNumber,
+					PartName:     it.PartName,
+					Model:        it.ProductModel,
+					Qty:          it.OrderedQty,
+					Uom:          it.Uom,
+					PcsPerKanban: it.PcsPerKanban,
+					WeightKg:     it.WeightKg,
+					Budget:       it.SalesPlan,
+					UnitPrice:    it.UnitPrice,
+				})
+			}
 
-		supName := supplierNames[grp.legacyID]
-		budgetRef := buildBudgetRef(req.PoType, req.Period, po.PoBudgetEntryID)
-		var totalQty float64
-		itemDetails := make([]models.POItemDetail, 0, len(poItems))
-		for _, it := range poItems {
-			totalQty += it.OrderedQty
-			itemDetails = append(itemDetails, models.POItemDetail{
-				ID:            it.ID,
-				LineNo:        it.LineNo,
-				UniqCode:      it.ItemUniqCode,
-				PartNumber:    it.PartNumber,
-				PartName:      it.PartName,
-				Model:         it.ProductModel,
-				Qty:           it.OrderedQty,
-				Uom:           it.Uom,
-				PackingNumber: it.PackingNumber,
-				PcsPerKanban:  it.PcsPerKanban,
-				UnitPrice:     it.UnitPrice,
+			supName := grp.supplierName
+			result.Pos = append(result.Pos, models.GeneratedPOGroup{
+				Stage: stage,
+				PO: models.POHeaderDetail{
+					PoID:             po.PoID,
+					PoType:           po.PoType,
+					PoStage:          po.PoStage,
+					Period:           po.Period,
+					PoNumber:         po.PoNumber,
+					PoBudgetRef:      budgetRef,
+					SalesPlan:        stats.salesPlan,
+					TotalBudgetPo:    stats.totalBudgetPo,
+					SupplierID:       &grp.legacyID,
+					SupplierName:     &supName,
+					TotalQuantity:    totalQty,
+					TotalUniq:        stats.totalUniq,
+					TotalWeight:      stats.totalWeight,
+					DnCreated:        po.DnCreated,
+					DnIncoming:       po.DnIncoming,
+					Status:           po.Status,
+					ExternalSystem:   po.ExternalSystem,
+					ExternalPoNumber: po.ExternalPoNumber,
+				},
+				Items: itemDetails,
 			})
 		}
+	}
 
-		result.Pos = append(result.Pos, models.GeneratedPOGroup{
-			Stage: 0,
-			PO: models.POHeaderDetail{
-				PoID:             po.PoID,
-				PoType:           po.PoType,
-				PoStage:          po.PoStage,
-				Period:           po.Period,
-				PoNumber:         po.PoNumber,
-				PoBudgetRef:      budgetRef,
-				TotalBudgetPo:    totalQty,
-				SupplierID:       &grp.legacyID,
-				SupplierName:     &supName,
-				TotalQuantity:    totalQty,
-				DnCreated:        po.DnCreated,
-				DnIncoming:       po.DnIncoming,
-				TotalIncoming:    po.TotalIncoming,
-				Status:           po.Status,
-				ExternalSystem:   po.ExternalSystem,
-				ExternalPoNumber: po.ExternalPoNumber,
-			},
-			Items: itemDetails,
-		})
+	// Flag all used budget entries so they cannot be regenerated into another PO.
+	usedEntryIDs := make([]int64, 0, len(entries))
+	for _, e := range entries {
+		usedEntryIDs = append(usedEntryIDs, e.ID)
+	}
+	if err := s.repo.MarkBudgetEntriesAsUsed(ctx, usedEntryIDs); err != nil {
+		return nil, err
 	}
 
 	return &result, nil
@@ -581,7 +550,36 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-func (s *svc) buildSimplePO(ctx context.Context, legacySupID int64, entries []models.POBudgetEntry, supplierName string, req models.GeneratePORequest, createdBy string, po1Pct, po2Pct float64) (*models.PurchaseOrder, []models.PurchaseOrderItem, error) {
+// groupStats holds budget-level aggregates that are the same for PO1 and PO2.
+type groupStats struct {
+	salesPlan     float64
+	totalBudgetPo float64 // sum of purchase_request (full, before split)
+	totalWeight   float64 // sum(weight_kg * purchase_request)
+	totalUniq     int
+}
+
+// computeGroupStats derives budget-level stats from a set of budget entries.
+// These values are identical for PO1 and PO2 — they reflect the full budget, not the split.
+func computeGroupStats(entries []models.POBudgetEntry) groupStats {
+	uniqSet := map[string]bool{}
+	var s groupStats
+	for _, e := range entries {
+		uniqSet[e.UniqCode] = true
+		s.salesPlan += e.SalesPlan
+		s.totalBudgetPo += e.PurchaseRequest
+		if e.WeightKg != nil {
+			s.totalWeight += *e.WeightKg * e.PurchaseRequest
+		}
+	}
+	s.totalUniq = len(uniqSet)
+	return s
+}
+
+// buildStagePO builds one PurchaseOrder for the given stage (1 or 2).
+// Each budget entry is expanded into N kanban lines where N = ceil(rawQty / pcs_per_kanban).
+// Every line has qty = pcs_per_kanban (one physical kanban unit per line).
+// SalesPlan is carried on each item (transient) for response building.
+func (s *svc) buildStagePO(ctx context.Context, legacySupID int64, entries []models.POBudgetEntry, req models.GeneratePORequest, createdBy string, stage int) (*models.PurchaseOrder, []models.PurchaseOrderItem, error) {
 	poNumber, err := s.repo.NextPONumber(ctx, req.PoType, req.Period)
 	if err != nil {
 		return nil, nil, err
@@ -596,62 +594,71 @@ func (s *svc) buildSimplePO(ctx context.Context, legacySupID int64, entries []mo
 	now := time.Now()
 	createdByStr := createdBy
 
+	items := make([]models.PurchaseOrderItem, 0, len(entries))
+	lineNo := 1
+	var totalWeight float64
+
+	for _, e := range entries {
+		// Pick raw qty for this stage (pre-calculated as purchase_request * pct / 100).
+		var rawQty float64
+		if stage == 1 {
+			rawQty = e.Po1Qty
+		} else {
+			rawQty = e.Po2Qty
+		}
+		if rawQty <= 0 {
+			continue
+		}
+
+		// Expand into N kanban lines. Each line = one full kanban unit (pcs_per_kanban qty).
+		// If pcs_per_kanban is not set, treat the whole rawQty as one line.
+		numKanbans := 1
+		kanbanQty := rawQty
+		if e.PcsPerKanban != nil && *e.PcsPerKanban > 0 {
+			k := float64(*e.PcsPerKanban)
+			numKanbans = int(math.Ceil(rawQty / k))
+			kanbanQty = k
+		}
+
+		if e.WeightKg != nil {
+			totalWeight += *e.WeightKg * kanbanQty * float64(numKanbans)
+		}
+
+		for i := 0; i < numKanbans; i++ {
+			entryID := e.ID
+			items = append(items, models.PurchaseOrderItem{
+				LineNo:          lineNo,
+				ItemUniqCode:    e.UniqCode,
+				ProductModel:    e.ProductModel,
+				MaterialType:    e.MaterialType,
+				PartName:        e.PartName,
+				PartNumber:      e.PartNumber,
+				Uom:             e.Uom,
+				WeightKg:        e.WeightKg,
+				OrderedQty:      kanbanQty,
+				PcsPerKanban:    e.PcsPerKanban,
+				PoBudgetEntryID: &entryID,
+				SalesPlan:       e.SalesPlan,
+				Status:          "open",
+			})
+			lineNo++
+		}
+	}
+
 	po := &models.PurchaseOrder{
 		PoType:           req.PoType,
+		PoStage:          &stage,
 		Period:           req.Period,
 		PoNumber:         poNumber,
 		PoBudgetEntryID:  firstEntryID,
 		SupplierID:       &legacySupID,
-		TotalIncoming:    req.TotalIncoming,
 		Status:           "pending",
 		PoDate:           &now,
+		TotalWeight:      &totalWeight,
 		ExternalSystem:   strPtrIfNonEmpty(req.ExternalSystem),
 		ExternalPoNumber: strPtrIfNonEmpty(req.ExternalPoNumber),
 		CreatedBy:        &createdByStr,
 		UpdatedBy:        &createdByStr,
-	}
-
-	items := make([]models.PurchaseOrderItem, 0, 2*len(entries))
-	lineNo := 1
-
-	for _, e := range entries {
-		if e.Po1Qty > 0 {
-			items = append(items, models.PurchaseOrderItem{
-				LineNo:          lineNo,
-				ItemUniqCode:    e.UniqCode,
-				ProductModel:    e.ProductModel,
-				MaterialType:    e.MaterialType,
-				PartName:        e.PartName,
-				PartNumber:      e.PartNumber,
-				Uom:             e.Uom,
-				WeightKg:        e.WeightKg,
-				OrderedQty:      e.Po1Qty,
-				PackingNumber:   firstNonEmptyStringPtr(e.KanbanNumber, e.PackingNumber),
-				PcsPerKanban:    e.PcsPerKanban,
-				PoBudgetEntryID: &e.ID,
-				Status:          "open",
-			})
-			lineNo++
-		}
-
-		if e.Po2Qty > 0 {
-			items = append(items, models.PurchaseOrderItem{
-				LineNo:          lineNo,
-				ItemUniqCode:    e.UniqCode,
-				ProductModel:    e.ProductModel,
-				MaterialType:    e.MaterialType,
-				PartName:        e.PartName,
-				PartNumber:      e.PartNumber,
-				Uom:             e.Uom,
-				WeightKg:        e.WeightKg,
-				OrderedQty:      e.Po2Qty,
-				PackingNumber:   firstNonEmptyStringPtr(e.KanbanNumber, e.PackingNumber),
-				PcsPerKanban:    e.PcsPerKanban,
-				PoBudgetEntryID: &e.ID,
-				Status:          "open",
-			})
-			lineNo++
-		}
 	}
 
 	return po, items, nil
@@ -691,31 +698,6 @@ func extractYear(period string) string {
 	return time.Now().Format("2006")
 }
 
-// hashSupplierKey produces a stable int64 key from supplier_id (UUID string) or supplier_name.
-func hashSupplierKey(supplierIDStr *string, supplierName *string) int64 {
-	if supplierIDStr != nil && *supplierIDStr != "" {
-		var h int64
-		for _, c := range *supplierIDStr {
-			h = h*31 + int64(c)
-		}
-		if h < 0 {
-			h = -h
-		}
-		return h
-	}
-	if supplierName != nil {
-		var h int64
-		for _, c := range *supplierName {
-			h = h*31 + int64(c)
-		}
-		if h < 0 {
-			h = -h
-		}
-		return h
-	}
-	return 0
-}
-
 func strPtr(s string) *string { return &s }
 
 func strPtrIfNonEmpty(s string) *string {
@@ -723,38 +705,6 @@ func strPtrIfNonEmpty(s string) *string {
 		return nil
 	}
 	return &s
-}
-
-func firstNonEmptyStringPtr(candidates ...*string) *string {
-	for _, c := range candidates {
-		if c != nil {
-			v := strings.TrimSpace(*c)
-			if v != "" {
-				return &v
-			}
-		}
-	}
-	return nil
-}
-
-
-func splitPOItemsByMaxLines(items []models.PurchaseOrderItem, maxLines int) [][]models.PurchaseOrderItem {
-	if len(items) == 0 {
-		return [][]models.PurchaseOrderItem{}
-	}
-	if maxLines <= 0 || len(items) <= maxLines {
-		return [][]models.PurchaseOrderItem{items}
-	}
-
-	chunks := make([][]models.PurchaseOrderItem, 0, int(math.Ceil(float64(len(items))/float64(maxLines))))
-	for i := 0; i < len(items); i += maxLines {
-		end := i + maxLines
-		if end > len(items) {
-			end = len(items)
-		}
-		chunks = append(chunks, items[i:end])
-	}
-	return chunks
 }
 
 func normalizeBudgetType(v string) string {

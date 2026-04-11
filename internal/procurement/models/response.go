@@ -68,13 +68,15 @@ type POHeaderDetail struct {
 	Period           string   `json:"period"`
 	PoNumber         string   `json:"po_number"`
 	PoBudgetRef      string   `json:"po_budget_ref"`
+	SalesPlan        float64  `json:"sales_plan"`
 	TotalBudgetPo    float64  `json:"total_budget_po"`
 	SupplierID       *int64   `json:"supplier_id,omitempty"`
 	SupplierName     *string  `json:"supplier_name,omitempty"`
 	TotalQuantity    float64  `json:"total_quantity"`
+	TotalUniq        int      `json:"total_uniq"`
+	TotalWeight      float64  `json:"total_weight"`
 	DnCreated        int      `json:"dn_created"`
 	DnIncoming       int      `json:"dn_incoming"`
-	TotalIncoming    int      `json:"total_incoming"`
 	Status           string   `json:"status"`
 	ExternalSystem   *string  `json:"external_system,omitempty"`
 	ExternalPoNumber *string  `json:"external_po_number,omitempty"`
@@ -82,18 +84,19 @@ type POHeaderDetail struct {
 
 // POItemDetail is one line item in the PO detail.
 type POItemDetail struct {
-	ID            int64    `json:"id"`
-	LineNo        int      `json:"line_no"`
-	UniqCode      string   `json:"uniq_code"`
-	PartNumber    *string  `json:"part_number,omitempty"`
-	PartName      *string  `json:"part_name,omitempty"`
-	Model         *string  `json:"model,omitempty"`
-	Qty           float64  `json:"qty"`
-	Uom           *string  `json:"uom,omitempty"`
-	PackingNumber *string  `json:"packing_number,omitempty"`
-	PcsPerKanban  *int     `json:"pcs_per_kanban,omitempty"`
-	UnitPrice     *float64 `json:"unit_price,omitempty"`
-	Amount        *float64 `json:"amount,omitempty"`
+	ID           int64    `json:"id"`
+	LineNo       int      `json:"line_no"`
+	UniqCode     string   `json:"uniq_code"`
+	PartNumber   *string  `json:"part_number,omitempty"`
+	PartName     *string  `json:"part_name,omitempty"`
+	Model        *string  `json:"model,omitempty"`
+	Qty          float64  `json:"qty"`
+	Uom          *string  `json:"uom,omitempty"`
+	PcsPerKanban *int     `json:"pcs_per_kanban,omitempty"`
+	WeightKg     *float64 `json:"weight_kg,omitempty"`
+	Budget       float64  `json:"budget"`
+	UnitPrice    *float64 `json:"unit_price,omitempty"`
+	Amount       *float64 `json:"amount,omitempty"`
 }
 
 // POLogEntry is one history log entry.

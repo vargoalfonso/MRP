@@ -221,6 +221,19 @@ type SplitSettingResponse struct {
 }
 
 // ---------------------------------------------------------------------------
+// Robot split preview
+// ---------------------------------------------------------------------------
+
+// RobotSplitResponse is returned by POST /:type/budget/robot-split.
+// Robot=false  → manual mode, po1_pct/po2_pct are zero (not applicable).
+// Robot=true   → percentages come from the external robot service.
+type RobotSplitResponse struct {
+	Robot  bool    `json:"robot"`
+	Po1Pct float64 `json:"po1_pct,omitempty"`
+	Po2Pct float64 `json:"po2_pct,omitempty"`
+}
+
+// ---------------------------------------------------------------------------
 // Import result
 // ---------------------------------------------------------------------------
 

@@ -219,22 +219,7 @@ func (h *HTTPHandler) GeneratePO(ctx *app.Context) *app.CostumeResponse {
 		}
 	}
 	if req.GenerateMode == "" {
-		req.GenerateMode = "stage_only"
-		if req.Stage == 0 {
-			req.Stage = 1
-		}
-	}
-
-	// Validate line_strategy
-	switch req.LineStrategy {
-	case "", "keep_granular", "aggregate_by_uniq":
-		// OK
-	default:
-		return &app.CostumeResponse{
-			RequestID: ctx.APIReqID,
-			Status:    http.StatusUnprocessableEntity,
-			Message:   "line_strategy must be one of: keep_granular, aggregate_by_uniq",
-		}
+		req.GenerateMode = "both_stages"
 	}
 
 	// Extract caller identity from JWT

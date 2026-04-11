@@ -154,6 +154,18 @@ type BulkSupplierInput struct {
 }
 
 // ---------------------------------------------------------------------------
+// Robot split preview
+// ---------------------------------------------------------------------------
+
+// RobotSplitRequest is the payload for POST /:type/budget/robot-split.
+// po_type = "manual" → return { robot: false }, no pct fields.
+// po_type = "robot"  → call external robot service, return po1_pct + po2_pct.
+type RobotSplitRequest struct {
+	PoType   string `json:"po_type"   validate:"required,oneof=manual robot"`
+	UniqCode string `json:"uniq_code" validate:"required"`
+}
+
+// ---------------------------------------------------------------------------
 // Excel import row
 // ---------------------------------------------------------------------------
 

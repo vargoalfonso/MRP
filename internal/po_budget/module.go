@@ -100,5 +100,6 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		budget.POST("/:id/approve", roleMiddleware.RequirePermission(m.roleService, "po_budget", "approve"), m.base.RunAction(m.handler.ApproveEntry))
 		budget.POST("/:id/reject", roleMiddleware.RequirePermission(m.roleService, "po_budget", "approve"), m.base.RunAction(m.handler.ApproveEntry))
 		budget.POST("/import", roleMiddleware.RequirePermission(m.roleService, "po_budget", "create"), m.base.RunAction(m.handler.ImportEntries))
+		budget.POST("/robot-split", roleMiddleware.RequirePermission(m.roleService, "po_budget", "view"), m.base.RunAction(m.handler.GetRobotSplit))
 	}
 }

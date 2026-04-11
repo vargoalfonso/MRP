@@ -27,6 +27,7 @@ type PurchaseOrder struct {
 	PoDate           *time.Time `gorm:"column:po_date;type:date"`
 	ExpectedDelivery *time.Time `gorm:"column:expected_delivery_date;type:date"`
 	Currency         *string    `gorm:"column:currency;size:8"`
+	TotalWeight      *float64   `gorm:"column:total_weight;type:numeric(15,4)"`
 	TotalAmount      *float64   `gorm:"column:total_amount;type:numeric(18,2)"`
 	ExternalSystem   *string    `gorm:"column:external_system;size:64"`
 	ExternalPoNumber *string    `gorm:"column:external_po_number;size:128"`
@@ -59,6 +60,8 @@ type PurchaseOrderItem struct {
 	PcsPerKanban    *int      `gorm:"column:pcs_per_kanban"`
 	PoBudgetEntryID *int64    `gorm:"column:po_budget_entry_id"` // trace line → budget entry
 	Status          string    `gorm:"column:status;size:32;default:open"`
+	// SalesPlan is transient (not persisted) — carried from budget entry for response building.
+	SalesPlan float64 `gorm:"-" json:"-"`
 	CreatedAt       time.Time `gorm:"column:created_at;not null;default:now()"`
 	UpdatedAt       time.Time `gorm:"column:updated_at;not null;default:now()"`
 }

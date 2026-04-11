@@ -34,11 +34,14 @@ type IRepository interface {
 	ListLegacySuppliersByIDs(ctx context.Context, supplierIDs []int64) ([]models.LegacySupplier, error)
 	ListLegacySuppliersForBudget(ctx context.Context, budgetType, period string) ([]models.LegacySupplier, error)
 	GetSupplierUUIDByLegacyID(ctx context.Context, legacySupplierID int64) (*string, error)
+	GetLegacyIDBySupplierUUID(ctx context.Context, supplierUUID string) (int64, error)
 
 	// Budget entries (read-only from po_budget_entries for form_options / generate)
 	ListBudgetEntriesForGenerate(ctx context.Context, budgetType, period string, supplierUUIDs []string, entryIDs []int64) ([]models.POBudgetEntry, error)
 	GetSplitSetting(ctx context.Context, budgetType string) (float64, float64, error) // po1Pct, po2Pct
 	GetSplitPolicy(ctx context.Context, budgetType string) (*POSplitPolicy, error)
+	// MarkBudgetEntriesAsUsed flags entries so they cannot be used in another PO generation.
+	MarkBudgetEntriesAsUsed(ctx context.Context, entryIDs []int64) error
 
 	// PO generation writes
 	CreatePO(ctx context.Context, po *models.PurchaseOrder) error
@@ -440,6 +443,20 @@ func (r *repo) GetSupplierUUIDByLegacyID(ctx context.Context, legacySupplierID i
 	return &supplierUUID, nil
 }
 
+func (r *repo) GetLegacyIDBySupplierUUID(ctx context.Context, supplierUUID string) (int64, error) {
+	var legacyID int64
+	err := r.db.WithContext(ctx).
+		Table("supplier_legacy_map").
+		Select("legacy_supplier_id").
+		Where("supplier_uuid = ?", supplierUUID).
+		Limit(1).
+		Scan(&legacyID).Error
+	if err != nil {
+		return 0, fmt.Errorf("GetLegacyIDBySupplierUUID: %w", err)
+	}
+	return legacyID, nil
+}
+
 // ---------------------------------------------------------------------------
 // Budget entries (read-only)
 // ---------------------------------------------------------------------------
@@ -457,7 +474,9 @@ func (r *repo) ListBudgetEntriesForGenerate(ctx context.Context, budgetType, per
 		`).
 		Joins("LEFT JOIN kanban_parameters kp ON kp.item_uniq_code = pbe.uniq_code AND kp.status ILIKE 'active'").
 		Where("LOWER(REPLACE(pbe.budget_type, ' ', '_')) = LOWER(REPLACE(?, ' ', '_'))", budgetType).
-		Where("pbe.status = 'Approved'")
+		Where("pbe.status = 'Approved'").
+		// Exclude entries already linked to a generated PO (duplicate guard via purchase_orders).
+		Where("NOT EXISTS (SELECT 1 FROM purchase_orders po WHERE po.po_budget_entry_id = pbe.id)")
 
 	if len(entryIDs) > 0 {
 		q = q.Where("pbe.id IN ?", entryIDs)
@@ -513,6 +532,21 @@ func (r *repo) GetSplitPolicy(ctx context.Context, budgetType string) (*POSplitP
 // ---------------------------------------------------------------------------
 // PO writes
 // ---------------------------------------------------------------------------
+
+// MarkBudgetEntriesAsUsed sets status = 'PO Generated' on the given entry IDs.
+// This prevents the same budget entries from being used in a second PO generation.
+func (r *repo) MarkBudgetEntriesAsUsed(ctx context.Context, entryIDs []int64) error {
+	if len(entryIDs) == 0 {
+		return nil
+	}
+	if err := r.db.WithContext(ctx).
+		Table("po_budget_entries").
+		Where("id IN ?", entryIDs).
+		Update("status", "PO Generated").Error; err != nil {
+		return fmt.Errorf("MarkBudgetEntriesAsUsed: %w", err)
+	}
+	return nil
+}
 
 func (r *repo) CreatePO(ctx context.Context, po *models.PurchaseOrder) error {
 	if err := r.db.WithContext(ctx).Create(po).Error; err != nil {
