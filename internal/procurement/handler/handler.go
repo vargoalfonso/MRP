@@ -140,12 +140,21 @@ func (h *HTTPHandler) ListDNs(ctx *app.Context) *app.CostumeResponse {
 // ---------------------------------------------------------------------------
 
 func (h *HTTPHandler) GetDNDetail(ctx *app.Context) *app.CostumeResponse {
-	dnID := ctx.Param("dn_id")
-	if dnID == "" {
+	dnIDText := ctx.Param("dn_id")
+	if dnIDText == "" {
 		return &app.CostumeResponse{
 			RequestID: ctx.APIReqID,
 			Status:    http.StatusBadRequest,
 			Message:   "dn_id is required",
+		}
+	}
+
+	dnID, err := strconv.ParseInt(dnIDText, 10, 64)
+	if err != nil || dnID <= 0 {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "dn_id must be a positive integer",
 		}
 	}
 

@@ -26,7 +26,7 @@ type IService interface {
 
 	// DN list + detail
 	ListDNs(ctx context.Context, f models.DNListFilter) (*models.DNListResponse, error)
-	GetDNDetail(ctx context.Context, dnID string) (*models.DNDetailResponse, error)
+	GetDNDetail(ctx context.Context, dnID int64) (*models.DNDetailResponse, error)
 
 	// Wizard: form options dropdown data
 	GetFormOptions(ctx context.Context, poType, period string) (*models.FormOptionsResponse, error)
@@ -100,7 +100,6 @@ func (s *svc) ListPOBoard(ctx context.Context, p pagination.POBoardPaginationInp
 			UniqCode:      r.UniqCode,
 			SupplierID:    r.SupplierID,
 			SupplierName:  r.SupplierName,
-			DnCreated:     r.DnCreated,
 			Status:        r.Status,
 			IsLate:        r.IsLate,
 		})
@@ -170,8 +169,6 @@ func (s *svc) GetPODetail(ctx context.Context, poID int64) (*models.PODetailResp
 		SupplierID:       po.SupplierID,
 		SupplierName:     supplierName,
 		TotalQuantity:    totalQty,
-		DnCreated:        po.DnCreated,
-		DnIncoming:       po.DnIncoming,
 		Status:           po.Status,
 		ExternalSystem:   po.ExternalSystem,
 		ExternalPoNumber: po.ExternalPoNumber,
@@ -250,7 +247,7 @@ func (s *svc) ListDNs(ctx context.Context, f models.DNListFilter) (*models.DNLis
 	}, nil
 }
 
-func (s *svc) GetDNDetail(ctx context.Context, dnID string) (*models.DNDetailResponse, error) {
+func (s *svc) GetDNDetail(ctx context.Context, dnID int64) (*models.DNDetailResponse, error) {
 	dn, err := s.repo.GetDNByID(ctx, dnID)
 	if err != nil {
 		return nil, err
@@ -279,7 +276,6 @@ func (s *svc) GetDNDetail(ctx context.Context, dnID string) (*models.DNDetailRes
 			QtyReceived:   it.QtyReceived,
 			QualityStatus: it.QualityStatus,
 			DateIncoming:  it.DateIncoming,
-			PackingNumber: it.PackingNumber,
 			Uom:           it.Uom,
 		})
 	}
@@ -410,38 +406,27 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 		}
 	}
 
-	// ── Group entries by supplier UUID (from budget entry) ────────────────
+	// ── Group entries by supplier ID (legacy BIGINT from budget entry) ──────
 	type supplierGroup struct {
-		supplierUUID string // UUID from po_budget_entries.supplier_id
-		legacyID     int64  // resolved from supplier_legacy_map
+		legacyID     int64
 		supplierName string
 		entries      []models.POBudgetEntry
 	}
 
-	groupByUUID := map[string]*supplierGroup{}
+	groupByID := map[int64]*supplierGroup{}
 	for _, e := range entries {
-		key := ""
+		var id int64
 		if e.SupplierID != nil {
-			key = *e.SupplierID
+			id = *e.SupplierID
 		}
-		if _, ok := groupByUUID[key]; !ok {
+		if _, ok := groupByID[id]; !ok {
 			name := ""
 			if e.SupplierName != nil {
 				name = *e.SupplierName
 			}
-			groupByUUID[key] = &supplierGroup{supplierUUID: key, supplierName: name}
+			groupByID[id] = &supplierGroup{legacyID: id, supplierName: name}
 		}
-		groupByUUID[key].entries = append(groupByUUID[key].entries, e)
-	}
-
-	// Resolve UUID → legacy BIGINT for each group.
-	for _, grp := range groupByUUID {
-		if grp.supplierUUID != "" {
-			legacyID, lerr := s.repo.GetLegacyIDBySupplierUUID(ctx, grp.supplierUUID)
-			if lerr == nil {
-				grp.legacyID = legacyID
-			}
-		}
+		groupByID[id].entries = append(groupByID[id].entries, e)
 	}
 
 	// ── Determine which stages to generate ───────────────────────────────
@@ -456,7 +441,7 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 	// ── Generate PO for each supplier × stage ────────────────────────────
 	var result models.GeneratePOResponse
 
-	for _, grp := range groupByUUID {
+	for _, grp := range groupByID {
 		// Compute budget-level stats (same for PO1 and PO2).
 		stats := computeGroupStats(grp.entries)
 
@@ -523,8 +508,6 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 					TotalQuantity:    totalQty,
 					TotalUniq:        stats.totalUniq,
 					TotalWeight:      stats.totalWeight,
-					DnCreated:        po.DnCreated,
-					DnIncoming:       po.DnIncoming,
 					Status:           po.Status,
 					ExternalSystem:   po.ExternalSystem,
 					ExternalPoNumber: po.ExternalPoNumber,

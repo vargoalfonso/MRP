@@ -44,7 +44,7 @@ type POBudgetEntry struct {
 	Uom             *string   `gorm:"size:32"`
 	WeightKg        *float64  `gorm:"type:numeric(15,4)"`
 	Description     *string   `gorm:"type:text"`
-	SupplierID      *string   `gorm:"size:36"` // UUID as string
+	SupplierID      *int64    `gorm:""`        // legacy supplier.supplier_id (BIGINT)
 	SupplierName    *string   `gorm:"size:255"`
 	Period          string    `gorm:"size:32;not null"` // e.g. "October 2025"
 	PeriodDate      time.Time `gorm:"type:date;not null;index"`

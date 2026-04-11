@@ -26,18 +26,16 @@ type IRepository interface {
 
 	// DN queries
 	ListDNs(ctx context.Context, f models.DNListFilter) ([]models.IncomingDN, int64, error)
-	GetDNByID(ctx context.Context, dnID string) (*models.IncomingDN, error)
-	GetDNItems(ctx context.Context, dnID string) ([]models.IncomingDNItem, error)
+	GetDNByID(ctx context.Context, dnID int64) (*models.IncomingDN, error)
+	GetDNItems(ctx context.Context, dnID int64) ([]models.IncomingDNItem, error)
 
 	// Supplier lookup (legacy)
 	GetLegacySupplier(ctx context.Context, supplierID int64) (*models.LegacySupplier, error)
 	ListLegacySuppliersByIDs(ctx context.Context, supplierIDs []int64) ([]models.LegacySupplier, error)
 	ListLegacySuppliersForBudget(ctx context.Context, budgetType, period string) ([]models.LegacySupplier, error)
-	GetSupplierUUIDByLegacyID(ctx context.Context, legacySupplierID int64) (*string, error)
-	GetLegacyIDBySupplierUUID(ctx context.Context, supplierUUID string) (int64, error)
 
 	// Budget entries (read-only from po_budget_entries for form_options / generate)
-	ListBudgetEntriesForGenerate(ctx context.Context, budgetType, period string, supplierUUIDs []string, entryIDs []int64) ([]models.POBudgetEntry, error)
+	ListBudgetEntriesForGenerate(ctx context.Context, budgetType, period string, supplierIDs []int64, entryIDs []int64) ([]models.POBudgetEntry, error)
 	GetSplitSetting(ctx context.Context, budgetType string) (float64, float64, error) // po1Pct, po2Pct
 	GetSplitPolicy(ctx context.Context, budgetType string) (*POSplitPolicy, error)
 	// MarkBudgetEntriesAsUsed flags entries so they cannot be used in another PO generation.
@@ -168,7 +166,7 @@ func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoa
 	// Some environments may not have DN tables yet; avoid hard failure in PO board query.
 	var hasDNTables bool
 	if err := r.db.WithContext(ctx).
-		Raw("SELECT to_regclass('incoming_dns') IS NOT NULL AND to_regclass('incoming_dn_items') IS NOT NULL").
+		Raw("SELECT to_regclass('delivery_notes') IS NOT NULL AND to_regclass('delivery_note_items') IS NOT NULL").
 		Scan(&hasDNTables).Error; err != nil {
 		hasDNTables = false
 	}
@@ -186,8 +184,8 @@ func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoa
 		base = base.Joins(`LEFT JOIN LATERAL (
 			SELECT COALESCE(SUM(idi.qty_received::numeric), 0) AS qty_delivered,
 			       MIN(idi.item_uniq_code)                      AS uniq_code
-			FROM   incoming_dns idn
-			JOIN   incoming_dn_items idi ON idi.incoming_dn_id = idn.id
+			FROM   delivery_notes idn
+			JOIN   delivery_note_items idi ON idi.dn_id = idn.id
 			WHERE  idn.po_number = po.po_number
 		) dn_agg ON true`)
 	}
@@ -261,7 +259,6 @@ func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoa
 			%s,
 			po.supplier_id,
 			s.supplier_name,
-			po.dn_created,
 			po.status,
 			po.total_amount,
 			(po.expected_delivery_date IS NOT NULL
@@ -350,21 +347,21 @@ func (r *repo) ListDNs(ctx context.Context, f models.DNListFilter) ([]models.Inc
 	return dns, total, nil
 }
 
-func (r *repo) GetDNByID(ctx context.Context, dnID string) (*models.IncomingDN, error) {
+func (r *repo) GetDNByID(ctx context.Context, dnID int64) (*models.IncomingDN, error) {
 	var dn models.IncomingDN
 	if err := r.db.WithContext(ctx).First(&dn, "id = ?", dnID).Error; err != nil {
-		return nil, fmt.Errorf("GetDNByID %s: %w", dnID, err)
+		return nil, fmt.Errorf("GetDNByID %d: %w", dnID, err)
 	}
 	return &dn, nil
 }
 
-func (r *repo) GetDNItems(ctx context.Context, dnID string) ([]models.IncomingDNItem, error) {
+func (r *repo) GetDNItems(ctx context.Context, dnID int64) ([]models.IncomingDNItem, error) {
 	var items []models.IncomingDNItem
 	if err := r.db.WithContext(ctx).
-		Where("incoming_dn_id = ?", dnID).
+		Where("dn_id = ?", dnID).
 		Order("created_at ASC").
 		Find(&items).Error; err != nil {
-		return nil, fmt.Errorf("GetDNItems %s: %w", dnID, err)
+		return nil, fmt.Errorf("GetDNItems %d: %w", dnID, err)
 	}
 	return items, nil
 }
@@ -399,13 +396,12 @@ func (r *repo) ListLegacySuppliersByIDs(ctx context.Context, supplierIDs []int64
 }
 
 // ListLegacySuppliersForBudget returns legacy suppliers that have budget entries
-// for the given budget_type + period (via supplier_legacy_map bridge).
+// for the given budget_type + period.
 func (r *repo) ListLegacySuppliersForBudget(ctx context.Context, budgetType, period string) ([]models.LegacySupplier, error) {
 	var suppliers []models.LegacySupplier
 	err := r.db.WithContext(ctx).
 		Table("supplier s").
-		Joins(`JOIN supplier_legacy_map slm ON slm.legacy_supplier_id = s.supplier_id`).
-		Joins(`JOIN po_budget_entries pbe ON pbe.supplier_id::text = slm.supplier_uuid::text`).
+		Joins(`JOIN po_budget_entries pbe ON pbe.supplier_id = s.supplier_id`).
 		Where("LOWER(REPLACE(pbe.budget_type, ' ', '_')) = LOWER(REPLACE(?, ' ', '_')) AND pbe.period ILIKE ?", budgetType, "%"+period+"%").
 		Where("pbe.status = 'Approved'").
 		Distinct("s.supplier_id, s.supplier_name").
@@ -417,45 +413,6 @@ func (r *repo) ListLegacySuppliersForBudget(ctx context.Context, budgetType, per
 	return suppliers, nil
 }
 
-func (r *repo) GetSupplierUUIDByLegacyID(ctx context.Context, legacySupplierID int64) (*string, error) {
-	var mapTableExists bool
-	if err := r.db.WithContext(ctx).Raw("SELECT to_regclass('supplier_legacy_map') IS NOT NULL").Scan(&mapTableExists).Error; err != nil {
-		return nil, fmt.Errorf("GetSupplierUUIDByLegacyID/check table: %w", err)
-	}
-	if !mapTableExists {
-		return nil, nil
-	}
-
-	var supplierUUID string
-	err := r.db.WithContext(ctx).
-		Table("supplier_legacy_map").
-		Select("supplier_uuid").
-		Where("legacy_supplier_id = ?", legacySupplierID).
-		Limit(1).
-		Scan(&supplierUUID).Error
-	if err != nil {
-		return nil, fmt.Errorf("GetSupplierUUIDByLegacyID: %w", err)
-	}
-	supplierUUID = strings.TrimSpace(supplierUUID)
-	if supplierUUID == "" {
-		return nil, nil
-	}
-	return &supplierUUID, nil
-}
-
-func (r *repo) GetLegacyIDBySupplierUUID(ctx context.Context, supplierUUID string) (int64, error) {
-	var legacyID int64
-	err := r.db.WithContext(ctx).
-		Table("supplier_legacy_map").
-		Select("legacy_supplier_id").
-		Where("supplier_uuid = ?", supplierUUID).
-		Limit(1).
-		Scan(&legacyID).Error
-	if err != nil {
-		return 0, fmt.Errorf("GetLegacyIDBySupplierUUID: %w", err)
-	}
-	return legacyID, nil
-}
 
 // ---------------------------------------------------------------------------
 // Budget entries (read-only)
@@ -464,7 +421,7 @@ func (r *repo) GetLegacyIDBySupplierUUID(ctx context.Context, supplierUUID strin
 // ListBudgetEntriesForGenerate fetches Approved po_budget_entries for PO generation.
 // If entryIDs is non-empty, filters by those IDs (explicit selection).
 // Otherwise filters by budgetType+period and optionally by supplier UUID.
-func (r *repo) ListBudgetEntriesForGenerate(ctx context.Context, budgetType, period string, supplierUUIDs []string, entryIDs []int64) ([]models.POBudgetEntry, error) {
+func (r *repo) ListBudgetEntriesForGenerate(ctx context.Context, budgetType, period string, supplierIDs []int64, entryIDs []int64) ([]models.POBudgetEntry, error) {
 	q := r.db.WithContext(ctx).
 		Table("po_budget_entries pbe").
 		Select(`
@@ -483,8 +440,8 @@ func (r *repo) ListBudgetEntriesForGenerate(ctx context.Context, budgetType, per
 	} else {
 		// Period stored as "October 2025" — allow matching via ILIKE for "2024-01" format too.
 		q = q.Where("pbe.period ILIKE ?", "%"+period+"%")
-		if len(supplierUUIDs) > 0 {
-			q = q.Where("pbe.supplier_id::text IN ?", supplierUUIDs)
+		if len(supplierIDs) > 0 {
+			q = q.Where("pbe.supplier_id IN ?", supplierIDs)
 		}
 	}
 

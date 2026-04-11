@@ -20,9 +20,6 @@ type PurchaseOrder struct {
 	PoBudgetID       *int64     `gorm:"column:po_budget_id"`       // legacy po_budget.pob_id
 	PoBudgetEntryID  *int64     `gorm:"column:po_budget_entry_id"` // po_budget_entries.id (v2)
 	SupplierID       *int64     `gorm:"column:supplier_id"`        // legacy supplier.supplier_id
-	TotalIncoming    int        `gorm:"column:total_incoming;default:0"`
-	DnCreated        int        `gorm:"column:dn_created;default:0"`
-	DnIncoming       int        `gorm:"column:dn_incoming;default:0"`
 	Status           string     `gorm:"column:status;size:32;default:pending"`
 	PoDate           *time.Time `gorm:"column:po_date;type:date"`
 	ExpectedDelivery *time.Time `gorm:"column:expected_delivery_date;type:date"`
@@ -55,15 +52,14 @@ type PurchaseOrderItem struct {
 	OrderedQty   float64  `gorm:"column:ordered_qty;type:numeric(15,4);not null"`
 	UnitPrice    *float64 `gorm:"column:unit_price;type:numeric(18,6)"`
 	// Amount is GENERATED ALWAYS AS (unit_price * ordered_qty) STORED — read-only.
-	Amount          *float64  `gorm:"column:amount;type:numeric(18,2);->"`
-	PackingNumber   *string   `gorm:"column:packing_number;size:64"`
-	PcsPerKanban    *int      `gorm:"column:pcs_per_kanban"`
-	PoBudgetEntryID *int64    `gorm:"column:po_budget_entry_id"` // trace line → budget entry
-	Status          string    `gorm:"column:status;size:32;default:open"`
+	Amount          *float64 `gorm:"column:amount;type:numeric(18,2);->"`
+	PcsPerKanban    *int     `gorm:"column:pcs_per_kanban"`
+	PoBudgetEntryID *int64   `gorm:"column:po_budget_entry_id"` // trace line → budget entry
+	Status          string   `gorm:"column:status;size:32;default:open"`
 	// SalesPlan is transient (not persisted) — carried from budget entry for response building.
-	SalesPlan float64 `gorm:"-" json:"-"`
-	CreatedAt       time.Time `gorm:"column:created_at;not null;default:now()"`
-	UpdatedAt       time.Time `gorm:"column:updated_at;not null;default:now()"`
+	SalesPlan float64   `gorm:"-" json:"-"`
+	CreatedAt time.Time `gorm:"column:created_at;not null;default:now()"`
+	UpdatedAt time.Time `gorm:"column:updated_at;not null;default:now()"`
 }
 
 func (PurchaseOrderItem) TableName() string { return "purchase_order_items" }
@@ -86,15 +82,15 @@ type LegacySupplier struct {
 	SupplierName string `gorm:"column:supplier_name;size:128"`
 }
 
-func (LegacySupplier) TableName() string { return "supplier" }
+func (LegacySupplier) TableName() string { return "suppliers" }
 
-// IncomingDN maps to the legacy `incoming_dns` table.
+// IncomingDN maps to delivery_notes table.
 type IncomingDN struct {
-	ID              string    `gorm:"column:id;primaryKey"`
+	ID              int64     `gorm:"column:id;primaryKey"`
 	DnNumber        string    `gorm:"column:dn_number;size:128;not null"`
 	Period          string    `gorm:"column:period;size:32;not null"`
 	PoNumber        string    `gorm:"column:po_number;size:128;not null"`
-	DnType          string    `gorm:"column:dn_type;size:64;not null"`
+	DnType          string    `gorm:"column:type;size:64;not null"`
 	TotalPoQty      *int      `gorm:"column:total_po_qty"`
 	TotalDnCreated  *int      `gorm:"column:total_dn_created"`
 	TotalDnIncoming *int      `gorm:"column:total_dn_incoming"`
@@ -104,20 +100,22 @@ type IncomingDN struct {
 	UpdatedAt       time.Time `gorm:"column:updated_at;not null;default:now()"`
 }
 
-func (IncomingDN) TableName() string { return "incoming_dns" }
+func (IncomingDN) TableName() string { return "delivery_notes" }
 
-// IncomingDNItem maps to the legacy `incoming_dn_items` table.
+// IncomingDNItem maps to delivery_note_items table.
 type IncomingDNItem struct {
-	ID             string     `gorm:"column:id;primaryKey"`
-	IncomingDNID   string     `gorm:"column:incoming_dn_id;not null"`
+	ID             int64      `gorm:"column:id;primaryKey"`
+	IncomingDNID   int64      `gorm:"column:dn_id;not null"`
 	ItemUniqCode   string     `gorm:"column:item_uniq_code;size:64;not null"`
+	Quantity       int        `gorm:"column:quantity"`
 	OrderQty       int        `gorm:"column:order_qty;not null"`
+	Weight         *int       `gorm:"column:weight"`
 	DateIncoming   time.Time  `gorm:"column:date_incoming;type:date;not null"`
 	QtyStated      int        `gorm:"column:qty_stated;default:0"`
 	QtyReceived    int        `gorm:"column:qty_received;default:0"`
 	WeightReceived *float64   `gorm:"column:weight_received"`
 	QualityStatus  string     `gorm:"column:quality_status;size:32;default:Pending"`
-	PackingNumber  *string    `gorm:"column:packing_number;size:64"`
+	PackingNumber  *string    `gorm:"-"` // not a DB column; populated in application layer from dn.dn_number
 	PcsPerKanban   *int       `gorm:"column:pcs_per_kanban"`
 	Uom            *string    `gorm:"column:uom;size:32"`
 	ReceivedAt     *time.Time `gorm:"column:received_at"`
@@ -125,7 +123,7 @@ type IncomingDNItem struct {
 	UpdatedAt      time.Time  `gorm:"column:updated_at;not null;default:now()"`
 }
 
-func (IncomingDNItem) TableName() string { return "incoming_dn_items" }
+func (IncomingDNItem) TableName() string { return "delivery_note_items" }
 
 // POBudgetEntry is a read-only reference from po_budget_entries (for form_options / generate).
 // We only read from it here; writes happen in the po_budget module.
@@ -140,7 +138,7 @@ type POBudgetEntry struct {
 	Quantity        float64  `gorm:"column:quantity"`
 	Uom             *string  `gorm:"column:uom"`
 	WeightKg        *float64 `gorm:"column:weight_kg"`
-	SupplierID      *string  `gorm:"column:supplier_id"` // UUID (new suppliers table)
+	SupplierID      *int64   `gorm:"column:supplier_id"` // legacy supplier.supplier_id (BIGINT)
 	SupplierName    *string  `gorm:"column:supplier_name"`
 	Period          string   `gorm:"column:period"`
 	SalesPlan       float64  `gorm:"column:sales_plan"`
@@ -149,7 +147,6 @@ type POBudgetEntry struct {
 	Po2Pct          float64  `gorm:"column:po2_pct"`
 	Po1Qty          float64  `gorm:"column:po1_qty"`
 	Po2Qty          float64  `gorm:"column:po2_qty"`
-	PackingNumber   *string  `gorm:"column:packing_number"` // may not exist; guarded in query
 	PcsPerKanban    *int     `gorm:"column:pcs_per_kanban"`
 	KanbanNumber    *string  `gorm:"column:kanban_number"`
 	Status          string   `gorm:"column:status"`
@@ -189,7 +186,6 @@ type POBoardRow struct {
 	UniqCode      *string  `gorm:"column:uniq_code"`
 	SupplierID    *int64   `gorm:"column:supplier_id"`
 	SupplierName  *string  `gorm:"column:supplier_name"`
-	DnCreated     int      `gorm:"column:dn_created"`
 	Status        string   `gorm:"column:status"`
 	IsLate        bool     `gorm:"column:is_late"`
 	TotalAmount   *float64 `gorm:"column:total_amount"`

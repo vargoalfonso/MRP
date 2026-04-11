@@ -46,7 +46,14 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	g := r.Group("/api/v1/action-ui")
 	g.Use(auth)
 
-	incoming := g.Group("/incoming")
+	incoming := g.Group("/incoming-material")
+
+	// GET /api/v1/action-ui/incoming/lookup?packing_number=KB-123456
+	// Must be before POST /scans (static before wildcard)
+	incoming.GET("/lookup",
+		roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"),
+		m.base.RunAction(m.handler.LookupByPackingNumber),
+	)
 	incoming.POST("/scans",
 		roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"),
 		m.base.RunAction(m.handler.CreateIncomingScan),

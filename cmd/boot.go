@@ -44,6 +44,10 @@ import (
 	globalParameterHandler "github.com/ganasa18/go-template/internal/global_parameter/handler"
 	globalParameterRepository "github.com/ganasa18/go-template/internal/global_parameter/repository"
 	globalParameterService "github.com/ganasa18/go-template/internal/global_parameter/service"
+	inventoryModule "github.com/ganasa18/go-template/internal/inventory"
+	inventoryHandler "github.com/ganasa18/go-template/internal/inventory/handler"
+	inventoryRepo "github.com/ganasa18/go-template/internal/inventory/repository"
+	inventoryService "github.com/ganasa18/go-template/internal/inventory/service"
 	kanbanModule "github.com/ganasa18/go-template/internal/kanban"
 	kanbanHandler "github.com/ganasa18/go-template/internal/kanban/handler"
 	kanbanRepository "github.com/ganasa18/go-template/internal/kanban/repository"
@@ -165,6 +169,11 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	qcSvc := qcService.New(qcRepository)
 	qcHTTPHandler := qcHandler.New(qcSvc)
 
+	// Inventory module (RM database, Indirect RM, Subcon)
+	invRepository := inventoryRepo.New(db)
+	invSvc := inventoryService.New(invRepository)
+	invHTTPHandler := inventoryHandler.New(invSvc)
+
 	safetyStockRepository := safetyStockRepo.New(db)
 	safetyStockService := safetyStockService.New(safetyStockRepository)
 	safetyStockHandler := safetyStockHandler.New(safetyStockService)
@@ -214,6 +223,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		procModule.NewHTTPModule(cfg, baseHTTPHandler, procHTTPHandler, authSvc, roleSvc),
 		actionUIModule.NewHTTPModule(cfg, baseHTTPHandler, actionHTTPHandler, authSvc, roleSvc),
 		qcModule.NewHTTPModule(cfg, baseHTTPHandler, qcHTTPHandler, authSvc, roleSvc),
+		inventoryModule.NewHTTPModule(cfg, baseHTTPHandler, invHTTPHandler, authSvc, roleSvc, invSvc),
 		safetyStockModule.NewHTTPModule(cfg, baseHTTPHandler, safetyStockHandler, authSvc, roleSvc, safetyStockService),
 		typeParameterModule.NewHTTPModule(cfg, baseHTTPHandler, typeParameterHTTPHandler, authSvc, roleSvc, typeParameterSvc),
 		UnitMeasureModule.NewHTTPModule(cfg, baseHTTPHandler, unitMeasureHTTPHandler, authSvc, roleSvc, unitMeasureSvc),

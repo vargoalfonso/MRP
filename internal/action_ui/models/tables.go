@@ -6,7 +6,7 @@ import "time"
 // Created by migration: scripts/migrations/0015_dn_feature_up.sql
 type IncomingReceivingScan struct {
 	ID               int64     `gorm:"column:id;primaryKey;autoIncrement"`
-	IncomingDNItemID string    `gorm:"column:incoming_dn_item_id;not null"`
+	IncomingDNItemID int64     `gorm:"column:incoming_dn_item_id;not null"`
 	IdempotencyKey   *string   `gorm:"column:idempotency_key"`
 	ScanRef          string    `gorm:"column:scan_ref;not null"`
 	Qty              float64   `gorm:"column:qty;type:numeric(15,4);not null"`

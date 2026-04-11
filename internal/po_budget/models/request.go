@@ -38,7 +38,7 @@ type CreateEntryRequest struct {
 	Uom             *string  `json:"uom"`
 	WeightKg        *float64 `json:"weight_kg"`
 	Description     *string  `json:"description"`
-	SupplierID      *string  `json:"supplier_id"`
+	SupplierID      *int64   `json:"supplier_id"`
 	SupplierName    *string  `json:"supplier_name"`
 	Period          string   `json:"period"           validate:"required"` // "October 2025"
 	SalesPlan       float64  `json:"sales_plan"       validate:"gte=0"`
@@ -61,7 +61,7 @@ type UpdateEntryRequest struct {
 	Uom             *string  `json:"uom"`
 	WeightKg        *float64 `json:"weight_kg"`
 	Description     *string  `json:"description"`
-	SupplierID      *string  `json:"supplier_id"`
+	SupplierID      *int64   `json:"supplier_id"`
 	SupplierName    *string  `json:"supplier_name"`
 	Period          *string  `json:"period"`
 	SalesPlan       *float64 `json:"sales_plan"`
@@ -148,7 +148,7 @@ type BulkItemInput struct {
 // BulkSupplierInput is one supplier allocation for a UNIQ item.
 // Quantity is the portion of BudgetQty allocated to this supplier.
 type BulkSupplierInput struct {
-	SupplierID   *string `json:"supplier_id"`
+	SupplierID   *int64  `json:"supplier_id"`
 	SupplierName string  `json:"supplier_name" validate:"required"`
 	Quantity     float64 `json:"quantity"      validate:"gt=0"`
 }

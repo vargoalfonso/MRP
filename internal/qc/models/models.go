@@ -15,12 +15,13 @@ type QCTask struct {
 	TaskType string `gorm:"column:task_type;size:32;not null" json:"task_type"`
 	Status   string `gorm:"column:status;size:32;not null" json:"status"`
 
-	// IncomingDNItemID links to incoming_dn_items.id (uuid). Added by migration 0015.
-	IncomingDNItemID *string `gorm:"column:incoming_dn_item_id" json:"incoming_dn_item_id"`
+	// IncomingDNItemID links to delivery_note_items.id (bigint).
+	IncomingDNItemID *int64 `gorm:"column:incoming_dn_item_id" json:"incoming_dn_item_id"`
 
-	GoodQuantity  *int `gorm:"column:good_quantity" json:"good_quantity"`
-	NgQuantity    *int `gorm:"column:ng_quantity" json:"ng_quantity"`
-	ScrapQuantity *int `gorm:"column:scrap_quantity" json:"scrap_quantity"`
+	GoodQuantity  *int       `gorm:"column:good_quantity" json:"good_quantity"`
+	NgQuantity    *int       `gorm:"column:ng_quantity" json:"ng_quantity"`
+	ScrapQuantity *int       `gorm:"column:scrap_quantity" json:"scrap_quantity"`
+	DateChecked   *time.Time `gorm:"column:date_checked;type:date" json:"date_checked"`
 
 	Round        int            `gorm:"column:round;default:1" json:"round"`
 	RoundResults datatypes.JSON `gorm:"column:round_results;type:jsonb" json:"round_results"`

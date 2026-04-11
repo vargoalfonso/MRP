@@ -25,7 +25,7 @@ type EntryResponse struct {
 	Uom             *string   `json:"uom"`
 	WeightKg        *float64  `json:"weight_kg"`
 	Description     *string   `json:"description"`
-	SupplierID      *string   `json:"supplier_id"`
+	SupplierID      *int64    `json:"supplier_id"`
 	SupplierName    *string   `json:"supplier_name"`
 	Period          string    `json:"period"`
 	PeriodDate      time.Time `json:"period_date"`

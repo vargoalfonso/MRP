@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"strconv"
 
-	authModels "github.com/ganasa18/go-template/internal/auth/models"
 	"github.com/ganasa18/go-template/internal/base/app"
 	qcModels "github.com/ganasa18/go-template/internal/qc/models"
 	qcRepo "github.com/ganasa18/go-template/internal/qc/repository"
 	qcService "github.com/ganasa18/go-template/internal/qc/service"
+	userPkg "github.com/ganasa18/go-template/pkg/auth"
 	"github.com/ganasa18/go-template/pkg/pagination"
 )
 
@@ -76,8 +76,8 @@ func (h *HTTPHandler) StartTask(ctx *app.Context) *app.CostumeResponse {
 			Message:   "invalid id",
 		}
 	}
-	performedBy := mustUsername(ctx)
-	if err := h.svc.StartTask(ctx.Request.Context(), id, performedBy); err != nil {
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	if err := h.svc.StartTask(ctx.Request.Context(), id, userCtx.UserID); err != nil {
 		return app.NewError(ctx, err)
 	}
 
@@ -101,8 +101,8 @@ func (h *HTTPHandler) ApproveIncoming(ctx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body: " + err.Error()}
 	}
 
-	performedBy := mustUsername(ctx)
-	if err := h.svc.ApproveIncoming(ctx.Request.Context(), id, req.ApprovedQty, req.NgQty, req.ScrapQty, req.Notes, req.Defects, req.ScrapDisposition, performedBy); err != nil {
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	if err := h.svc.ApproveIncoming(ctx.Request.Context(), id, req.NumberOfDefects, req.DateChecked, userCtx.UserID); err != nil {
 		return app.NewError(ctx, err)
 	}
 
@@ -121,25 +121,10 @@ func (h *HTTPHandler) RejectIncoming(ctx *app.Context) *app.CostumeResponse {
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body: " + err.Error()}
 	}
-	performedBy := mustUsername(ctx)
-	if err := h.svc.RejectIncoming(ctx.Request.Context(), id, req.RejectedQty, req.Reason, req.Defects, req.Disposition, performedBy); err != nil {
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	if err := h.svc.RejectIncoming(ctx.Request.Context(), id, req.NumberOfDefects, req.DateChecked, userCtx.UserID); err != nil {
 		return app.NewError(ctx, err)
 	}
 	resp := map[string]interface{}{"qc_task_id": id, "status": "rejected"}
 	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: resp}
-}
-
-func mustUsername(ctx *app.Context) string {
-	raw, exists := ctx.Get("claims")
-	if !exists {
-		return "system"
-	}
-	claims, ok := raw.(*authModels.Claims)
-	if !ok || claims == nil {
-		return "system"
-	}
-	if claims.UserID != "" {
-		return claims.UserID
-	}
-	return "system"
 }

@@ -20,19 +20,18 @@ type SummaryResponse struct {
 
 // POBoardItem is one row in the paginated PO board table.
 type POBoardItem struct {
-	PoID          int64    `json:"po_id"`
-	PoType        string   `json:"po_type"`
-	PoStage       *int     `json:"po_stage,omitempty"`
-	Period        string   `json:"period"`
-	PoNumber      string   `json:"po_number"`
-	TotalBudgetPo float64  `json:"total_budget_po"`
-	QtyDelivered  float64  `json:"qty_delivered"`
-	UniqCode      *string  `json:"uniq_code,omitempty"`
-	SupplierID    *int64   `json:"supplier_id,omitempty"`
-	SupplierName  *string  `json:"supplier_name,omitempty"`
-	DnCreated     int      `json:"dn_created"`
-	Status        string   `json:"status"`
-	IsLate        bool     `json:"is_late"`
+	PoID          int64   `json:"po_id"`
+	PoType        string  `json:"po_type"`
+	PoStage       *int    `json:"po_stage,omitempty"`
+	Period        string  `json:"period"`
+	PoNumber      string  `json:"po_number"`
+	TotalBudgetPo float64 `json:"total_budget_po"`
+	QtyDelivered  float64 `json:"qty_delivered"`
+	UniqCode      *string `json:"uniq_code,omitempty"`
+	SupplierID    *int64  `json:"supplier_id,omitempty"`
+	SupplierName  *string `json:"supplier_name,omitempty"`
+	Status        string  `json:"status"`
+	IsLate        bool    `json:"is_late"`
 }
 
 // POBoardListResponse is the paginated response for the PO board.
@@ -55,31 +54,29 @@ type PaginationMeta struct {
 
 // PODetailResponse is returned by GET /procurement/purchase-orders/{po_id}.
 type PODetailResponse struct {
-	PO          POHeaderDetail  `json:"po"`
-	Items       []POItemDetail  `json:"items"`
-	HistoryLogs []POLogEntry    `json:"history_logs"`
+	PO          POHeaderDetail `json:"po"`
+	Items       []POItemDetail `json:"items"`
+	HistoryLogs []POLogEntry   `json:"history_logs"`
 }
 
 // POHeaderDetail is the header section of PO detail.
 type POHeaderDetail struct {
-	PoID             int64    `json:"po_id"`
-	PoType           string   `json:"po_type"`
-	PoStage          *int     `json:"po_stage,omitempty"`
-	Period           string   `json:"period"`
-	PoNumber         string   `json:"po_number"`
-	PoBudgetRef      string   `json:"po_budget_ref"`
-	SalesPlan        float64  `json:"sales_plan"`
-	TotalBudgetPo    float64  `json:"total_budget_po"`
-	SupplierID       *int64   `json:"supplier_id,omitempty"`
-	SupplierName     *string  `json:"supplier_name,omitempty"`
-	TotalQuantity    float64  `json:"total_quantity"`
-	TotalUniq        int      `json:"total_uniq"`
-	TotalWeight      float64  `json:"total_weight"`
-	DnCreated        int      `json:"dn_created"`
-	DnIncoming       int      `json:"dn_incoming"`
-	Status           string   `json:"status"`
-	ExternalSystem   *string  `json:"external_system,omitempty"`
-	ExternalPoNumber *string  `json:"external_po_number,omitempty"`
+	PoID             int64   `json:"po_id"`
+	PoType           string  `json:"po_type"`
+	PoStage          *int    `json:"po_stage,omitempty"`
+	Period           string  `json:"period"`
+	PoNumber         string  `json:"po_number"`
+	PoBudgetRef      string  `json:"po_budget_ref"`
+	SalesPlan        float64 `json:"sales_plan"`
+	TotalBudgetPo    float64 `json:"total_budget_po"`
+	SupplierID       *int64  `json:"supplier_id,omitempty"`
+	SupplierName     *string `json:"supplier_name,omitempty"`
+	TotalQuantity    float64 `json:"total_quantity"`
+	TotalUniq        int     `json:"total_uniq"`
+	TotalWeight      float64 `json:"total_weight"`
+	Status           string  `json:"status"`
+	ExternalSystem   *string `json:"external_system,omitempty"`
+	ExternalPoNumber *string `json:"external_po_number,omitempty"`
 }
 
 // POItemDetail is one line item in the PO detail.
@@ -113,12 +110,12 @@ type POLogEntry struct {
 
 // DNListItem is one row in the DN list.
 type DNListItem struct {
-	DnID     string    `json:"dn_id"`
-	DnNumber string    `json:"dn_number"`
-	Period   string    `json:"period"`
-	PoNumber string    `json:"po_number"`
-	DnType   string    `json:"dn_type"`
-	Status   string    `json:"status"`
+	DnID      int64     `json:"dn_id"`
+	DnNumber  string    `json:"dn_number"`
+	Period    string    `json:"period"`
+	PoNumber  string    `json:"po_number"`
+	DnType    string    `json:"dn_type"`
+	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -130,7 +127,7 @@ type DNListResponse struct {
 
 // DNDetailResponse is returned by GET /procurement/incoming-dns/{dn_id}.
 type DNDetailResponse struct {
-	DnID            string         `json:"dn_id"`
+	DnID            int64          `json:"dn_id"`
 	DnNumber        string         `json:"dn_number"`
 	Period          string         `json:"period"`
 	PoNumber        string         `json:"po_number"`
@@ -147,14 +144,13 @@ type DNDetailResponse struct {
 
 // DNItemDetail is one line item in a DN.
 type DNItemDetail struct {
-	ID            string    `json:"id"`
+	ID            int64     `json:"id"`
 	ItemUniqCode  string    `json:"item_uniq_code"`
 	OrderQty      int       `json:"order_qty"`
 	QtyStated     int       `json:"qty_stated"`
 	QtyReceived   int       `json:"qty_received"`
 	QualityStatus string    `json:"quality_status"`
 	DateIncoming  time.Time `json:"date_incoming"`
-	PackingNumber *string   `json:"packing_number,omitempty"`
 	Uom           *string   `json:"uom,omitempty"`
 }
 
@@ -210,7 +206,7 @@ type GeneratePOResponse struct {
 
 // GeneratedPOGroup groups one stage (PO1 or PO2) with its header and items.
 type GeneratedPOGroup struct {
-	Stage int             `json:"stage"`
-	PO    POHeaderDetail  `json:"po"`
-	Items []POItemDetail  `json:"items"`
+	Stage int            `json:"stage"`
+	PO    POHeaderDetail `json:"po"`
+	Items []POItemDetail `json:"items"`
 }
