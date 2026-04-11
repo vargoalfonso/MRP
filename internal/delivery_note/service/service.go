@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ type IDeliveryNoteService interface {
 	Create(ctx context.Context, req models.CreateDNRequest) (*models.DeliveryNote, error)
 	GetAll(ctx context.Context) ([]models.DeliveryNote, error)
 	GetByID(ctx context.Context, id int64) (*models.DeliveryNote, error)
+	ScanAndUpdate(ctx context.Context, id, dnID int64, itemCode string) error
 }
 
 // implementation
@@ -131,21 +133,21 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 				return err
 			}
 
-			qrValue := fmt.Sprintf("%s-%s", dn.DNNumber, poItem.ItemUniqCode)
+			// qrValue := fmt.Sprintf("%s-%s", dn.DNNumber, poItem.ItemUniqCode)
 
-			qrImage, err := generateQRBase64(qrValue)
-			if err != nil {
-				return err
-			}
+			// qrImage, err := generateQRBase64(qrValue)
+			// if err != nil {
+			// 	return err
+			// }
 
 			items = append(items, models.DeliveryNoteItem{
-				DNID:          dn.ID,
-				ItemUniqCode:  poItem.ItemUniqCode,
-				Quantity:      int64(poItem.OrderedQty),
-				UOM:           poItem.UOM,
-				Weight:        int64(poItem.WeightKg),
-				KanbanID:      kanban.ID,
-				QR:            qrImage,
+				DNID:         dn.ID,
+				ItemUniqCode: poItem.ItemUniqCode,
+				Quantity:     int64(poItem.OrderedQty),
+				UOM:          poItem.UOM,
+				Weight:       int64(poItem.WeightKg),
+				KanbanID:     kanban.ID,
+				// QR:            qrImage,
 				OrderQty:      int64(poItem.OrderedQty),
 				PcsPerKanban:  poItem.PcsPerKanban,
 				PackingNumber: kanban.KanbanNumber,
@@ -157,6 +159,27 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 
 		if len(items) > 0 {
 			if err := s.repo.CreateItems(ctx, tx, items); err != nil {
+				return err
+			}
+		}
+
+		for _, item := range items {
+
+			qrValue := fmt.Sprintf(
+				"http://192.168.195.83:8899/api/v1/delivery-notes/scan?id=%d&dn_id=%d&item=%s",
+				item.ID,
+				item.DNID,
+				item.ItemUniqCode,
+			)
+
+			qrBase64, err := generateQRBase64(qrValue)
+			if err != nil {
+				return err
+			}
+
+			if err := tx.Model(&models.DeliveryNoteItem{}).
+				Where("id = ?", item.ID).
+				Update("qr", qrBase64).Error; err != nil {
 				return err
 			}
 		}
@@ -219,13 +242,71 @@ func generateDNNumber(last string, prefix string) string {
 	return fmt.Sprintf("%s-%04d", prefix, seq)
 }
 
-func generateQRBase64(content string) (string, error) {
-	png, err := qrcode.Encode(content, qrcode.Medium, 256)
+// func generateQRBase64(content string) (string, error) {
+// 	png, err := qrcode.Encode(content, qrcode.Medium, 256)
+// 	if err != nil {
+// 		return "", err
+// 	}
+
+// 	base64Str := base64.StdEncoding.EncodeToString(png)
+
+// 	return "data:image/png;base64," + base64Str, nil
+// }
+
+func generateQRBase64(value string) (string, error) {
+	// generate PNG QR (256x256)
+	png, err := qrcode.Encode(value, qrcode.Medium, 256)
 	if err != nil {
 		return "", err
 	}
 
+	// encode ke base64
 	base64Str := base64.StdEncoding.EncodeToString(png)
 
+	// optional: prefix biar langsung bisa dipakai di frontend
 	return "data:image/png;base64," + base64Str, nil
+}
+
+func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, id, dnID int64, itemCode string) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+
+		var item models.DeliveryNoteItem
+
+		// 🔥 1. VALIDASI: item harus ada & sesuai QR
+		err := tx.Where("id = ? AND dn_id = ? AND item_uniq_code = ?", id, dnID, itemCode).
+			First(&item).Error
+
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("item tidak ditemukan")
+			}
+			return err
+		}
+
+		// 🔥 2. VALIDASI: jangan double scan
+		if item.Check == "incoming" {
+			return fmt.Errorf("item sudah di-scan sebelumnya")
+		}
+
+		now := time.Now()
+
+		// 🔥 3. UPDATE ITEM STATUS
+		err = tx.Model(&models.DeliveryNoteItem{}).
+			Where("id = ?", id).
+			Updates(map[string]interface{}{
+				"check":         "incoming",
+				"date_incoming": now,
+				"updated_at":    now,
+			}).Error
+
+		if err != nil {
+			return err
+		}
+
+		err = tx.Model(&models.DeliveryNote{}).
+			Where("id = ?", dnID).
+			Update("total_dn_incoming", gorm.Expr("total_dn_incoming + ?", 1)).Error
+
+		return nil
+	})
 }

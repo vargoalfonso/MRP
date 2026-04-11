@@ -98,3 +98,51 @@ func (h *HTTPHandler) GetDeliveryNoteByID(appCtx *app.Context) *app.CostumeRespo
 		Data:      data,
 	}
 }
+
+func (h *HTTPHandler) ScanDeliveryNoteItem(appCtx *app.Context) *app.CostumeResponse {
+	// ambil query param
+	idParam := appCtx.Query("id")
+	dnIDParam := appCtx.Query("dn_id")
+	itemCode := appCtx.Query("item")
+
+	// validasi basic
+	if idParam == "" || dnIDParam == "" || itemCode == "" {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid qr parameters",
+		}
+	}
+
+	// parse id
+	id, err := strconv.ParseInt(idParam, 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid id",
+		}
+	}
+
+	dnID, err := strconv.ParseInt(dnIDParam, 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid dn_id",
+		}
+	}
+
+	// call service
+	err = h.service.ScanAndUpdate(appCtx.Request.Context(), id, dnID, itemCode)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "item status updated to incoming",
+		Data:      nil,
+	}
+}
