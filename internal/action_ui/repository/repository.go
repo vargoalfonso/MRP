@@ -205,11 +205,18 @@ func (r *repo) getOrCreateIncomingQCTaskTx(ctx context.Context, tx *gorm.DB, dnI
 		return task.ID, nil
 	}
 
+	// Determine next round number — max existing round + 1
+	var maxRound int
+	tx.Table("qc_tasks").
+		Where("task_type = ? AND incoming_dn_item_id = ?", "incoming_qc", dnItemID).
+		Select("COALESCE(MAX(round), 0)").
+		Scan(&maxRound)
+
 	newTask := qcModels.QCTask{
 		TaskType:         "incoming_qc",
 		Status:           "pending",
 		IncomingDNItemID: &dnItemID,
-		Round:            1,
+		Round:            maxRound + 1,
 		RoundResults:     qcModels.EmptyJSONArray(),
 	}
 	if err := tx.Create(&newTask).Error; err != nil {
