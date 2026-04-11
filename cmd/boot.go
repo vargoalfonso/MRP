@@ -17,6 +17,10 @@ import (
 	customerRepository "github.com/ganasa18/go-template/internal/customer/repository"
 	customerService "github.com/ganasa18/go-template/internal/customer/service"
 	appmodule "github.com/ganasa18/go-template/internal/module"
+	prlModule "github.com/ganasa18/go-template/internal/prl"
+	prlHandler "github.com/ganasa18/go-template/internal/prl/handler"
+	prlRepository "github.com/ganasa18/go-template/internal/prl/repository"
+	prlService "github.com/ganasa18/go-template/internal/prl/service"
 	supplierModule "github.com/ganasa18/go-template/internal/supplier"
 	supplierHandler "github.com/ganasa18/go-template/internal/supplier/handler"
 	supplierRepository "github.com/ganasa18/go-template/internal/supplier/repository"
@@ -53,6 +57,9 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	customerRepo := customerRepository.New(db)
 	customerSvc := customerService.New(customerRepo)
 	customerHTTPHandler := customerHandler.New(customerSvc)
+	prlRepo := prlRepository.New(db)
+	prlSvc := prlService.New(prlRepo)
+	prlHTTPHandler := prlHandler.New(prlSvc)
 	supplierRepo := supplierRepository.New(db)
 	supplierSvc := supplierService.New(supplierRepo)
 	supplierHTTPHandler := supplierHandler.New(supplierSvc)
@@ -61,6 +68,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
 		customerModule.NewHTTPModule(cfg, baseHTTPHandler, customerHTTPHandler, authSvc),
+		prlModule.NewHTTPModule(cfg, baseHTTPHandler, prlHTTPHandler, authSvc),
 		supplierModule.NewHTTPModule(cfg, baseHTTPHandler, supplierHTTPHandler, authSvc),
 	}
 
