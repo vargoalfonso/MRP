@@ -216,9 +216,9 @@ type POBoardPaginationInput struct {
 	Filter         []FilterInput `json:"filter"`
 	OrderBy        string        `json:"order_by"`
 	OrderDirection string        `json:"order_direction"`
-	PoType         string        `json:"po_type"`         // RM | INDIRECT | SUBCON
-	Period         string        `json:"period"`           // YYYY-MM
-	SupplierID     int64         `json:"supplier_id"`      // legacy bigint
+	PoType         string        `json:"po_type"`     // RM | INDIRECT | SUBCON
+	Period         string        `json:"period"`      // YYYY-MM
+	SupplierID     int64         `json:"supplier_id"` // legacy bigint
 	UniqCode       string        `json:"uniq_code"`
 	Status         string        `json:"status"`
 	LateOnly       bool          `json:"late_only"`
@@ -262,6 +262,46 @@ func POBoardPagination(c *app.Context) POBoardPaginationInput {
 		UniqCode:       c.Query("uniq_code"),
 		Status:         c.Query("status"),
 		LateOnly:       lateOnly,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// QC Tasks
+// ---------------------------------------------------------------------------
+
+// QCTaskPaginationInput extends PaginationInput with QC task filters.
+type QCTaskPaginationInput struct {
+	Limit          int           `json:"limit"`
+	Page           int           `json:"page"`
+	Search         string        `json:"search"`
+	Filter         []FilterInput `json:"filter"`
+	OrderBy        string        `json:"order_by"`
+	OrderDirection string        `json:"order_direction"`
+	TaskType       string        `json:"task_type"`
+	Status         string        `json:"status"`
+}
+
+func (p QCTaskPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// QCTaskPagination parses QC task list query params.
+//
+//	?task_type=incoming_qc&status=pending&limit=20&page=1
+func QCTaskPagination(c *app.Context) QCTaskPaginationInput {
+	base := Pagination(c)
+	return QCTaskPaginationInput{
+		Limit:          base.Limit,
+		Page:           base.Page,
+		Search:         base.Search,
+		Filter:         base.Filter,
+		OrderBy:        base.OrderBy,
+		OrderDirection: base.OrderDirection,
+		TaskType:       c.Query("task_type"),
+		Status:         c.Query("status"),
 	}
 }
 
