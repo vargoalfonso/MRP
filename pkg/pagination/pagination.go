@@ -216,9 +216,9 @@ type POBoardPaginationInput struct {
 	Filter         []FilterInput `json:"filter"`
 	OrderBy        string        `json:"order_by"`
 	OrderDirection string        `json:"order_direction"`
-	PoType         string        `json:"po_type"`         // RM | INDIRECT | SUBCON
-	Period         string        `json:"period"`           // YYYY-MM
-	SupplierID     int64         `json:"supplier_id"`      // legacy bigint
+	PoType         string        `json:"po_type"`     // RM | INDIRECT | SUBCON
+	Period         string        `json:"period"`      // YYYY-MM
+	SupplierID     int64         `json:"supplier_id"` // legacy bigint
 	UniqCode       string        `json:"uniq_code"`
 	Status         string        `json:"status"`
 	LateOnly       bool          `json:"late_only"`
@@ -262,6 +262,46 @@ func POBoardPagination(c *app.Context) POBoardPaginationInput {
 		UniqCode:       c.Query("uniq_code"),
 		Status:         c.Query("status"),
 		LateOnly:       lateOnly,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// QC Tasks
+// ---------------------------------------------------------------------------
+
+// QCTaskPaginationInput extends PaginationInput with QC task filters.
+type QCTaskPaginationInput struct {
+	Limit          int           `json:"limit"`
+	Page           int           `json:"page"`
+	Search         string        `json:"search"`
+	Filter         []FilterInput `json:"filter"`
+	OrderBy        string        `json:"order_by"`
+	OrderDirection string        `json:"order_direction"`
+	TaskType       string        `json:"task_type"`
+	Status         string        `json:"status"`
+}
+
+func (p QCTaskPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// QCTaskPagination parses QC task list query params.
+//
+//	?task_type=incoming_qc&status=pending&limit=20&page=1
+func QCTaskPagination(c *app.Context) QCTaskPaginationInput {
+	base := Pagination(c)
+	return QCTaskPaginationInput{
+		Limit:          base.Limit,
+		Page:           base.Page,
+		Search:         base.Search,
+		Filter:         base.Filter,
+		OrderBy:        base.OrderBy,
+		OrderDirection: base.OrderDirection,
+		TaskType:       c.Query("task_type"),
+		Status:         c.Query("status"),
 	}
 }
 
@@ -368,6 +408,166 @@ func NewMetaBom(total int64, p BomPaginationInput) Meta {
 		Page:       p.Page,
 		Limit:      p.Limit,
 		TotalPages: pages,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Inventory
+// ---------------------------------------------------------------------------
+
+// InventoryRMPaginationInput extends PaginationInput with RM database filters.
+//
+//	?search=LV7&rm_type=sheet_plate&status=low_on_stock&buy_not_buy=buy&limit=20&page=1
+type InventoryRMPaginationInput struct {
+	Limit          int
+	Page           int
+	Search         string
+	Filter         []FilterInput
+	OrderBy        string
+	OrderDirection string
+	RMType         string // sheet_plate | wire | ssp | others
+	RMSource       string // process | supplier
+	Status         string // low_on_stock | normal | overstock
+	BuyNotBuy      string // buy | not_buy
+}
+
+func (p InventoryRMPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// InventoryRMPagination parses RM database list query params.
+func InventoryRMPagination(c *app.Context) InventoryRMPaginationInput {
+	base := Pagination(c)
+	return InventoryRMPaginationInput{
+		Limit: base.Limit, Page: base.Page, Search: base.Search,
+		Filter: base.Filter, OrderBy: base.OrderBy, OrderDirection: base.OrderDirection,
+		RMType:    c.Query("rm_type"),
+		RMSource:  c.Query("rm_source"),
+		Status:    c.Query("status"),
+		BuyNotBuy: c.Query("buy_not_buy"),
+	}
+}
+
+// InventoryIndirectPaginationInput extends PaginationInput with Indirect RM filters.
+//
+//	?search=NBR&status=normal&buy_not_buy=not_buy&limit=20&page=1
+type InventoryIndirectPaginationInput struct {
+	Limit          int
+	Page           int
+	Search         string
+	Filter         []FilterInput
+	OrderBy        string
+	OrderDirection string
+	Status         string
+	BuyNotBuy      string
+}
+
+func (p InventoryIndirectPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// InventoryIndirectPagination parses Indirect RM list query params.
+func InventoryIndirectPagination(c *app.Context) InventoryIndirectPaginationInput {
+	base := Pagination(c)
+	return InventoryIndirectPaginationInput{
+		Limit: base.Limit, Page: base.Page, Search: base.Search,
+		Filter: base.Filter, OrderBy: base.OrderBy, OrderDirection: base.OrderDirection,
+		Status:    c.Query("status"),
+		BuyNotBuy: c.Query("buy_not_buy"),
+	}
+}
+
+// InventorySubconPaginationInput extends PaginationInput with Subcon inventory filters.
+//
+//	?search=EMA&po_number=PO-2026-001&supplier_id=5&period=2026-04&status=normal&limit=20&page=1
+type InventorySubconPaginationInput struct {
+	Limit          int
+	Page           int
+	Search         string
+	Filter         []FilterInput
+	OrderBy        string
+	OrderDirection string
+	PONumber       string
+	SupplierID     int64
+	Period         string
+	Status         string
+}
+
+func (p InventorySubconPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// InventorySubconPagination parses Subcon inventory list query params.
+func InventorySubconPagination(c *app.Context) InventorySubconPaginationInput {
+	base := Pagination(c)
+	var supplierID int64
+	if v := c.Query("supplier_id"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			supplierID = n
+		}
+	}
+	return InventorySubconPaginationInput{
+		Limit: base.Limit, Page: base.Page, Search: base.Search,
+		Filter: base.Filter, OrderBy: base.OrderBy, OrderDirection: base.OrderDirection,
+		PONumber:   c.Query("po_number"),
+		SupplierID: supplierID,
+		Period:     c.Query("period"),
+		Status:     c.Query("status"),
+	}
+}
+
+// InventoryIncomingPaginationInput extends PaginationInput with incoming scan filters.
+//
+//	?search=EMA&dn_type=RM&po_number=PO-2026-001&supplier_id=5&status=pending&limit=20&page=1
+type InventoryIncomingPaginationInput struct {
+	Limit          int
+	Page           int
+	Search         string
+	Filter         []FilterInput
+	OrderBy        string
+	OrderDirection string
+	DNType         string // RM | INDIRECT | SUBCON (maps to delivery_notes.type)
+	PONumber       string
+	Status         string // pending | in_progress | approved | rejected
+	SupplierID     int64
+}
+
+func (p InventoryIncomingPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// InventoryIncomingPagination parses incoming scan list query params.
+func InventoryIncomingPagination(c *app.Context) InventoryIncomingPaginationInput {
+	base := Pagination(c)
+	var supplierID int64
+	if v := c.Query("supplier_id"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			supplierID = n
+		}
+	}
+	return InventoryIncomingPaginationInput{
+		Limit: base.Limit, Page: base.Page, Search: base.Search,
+		Filter: base.Filter, OrderBy: base.OrderBy, OrderDirection: base.OrderDirection,
+		DNType:     c.Query("dn_type"),
+		PONumber:   c.Query("po_number"),
+		Status:     c.Query("status"),
+		SupplierID: supplierID,
 	}
 }
 

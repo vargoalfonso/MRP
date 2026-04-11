@@ -25,7 +25,7 @@ type EntryResponse struct {
 	Uom             *string   `json:"uom"`
 	WeightKg        *float64  `json:"weight_kg"`
 	Description     *string   `json:"description"`
-	SupplierID      *string   `json:"supplier_id"`
+	SupplierID      *int64    `json:"supplier_id"`
 	SupplierName    *string   `json:"supplier_name"`
 	Period          string    `json:"period"`
 	PeriodDate      time.Time `json:"period_date"`
@@ -218,6 +218,19 @@ type SplitSettingResponse struct {
 	SplitRule     *string `json:"split_rule,omitempty"`
 	Status        string  `json:"status"`
 	Description   string  `json:"description"`
+}
+
+// ---------------------------------------------------------------------------
+// Robot split preview
+// ---------------------------------------------------------------------------
+
+// RobotSplitResponse is returned by POST /:type/budget/robot-split.
+// Robot=false  → manual mode, po1_pct/po2_pct are zero (not applicable).
+// Robot=true   → percentages come from the external robot service.
+type RobotSplitResponse struct {
+	Robot  bool    `json:"robot"`
+	Po1Pct float64 `json:"po1_pct,omitempty"`
+	Po2Pct float64 `json:"po2_pct,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

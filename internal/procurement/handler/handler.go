@@ -140,12 +140,21 @@ func (h *HTTPHandler) ListDNs(ctx *app.Context) *app.CostumeResponse {
 // ---------------------------------------------------------------------------
 
 func (h *HTTPHandler) GetDNDetail(ctx *app.Context) *app.CostumeResponse {
-	dnID := ctx.Param("dn_id")
-	if dnID == "" {
+	dnIDText := ctx.Param("dn_id")
+	if dnIDText == "" {
 		return &app.CostumeResponse{
 			RequestID: ctx.APIReqID,
 			Status:    http.StatusBadRequest,
 			Message:   "dn_id is required",
+		}
+	}
+
+	dnID, err := strconv.ParseInt(dnIDText, 10, 64)
+	if err != nil || dnID <= 0 {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "dn_id must be a positive integer",
 		}
 	}
 
@@ -219,22 +228,7 @@ func (h *HTTPHandler) GeneratePO(ctx *app.Context) *app.CostumeResponse {
 		}
 	}
 	if req.GenerateMode == "" {
-		req.GenerateMode = "stage_only"
-		if req.Stage == 0 {
-			req.Stage = 1
-		}
-	}
-
-	// Validate line_strategy
-	switch req.LineStrategy {
-	case "", "keep_granular", "aggregate_by_uniq":
-		// OK
-	default:
-		return &app.CostumeResponse{
-			RequestID: ctx.APIReqID,
-			Status:    http.StatusUnprocessableEntity,
-			Message:   "line_strategy must be one of: keep_granular, aggregate_by_uniq",
-		}
+		req.GenerateMode = "both_stages"
 	}
 
 	// Extract caller identity from JWT

@@ -10,6 +10,10 @@ import (
 	userHandler "github.com/ganasa18/go-template/internal/access_control/handler"
 	userRepository "github.com/ganasa18/go-template/internal/access_control/repository"
 	userService "github.com/ganasa18/go-template/internal/access_control/service"
+	actionUIModule "github.com/ganasa18/go-template/internal/action_ui"
+	actionUIHandler "github.com/ganasa18/go-template/internal/action_ui/handler"
+	actionUIRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
+	actionUIService "github.com/ganasa18/go-template/internal/action_ui/service"
 	approvalWorkflowModule "github.com/ganasa18/go-template/internal/approval_workflow"
 	approvalWorkflowHandler "github.com/ganasa18/go-template/internal/approval_workflow/handler"
 	approvalWorkflowRepository "github.com/ganasa18/go-template/internal/approval_workflow/repository"
@@ -40,16 +44,16 @@ import (
 	globalParameterHandler "github.com/ganasa18/go-template/internal/global_parameter/handler"
 	globalParameterRepository "github.com/ganasa18/go-template/internal/global_parameter/repository"
 	globalParameterService "github.com/ganasa18/go-template/internal/global_parameter/service"
+	inventoryModule "github.com/ganasa18/go-template/internal/inventory"
+	inventoryHandler "github.com/ganasa18/go-template/internal/inventory/handler"
+	inventoryRepo "github.com/ganasa18/go-template/internal/inventory/repository"
+	inventoryService "github.com/ganasa18/go-template/internal/inventory/service"
 	kanbanModule "github.com/ganasa18/go-template/internal/kanban"
 	kanbanHandler "github.com/ganasa18/go-template/internal/kanban/handler"
 	kanbanRepository "github.com/ganasa18/go-template/internal/kanban/repository"
 	kanbanService "github.com/ganasa18/go-template/internal/kanban/service"
 	appmodule "github.com/ganasa18/go-template/internal/module"
 	poBudgetModule "github.com/ganasa18/go-template/internal/po_budget"
-	procModule "github.com/ganasa18/go-template/internal/procurement"
-	procHandler "github.com/ganasa18/go-template/internal/procurement/handler"
-	procRepository "github.com/ganasa18/go-template/internal/procurement/repository"
-	procService "github.com/ganasa18/go-template/internal/procurement/service"
 	poBudgetHandler "github.com/ganasa18/go-template/internal/po_budget/handler"
 	poBudgetRepository "github.com/ganasa18/go-template/internal/po_budget/repository"
 	poBudgetService "github.com/ganasa18/go-template/internal/po_budget/service"
@@ -61,6 +65,14 @@ import (
 	processParameterHandler "github.com/ganasa18/go-template/internal/process_parameter/handler"
 	processParameterRepository "github.com/ganasa18/go-template/internal/process_parameter/repository"
 	processParameterService "github.com/ganasa18/go-template/internal/process_parameter/service"
+	procModule "github.com/ganasa18/go-template/internal/procurement"
+	procHandler "github.com/ganasa18/go-template/internal/procurement/handler"
+	procRepository "github.com/ganasa18/go-template/internal/procurement/repository"
+	procService "github.com/ganasa18/go-template/internal/procurement/service"
+	qcModule "github.com/ganasa18/go-template/internal/qc"
+	qcHandler "github.com/ganasa18/go-template/internal/qc/handler"
+	qcRepo "github.com/ganasa18/go-template/internal/qc/repository"
+	qcService "github.com/ganasa18/go-template/internal/qc/service"
 	roleModule "github.com/ganasa18/go-template/internal/role"
 	roleHandler "github.com/ganasa18/go-template/internal/role/handler"
 	roleRepository "github.com/ganasa18/go-template/internal/role/repository"
@@ -139,13 +151,28 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 
 	// PO Budget module
 	poBudgetRepo := poBudgetRepository.New(db)
-	poBudgetSvc := poBudgetService.New(poBudgetRepo)
+	poBudgetSvc := poBudgetService.New(poBudgetRepo, cfg.RobotSplitURL)
 	poBudgetHTTPHandler := poBudgetHandler.New(poBudgetSvc)
 
 	// Procurement module
 	procRepo := procRepository.New(db)
 	procSvc := procService.New(procRepo)
 	procHTTPHandler := procHandler.New(procSvc)
+
+	// Action UI module (incoming scans)
+	actionRepo := actionUIRepo.New(db)
+	actionSvc := actionUIService.New(actionRepo)
+	actionHTTPHandler := actionUIHandler.New(actionSvc)
+
+	// QC module (task list + approve/reject)
+	qcRepository := qcRepo.New(db)
+	qcSvc := qcService.New(qcRepository)
+	qcHTTPHandler := qcHandler.New(qcSvc)
+
+	// Inventory module (RM database, Indirect RM, Subcon)
+	invRepository := inventoryRepo.New(db)
+	invSvc := inventoryService.New(invRepository)
+	invHTTPHandler := inventoryHandler.New(invSvc)
 
 	safetyStockRepository := safetyStockRepo.New(db)
 	safetyStockService := safetyStockService.New(safetyStockRepository)
@@ -194,6 +221,9 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		userModule.NewHTTPModule(cfg, baseHTTPHandler, userHTTPHandler, authSvc, roleSvc, userSvc),
 		poBudgetModule.NewHTTPModule(cfg, baseHTTPHandler, poBudgetHTTPHandler, authSvc, roleSvc),
 		procModule.NewHTTPModule(cfg, baseHTTPHandler, procHTTPHandler, authSvc, roleSvc),
+		actionUIModule.NewHTTPModule(cfg, baseHTTPHandler, actionHTTPHandler, authSvc, roleSvc),
+		qcModule.NewHTTPModule(cfg, baseHTTPHandler, qcHTTPHandler, authSvc, roleSvc),
+		inventoryModule.NewHTTPModule(cfg, baseHTTPHandler, invHTTPHandler, authSvc, roleSvc, invSvc),
 		safetyStockModule.NewHTTPModule(cfg, baseHTTPHandler, safetyStockHandler, authSvc, roleSvc, safetyStockService),
 		typeParameterModule.NewHTTPModule(cfg, baseHTTPHandler, typeParameterHTTPHandler, authSvc, roleSvc, typeParameterSvc),
 		UnitMeasureModule.NewHTTPModule(cfg, baseHTTPHandler, unitMeasureHTTPHandler, authSvc, roleSvc, unitMeasureSvc),
