@@ -24,6 +24,10 @@ import (
 	bomHandler "github.com/ganasa18/go-template/internal/billmaterial/handler"
 	bomRepository "github.com/ganasa18/go-template/internal/billmaterial/repository"
 	bomService "github.com/ganasa18/go-template/internal/billmaterial/service"
+	deliveryNoteModule "github.com/ganasa18/go-template/internal/delivery_note"
+	deliveryNoteHandler "github.com/ganasa18/go-template/internal/delivery_note/handler"
+	deliveryNoteRepository "github.com/ganasa18/go-template/internal/delivery_note/repository"
+	deliveryNoteService "github.com/ganasa18/go-template/internal/delivery_note/service"
 	departementModule "github.com/ganasa18/go-template/internal/departement"
 	departementHandler "github.com/ganasa18/go-template/internal/departement/handler"
 	departementRepository "github.com/ganasa18/go-template/internal/departement/repository"
@@ -175,6 +179,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	kanbanSvc := kanbanService.New(kanbanRepo)
 	kanbanHTTPHandler := kanbanHandler.New(kanbanSvc)
 
+	deliveryNoteRepo := deliveryNoteRepository.New(db)
+	deliveryNoteSvc := deliveryNoteService.New(deliveryNoteRepo, db)
+	deliveryNoteHTTPHandler := deliveryNoteHandler.New(deliveryNoteSvc)
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -194,6 +202,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		globalParameterModule.NewHTTPModule(cfg, baseHTTPHandler, globalParameterHTTPHandler, authSvc, roleSvc, globalParameterSvc),
 		processParameterModule.NewHTTPModule(cfg, baseHTTPHandler, processParameterHTTPHandler, authSvc, roleSvc, processParameterSvc),
 		kanbanModule.NewHTTPModule(cfg, baseHTTPHandler, kanbanHTTPHandler, authSvc, roleSvc, kanbanSvc),
+		deliveryNoteModule.NewHTTPModule(cfg, baseHTTPHandler, deliveryNoteHTTPHandler, authSvc, roleSvc, deliveryNoteSvc),
 	}
 
 	// --- Server ---
