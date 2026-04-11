@@ -44,13 +44,12 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 
 		year := time.Now().Year()
 
-		// default type kalau kosong
+		// default type
 		dnType := req.Type
 		if dnType == "" {
 			dnType = "RM"
 		}
 
-		// prefix: DN-RM-2026
 		prefix := fmt.Sprintf("DN-%s-%d", dnType, year)
 
 		last, err := s.repo.FindLastDNNumber(ctx, tx, prefix)
@@ -58,56 +57,101 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 			return err
 		}
 
-		dnNumber := generateDNNumber(last, prefix)
+		var dnNumber string
+
+		if last == "" {
+			dnNumber = fmt.Sprintf("%s-0001", prefix)
+		} else {
+			dnNumber = generateDNNumber(last, prefix)
+		}
 
 		incomingDate, err := time.Parse("02/01/2006", req.IncomingDate)
 		if err != nil {
 			return fmt.Errorf("invalid date format, use dd/mm/yyyy")
 		}
 
+		// 🔥 1. GET PO
+		po, err := s.repo.GetPOByPONumber(ctx, req.PONumber)
+		if err != nil {
+			return fmt.Errorf("PO tidak ditemukan")
+		}
+
+		// 🔥 2. GET PO ITEMS
+		poItems, err := s.repo.GetPOItemsByPOID(ctx, po.PoID)
+		if err != nil {
+			return err
+		}
+
+		if len(poItems) == 0 {
+			return fmt.Errorf("PO tidak memiliki item")
+		}
+
+		// 🔥 3. TOTAL PO QTY
+		totalQty, err := s.repo.GetTotalQtyByPOID(ctx, po.PoID)
+		if err != nil {
+			return err
+		}
+
+		// 🔥 5. TOTAL DN INCOMING
+		totalIncoming, err := s.repo.CountDNIncomingByPONumber(ctx, po.PoNumber)
+		if err != nil {
+			return err
+		}
+
+		// 🔥 CREATE DN
 		dn = models.DeliveryNote{
-			DNNumber:      dnNumber,
-			PONumber:      req.PONumber,
-			CustomerID:    req.CustomerID,
-			ContactPerson: req.ContactPerson,
-			Period:        req.Period,
-			Type:          dnType,
-			Status:        "draft",
-			IncomingDate:  incomingDate,
-			CreatedAt:     time.Now(),
-			UpdatedAt:     time.Now(),
+			DNNumber:        dnNumber,
+			PONumber:        po.PoNumber,
+			CustomerID:      req.CustomerID,
+			ContactPerson:   req.ContactPerson,
+			Period:          req.Period,
+			Type:            dnType,
+			Status:          "draft",
+			IncomingDate:    incomingDate,
+			SupplierID:      po.SupplierID,
+			TotalPOQty:      int64(totalQty),
+			TotalDNCreated:  int64(len(poItems)),
+			TotalDNIncoming: int64(totalIncoming),
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
 		}
 
 		if err := s.repo.Create(ctx, tx, &dn); err != nil {
 			return err
 		}
 
-		// 🔥 insert items
+		// 🔥 6. GENERATE ITEMS DARI PO ITEMS
 		var items []models.DeliveryNoteItem
 
-		for _, item := range req.Items {
+		for _, poItem := range poItems {
 
-			qrValue := fmt.Sprintf("%s-%s", dn.DNNumber, item.ItemUniqCode)
+			// 🔥 ambil kanban
+			kanban, err := s.repo.GetKanbanByItemCode(ctx, poItem.ItemUniqCode)
+			if err != nil {
+				return err
+			}
+
+			qrValue := fmt.Sprintf("%s-%s", dn.DNNumber, poItem.ItemUniqCode)
 
 			qrImage, err := generateQRBase64(qrValue)
 			if err != nil {
 				return err
 			}
 
-			uomName, err := s.repo.UomByCode(ctx, item.ItemUniqCode)
-			if err != nil {
-				return err
-			}
-
 			items = append(items, models.DeliveryNoteItem{
-				DNID:         dn.ID,
-				ItemUniqCode: item.ItemUniqCode,
-				Quantity:     item.Quantity,
-				UOM:          uomName,
-				KanbanID:     item.KanbanID,
-				QR:           qrImage,
-				CreatedAt:    time.Now(),
-				UpdatedAt:    time.Now(),
+				DNID:          dn.ID,
+				ItemUniqCode:  poItem.ItemUniqCode,
+				Quantity:      int64(poItem.OrderedQty),
+				UOM:           poItem.UOM,
+				Weight:        int64(poItem.WeightKg),
+				KanbanID:      kanban.ID,
+				QR:            qrImage,
+				OrderQty:      int64(poItem.OrderedQty),
+				PcsPerKanban:  poItem.PcsPerKanban,
+				PackingNumber: kanban.KanbanNumber,
+				Check:         "progress",
+				CreatedAt:     time.Now(),
+				UpdatedAt:     time.Now(),
 			})
 		}
 
