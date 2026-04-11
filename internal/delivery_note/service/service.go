@@ -305,7 +305,10 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, id, dnID int64,
 
 		err = tx.Model(&models.DeliveryNote{}).
 			Where("id = ?", dnID).
-			Update("total_dn_incoming", gorm.Expr("total_dn_incoming + ?", 1)).Error
+			Updates(map[string]interface{}{
+				"total_dn_incoming": gorm.Expr("total_dn_incoming + ?", 1),
+				"total_po_incoming": gorm.Expr("total_po_incoming + ?", item.OrderQty),
+			}).Error
 
 		return nil
 	})

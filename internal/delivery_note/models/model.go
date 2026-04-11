@@ -16,6 +16,7 @@ type DeliveryNote struct {
 	IncomingDate    time.Time `json:"incoming_date"`                     //request format dd/mm/yyyy
 	SupplierID      int64     `json:"supplier_id"`                       //request diambil dari supplier_id di purchase order
 	TotalPOQty      int64     `json:"total_po_qty"`                      //request diambil dari total qty di purchase order items bedasarkan po_id
+	TotalPOIncoming int64     `json:"total_po_incoming"`                 //request diambil dari total qty yang sudah diterima di delivery note items bedasarkan po_id
 	TotalDNCreated  int64     `json:"total_dn_created"`                  //request total data dari purchaase order items dari po_id yang sudah dibuat dn nya (bedasarkan po_number)
 	TotalDNIncoming int64     `json:"total_dn_incoming"`                 //request total data dari purchaase order items dari po_id yang sudah diterima barangnya (bedasarkan po_number)
 	CreatedBy       string    `json:"created_by"`
