@@ -19,7 +19,7 @@ type IDeliveryNoteService interface {
 	Create(ctx context.Context, req models.CreateDNRequest) (*models.DeliveryNote, error)
 	GetAll(ctx context.Context) ([]models.DeliveryNote, error)
 	GetByID(ctx context.Context, id int64) (*models.DeliveryNote, error)
-	ScanAndUpdate(ctx context.Context, id, dnID int64, itemCode string) error
+	ScanAndUpdate(ctx context.Context, packing string) error
 }
 
 // implementation
@@ -125,7 +125,7 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 		// 🔥 6. GENERATE ITEMS DARI PO ITEMS
 		var items []models.DeliveryNoteItem
 
-		for _, poItem := range poItems {
+		for i, poItem := range poItems {
 
 			// 🔥 ambil kanban
 			kanban, err := s.repo.GetKanbanByItemCode(ctx, poItem.ItemUniqCode)
@@ -140,6 +140,11 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 			// 	return err
 			// }
 
+			seq := fmt.Sprintf("%04d", i+1)
+			dnNumberID := fmt.Sprintf("%04d", dn.ID)
+
+			packingNumber := fmt.Sprintf("DN-%s-PKG-%s", dnNumberID, seq)
+
 			items = append(items, models.DeliveryNoteItem{
 				DNID:         dn.ID,
 				ItemUniqCode: poItem.ItemUniqCode,
@@ -150,7 +155,7 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 				// QR:            qrImage,
 				OrderQty:      int64(poItem.OrderedQty),
 				PcsPerKanban:  poItem.PcsPerKanban,
-				PackingNumber: kanban.KanbanNumber,
+				PackingNumber: packingNumber,
 				Check:         "progress",
 				CreatedAt:     time.Now(),
 				UpdatedAt:     time.Now(),
@@ -166,10 +171,8 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 		for _, item := range items {
 
 			qrValue := fmt.Sprintf(
-				"http://192.168.195.83:8899/api/v1/delivery-notes/scan?id=%d&dn_id=%d&item=%s",
-				item.ID,
-				item.DNID,
-				item.ItemUniqCode,
+				"http://127.0.0.1:8899/api/v1/delivery-notes/scan?packing=%s",
+				item.PackingNumber,
 			)
 
 			qrBase64, err := generateQRBase64(qrValue)
@@ -267,13 +270,13 @@ func generateQRBase64(value string) (string, error) {
 	return "data:image/png;base64," + base64Str, nil
 }
 
-func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, id, dnID int64, itemCode string) error {
+func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
 		var item models.DeliveryNoteItem
 
-		// 🔥 1. VALIDASI: item harus ada & sesuai QR
-		err := tx.Where("id = ? AND dn_id = ? AND item_uniq_code = ?", id, dnID, itemCode).
+		// 🔥 1. cari item by packing number
+		err := tx.Where("packing_number = ?", packing).
 			First(&item).Error
 
 		if err != nil {
@@ -283,33 +286,33 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, id, dnID int64,
 			return err
 		}
 
-		// 🔥 2. VALIDASI: jangan double scan
+		// 🔥 2. Cegah double scan
 		if item.Check == "incoming" {
 			return fmt.Errorf("item sudah di-scan sebelumnya")
 		}
 
 		now := time.Now()
 
-		// 🔥 3. UPDATE ITEM STATUS
+		// 🔥 3. update item
 		err = tx.Model(&models.DeliveryNoteItem{}).
-			Where("id = ?", id).
+			Where("id = ?", item.ID).
 			Updates(map[string]interface{}{
 				"check":         "incoming",
 				"date_incoming": now,
 				"updated_at":    now,
 			}).Error
-
 		if err != nil {
 			return err
 		}
 
+		// 🔥 4. update DN parent
 		err = tx.Model(&models.DeliveryNote{}).
-			Where("id = ?", dnID).
+			Where("id = ?", item.DNID).
 			Updates(map[string]interface{}{
-				"total_dn_incoming": gorm.Expr("total_dn_incoming + ?", 1),
-				"total_po_incoming": gorm.Expr("total_po_incoming + ?", item.OrderQty),
+				"total_dn_incoming": gorm.Expr("COALESCE(total_dn_incoming, 0) + ?", 1),
+				"total_po_incoming": gorm.Expr("COALESCE(total_po_incoming, 0) + ?", item.OrderQty),
 			}).Error
 
-		return nil
+		return err
 	})
 }

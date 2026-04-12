@@ -48,6 +48,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	v1 := r.Group("/api/v1")
 
 	deliveryNoteGroup := v1.Group("/delivery-notes")
+
 	deliveryNoteGroup.GET("/scan", m.base.RunAction(m.handler.ScanDeliveryNoteItem))
 
 	// 🔐 wajib login
