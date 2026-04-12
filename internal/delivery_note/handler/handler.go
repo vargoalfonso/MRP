@@ -100,41 +100,17 @@ func (h *HTTPHandler) GetDeliveryNoteByID(appCtx *app.Context) *app.CostumeRespo
 }
 
 func (h *HTTPHandler) ScanDeliveryNoteItem(appCtx *app.Context) *app.CostumeResponse {
-	// ambil query param
-	idParam := appCtx.Query("id")
-	dnIDParam := appCtx.Query("dn_id")
-	itemCode := appCtx.Query("item")
+	packing := appCtx.Query("packing")
 
-	// validasi basic
-	if idParam == "" || dnIDParam == "" || itemCode == "" {
+	if packing == "" {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusBadRequest,
-			Message:   "invalid qr parameters",
+			Message:   "invalid qr parameter",
 		}
 	}
 
-	// parse id
-	id, err := strconv.ParseInt(idParam, 10, 64)
-	if err != nil {
-		return &app.CostumeResponse{
-			RequestID: appCtx.APIReqID,
-			Status:    http.StatusBadRequest,
-			Message:   "invalid id",
-		}
-	}
-
-	dnID, err := strconv.ParseInt(dnIDParam, 10, 64)
-	if err != nil {
-		return &app.CostumeResponse{
-			RequestID: appCtx.APIReqID,
-			Status:    http.StatusBadRequest,
-			Message:   "invalid dn_id",
-		}
-	}
-
-	// call service
-	err = h.service.ScanAndUpdate(appCtx.Request.Context(), id, dnID, itemCode)
+	err := h.service.ScanAndUpdate(appCtx.Request.Context(), packing)
 	if err != nil {
 		return app.NewError(appCtx, err)
 	}
@@ -144,5 +120,40 @@ func (h *HTTPHandler) ScanDeliveryNoteItem(appCtx *app.Context) *app.CostumeResp
 		Status:    http.StatusOK,
 		Message:   "item status updated to incoming",
 		Data:      nil,
+	}
+}
+
+func (h *HTTPHandler) PreviewDN(appCtx *app.Context) *app.CostumeResponse {
+	var req models.CreateDNRequest
+
+	// bind request
+	if err := appCtx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body",
+		}
+	}
+
+	// validate
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": errs},
+		}
+	}
+
+	data, err := h.service.PreviewDN(appCtx.Request.Context(), req)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "success",
+		Data:      data,
 	}
 }

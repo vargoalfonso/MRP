@@ -19,7 +19,8 @@ type IDeliveryNoteService interface {
 	Create(ctx context.Context, req models.CreateDNRequest) (*models.DeliveryNote, error)
 	GetAll(ctx context.Context) ([]models.DeliveryNote, error)
 	GetByID(ctx context.Context, id int64) (*models.DeliveryNote, error)
-	ScanAndUpdate(ctx context.Context, id, dnID int64, itemCode string) error
+	ScanAndUpdate(ctx context.Context, packing string) error
+	PreviewDN(ctx context.Context, req models.CreateDNRequest) (*models.PreviewDNResponse, error)
 }
 
 // implementation
@@ -125,7 +126,7 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 		// 🔥 6. GENERATE ITEMS DARI PO ITEMS
 		var items []models.DeliveryNoteItem
 
-		for _, poItem := range poItems {
+		for i, poItem := range poItems {
 
 			// 🔥 ambil kanban
 			kanban, err := s.repo.GetKanbanByItemCode(ctx, poItem.ItemUniqCode)
@@ -140,6 +141,11 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 			// 	return err
 			// }
 
+			seq := fmt.Sprintf("%04d", i+1)
+			dnNumberID := fmt.Sprintf("%04d", dn.ID)
+
+			packingNumber := fmt.Sprintf("DN-%s-PKG-%s", dnNumberID, seq)
+
 			items = append(items, models.DeliveryNoteItem{
 				DNID:         dn.ID,
 				ItemUniqCode: poItem.ItemUniqCode,
@@ -149,8 +155,9 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 				KanbanID:     kanban.ID,
 				// QR:            qrImage,
 				OrderQty:      int64(poItem.OrderedQty),
+				QtyStated:     int64(poItem.OrderedQty),
 				PcsPerKanban:  poItem.PcsPerKanban,
-				PackingNumber: kanban.KanbanNumber,
+				PackingNumber: packingNumber,
 				Check:         "progress",
 				CreatedAt:     time.Now(),
 				UpdatedAt:     time.Now(),
@@ -166,10 +173,8 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 		for _, item := range items {
 
 			qrValue := fmt.Sprintf(
-				"http://192.168.195.83:8899/api/v1/delivery-notes/scan?id=%d&dn_id=%d&item=%s",
-				item.ID,
-				item.DNID,
-				item.ItemUniqCode,
+				"http://127.0.0.1:8899/api/v1/delivery-notes/scan?packing=%s",
+				item.PackingNumber,
 			)
 
 			qrBase64, err := generateQRBase64(qrValue)
@@ -198,6 +203,7 @@ func (s *deliveryNoteService) GetAll(ctx context.Context) ([]models.DeliveryNote
 	var data []models.DeliveryNote
 
 	err := s.db.WithContext(ctx).
+		Preload("Supplier").
 		Preload("Items").
 		Preload("Items.Kanban").
 		Find(&data).Error
@@ -209,6 +215,7 @@ func (s *deliveryNoteService) GetByID(ctx context.Context, id int64) (*models.De
 	var data models.DeliveryNote
 
 	err := s.db.WithContext(ctx).
+		Preload("Supplier").
 		Preload("Items").
 		Preload("Items.Kanban").
 		First(&data, id).Error
@@ -267,13 +274,13 @@ func generateQRBase64(value string) (string, error) {
 	return "data:image/png;base64," + base64Str, nil
 }
 
-func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, id, dnID int64, itemCode string) error {
+func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
 		var item models.DeliveryNoteItem
 
-		// 🔥 1. VALIDASI: item harus ada & sesuai QR
-		err := tx.Where("id = ? AND dn_id = ? AND item_uniq_code = ?", id, dnID, itemCode).
+		// 🔥 1. cari item
+		err := tx.Where("packing_number = ?", packing).
 			First(&item).Error
 
 		if err != nil {
@@ -283,33 +290,133 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, id, dnID int64,
 			return err
 		}
 
-		// 🔥 2. VALIDASI: jangan double scan
-		if item.Check == "incoming" {
-			return fmt.Errorf("item sudah di-scan sebelumnya")
-		}
-
 		now := time.Now()
 
-		// 🔥 3. UPDATE ITEM STATUS
-		err = tx.Model(&models.DeliveryNoteItem{}).
-			Where("id = ?", id).
-			Updates(map[string]interface{}{
-				"check":         "incoming",
-				"date_incoming": now,
-				"updated_at":    now,
-			}).Error
+		// 🔥 2. kalau sudah pernah scan
+		if item.Check == "incoming" || item.Check == "completed" {
 
+			// pastikan ada waktu sebelumnya
+			if item.ReceivedAt != nil {
+
+				diff := now.Sub(*item.ReceivedAt).Seconds()
+
+				// ❌ kalau < 60 detik → duplicate
+				if diff <= 60 {
+					return fmt.Errorf("duplicate scan detected, please wait before scanning again")
+				}
+
+				// 🔥 kalau > 60 detik → update jadi completed
+				err = tx.Model(&models.DeliveryNoteItem{}).
+					Where("id = ?", item.ID).
+					Updates(map[string]interface{}{
+						"check":      "completed",
+						"updated_at": now,
+					}).Error
+
+				return err
+			}
+		}
+
+		// 🔥 3. FIRST SCAN → incoming
+		err = tx.Model(&models.DeliveryNoteItem{}).
+			Where("id = ?", item.ID).
+			Updates(map[string]interface{}{
+				"check":           "incoming",
+				"qty_received":    item.OrderQty,
+				"weight_received": item.Weight,
+				"date_incoming":   now,
+				"received_at":     now,
+				"updated_at":      now,
+			}).Error
 		if err != nil {
 			return err
 		}
 
+		// 🔥 4. update DN
 		err = tx.Model(&models.DeliveryNote{}).
-			Where("id = ?", dnID).
+			Where("id = ?", item.DNID).
 			Updates(map[string]interface{}{
-				"total_dn_incoming": gorm.Expr("total_dn_incoming + ?", 1),
-				"total_po_incoming": gorm.Expr("total_po_incoming + ?", item.OrderQty),
+				"total_dn_incoming": gorm.Expr("COALESCE(total_dn_incoming, 0) + ?", 1),
+				"total_po_incoming": gorm.Expr("COALESCE(total_po_incoming, 0) + ?", item.OrderQty),
 			}).Error
 
-		return nil
+		return err
 	})
+}
+
+func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.CreateDNRequest) (*models.PreviewDNResponse, error) {
+
+	// 🔥 1. ambil PO
+	po, err := s.repo.GetPOByPONumber(ctx, req.PONumber)
+	if err != nil {
+		return nil, fmt.Errorf("PO tidak ditemukan")
+	}
+
+	supplier, err := s.repo.GetSupplierByID(ctx, po.SupplierID)
+	if err != nil {
+		return nil, fmt.Errorf("Supplier tidak ditemukan")
+	}
+
+	// 🔥 2. ambil item PO
+	poItems, err := s.repo.GetPOItemsByPOID(ctx, po.PoID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 🔥 3. total qty PO
+	totalQty, err := s.repo.GetTotalQtyByPOID(ctx, po.PoID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 🔥 4. total incoming DN
+	totalIncoming, err := s.repo.CountDNIncomingByPONumber(ctx, req.PONumber)
+	if err != nil {
+		return nil, err
+	}
+	prefix := fmt.Sprintf("DN-%s", req.Type)
+
+	count, err := s.repo.CountDNByPrefix(ctx, prefix)
+
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("count existing DN with prefix %s: %d\n", req.Type, count)
+	next := count + 1
+
+	dnNumber := fmt.Sprintf("DN-%s-%04d", req.Type, next)
+
+	// 🔥 5. mapping items
+	var items []models.PreviewDNItemResponse
+
+	for i, poItem := range poItems {
+
+		seq := fmt.Sprintf("%04d", i+1)
+
+		packingNumber := fmt.Sprintf("%s-PKG-%s", dnNumber, seq)
+
+		items = append(items, models.PreviewDNItemResponse{
+			ItemUniqCode:  poItem.ItemUniqCode,
+			MaterialInfo:  poItem.ItemUniqCode, // atau gabung
+			TotalQty:      int64(poItem.OrderedQty),
+			RemainingQty:  int64(0), // sesuaikan dengan logika bisnis Anda
+			UOM:           poItem.UOM,
+			OrderQty:      int64(poItem.OrderedQty),
+			PcsPerKanban:  poItem.PcsPerKanban,
+			PackingNumber: packingNumber,
+		})
+	}
+
+	return &models.PreviewDNResponse{
+		Period:          req.Period,
+		PONumber:        po.PoNumber,
+		Supplier:        supplier.SupplierName,
+		TotalPO:         int64(totalQty),
+		TotalIncoming:   int64(totalIncoming),
+		TotalDNCreatd:   int64(len(poItems)),
+		TotalDNIncoming: int64(totalIncoming),
+		DateIncoming:    req.IncomingDate,
+		Items:           items,
+	}, nil
 }
