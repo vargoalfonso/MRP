@@ -23,6 +23,8 @@ type IDeliveryNoteRepository interface {
 	CreateItems(ctx context.Context, tx *gorm.DB, items []models.DeliveryNoteItem) error
 
 	GetTotalDNCreatedByDNID(ctx context.Context, dnID int64) (int64, error)
+	GetSupplierByID(ctx context.Context, supplierID int64) (*models.Supplier, error)
+	CountDNByPrefix(ctx context.Context, prefix string) (int64, error)
 }
 
 type repository struct {
@@ -162,4 +164,31 @@ func (r *repository) GetTotalDNCreatedByDNID(ctx context.Context, dnID int64) (i
 	}
 
 	return total, nil
+}
+
+func (r *repository) GetSupplierByID(ctx context.Context, supplierID int64) (*models.Supplier, error) {
+	var supplier models.Supplier
+	err := r.db.WithContext(ctx).
+		Table("suppliers").
+		Where("id = ?", supplierID).
+		First(&supplier).Error
+	if err != nil {
+		return nil, err
+	}
+	return &supplier, nil
+}
+
+func (r *repository) CountDNByPrefix(ctx context.Context, prefix string) (int64, error) {
+	var count int64
+
+	err := r.db.WithContext(ctx).
+		Model(&models.DeliveryNote{}).
+		Where("dn_number LIKE ?", prefix+"%").
+		Count(&count).Error
+
+	if err != nil {
+		return 0, err
+	}
+
+	return count, nil
 }

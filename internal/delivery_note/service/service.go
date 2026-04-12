@@ -20,6 +20,7 @@ type IDeliveryNoteService interface {
 	GetAll(ctx context.Context) ([]models.DeliveryNote, error)
 	GetByID(ctx context.Context, id int64) (*models.DeliveryNote, error)
 	ScanAndUpdate(ctx context.Context, packing string) error
+	PreviewDN(ctx context.Context, req models.CreateDNRequest) (*models.PreviewDNResponse, error)
 }
 
 // implementation
@@ -202,6 +203,7 @@ func (s *deliveryNoteService) GetAll(ctx context.Context) ([]models.DeliveryNote
 	var data []models.DeliveryNote
 
 	err := s.db.WithContext(ctx).
+		Preload("Supplier").
 		Preload("Items").
 		Preload("Items.Kanban").
 		Find(&data).Error
@@ -213,6 +215,7 @@ func (s *deliveryNoteService) GetByID(ctx context.Context, id int64) (*models.De
 	var data models.DeliveryNote
 
 	err := s.db.WithContext(ctx).
+		Preload("Supplier").
 		Preload("Items").
 		Preload("Items.Kanban").
 		First(&data, id).Error
@@ -276,7 +279,7 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string)
 
 		var item models.DeliveryNoteItem
 
-		// 🔥 1. cari item by packing number
+		// 🔥 1. cari item
 		err := tx.Where("packing_number = ?", packing).
 			First(&item).Error
 
@@ -287,20 +290,40 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string)
 			return err
 		}
 
-		// 🔥 2. Cegah double scan
-		if item.Check == "incoming" {
-			return fmt.Errorf("item sudah di-scan sebelumnya")
-		}
-
 		now := time.Now()
 
-		// 🔥 3. update item
+		// 🔥 2. kalau sudah pernah scan
+		if item.Check == "incoming" || item.Check == "completed" {
+
+			// pastikan ada waktu sebelumnya
+			if item.ReceivedAt != nil {
+
+				diff := now.Sub(*item.ReceivedAt).Seconds()
+
+				// ❌ kalau < 60 detik → duplicate
+				if diff <= 60 {
+					return fmt.Errorf("duplicate scan detected, please wait before scanning again")
+				}
+
+				// 🔥 kalau > 60 detik → update jadi completed
+				err = tx.Model(&models.DeliveryNoteItem{}).
+					Where("id = ?", item.ID).
+					Updates(map[string]interface{}{
+						"check":      "completed",
+						"updated_at": now,
+					}).Error
+
+				return err
+			}
+		}
+
+		// 🔥 3. FIRST SCAN → incoming
 		err = tx.Model(&models.DeliveryNoteItem{}).
 			Where("id = ?", item.ID).
 			Updates(map[string]interface{}{
 				"check":           "incoming",
-				"qty_received":    item.OrderQty, //asumsi qty received sama dengan qty stated, karena ini hasil scan qr di lapangan, jadi kita anggap barang yang diterima sesuai dengan yang tertera di DN
-				"weight_received": item.Weight,   //asumsi weight received sama dengan weight di DN, karena ini hasil scan qr di lapangan, jadi kita anggap barang yang diterima sesuai dengan yang tertera di DN
+				"qty_received":    item.OrderQty,
+				"weight_received": item.Weight,
 				"date_incoming":   now,
 				"received_at":     now,
 				"updated_at":      now,
@@ -309,7 +332,7 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string)
 			return err
 		}
 
-		// 🔥 4. update DN parent
+		// 🔥 4. update DN
 		err = tx.Model(&models.DeliveryNote{}).
 			Where("id = ?", item.DNID).
 			Updates(map[string]interface{}{
@@ -319,4 +342,81 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string)
 
 		return err
 	})
+}
+
+func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.CreateDNRequest) (*models.PreviewDNResponse, error) {
+
+	// 🔥 1. ambil PO
+	po, err := s.repo.GetPOByPONumber(ctx, req.PONumber)
+	if err != nil {
+		return nil, fmt.Errorf("PO tidak ditemukan")
+	}
+
+	supplier, err := s.repo.GetSupplierByID(ctx, po.SupplierID)
+	if err != nil {
+		return nil, fmt.Errorf("Supplier tidak ditemukan")
+	}
+
+	// 🔥 2. ambil item PO
+	poItems, err := s.repo.GetPOItemsByPOID(ctx, po.PoID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 🔥 3. total qty PO
+	totalQty, err := s.repo.GetTotalQtyByPOID(ctx, po.PoID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 🔥 4. total incoming DN
+	totalIncoming, err := s.repo.CountDNIncomingByPONumber(ctx, req.PONumber)
+	if err != nil {
+		return nil, err
+	}
+	prefix := fmt.Sprintf("DN-%s", req.Type)
+
+	count, err := s.repo.CountDNByPrefix(ctx, prefix)
+
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("count existing DN with prefix %s: %d\n", req.Type, count)
+	next := count + 1
+
+	dnNumber := fmt.Sprintf("DN-%s-%04d", req.Type, next)
+
+	// 🔥 5. mapping items
+	var items []models.PreviewDNItemResponse
+
+	for i, poItem := range poItems {
+
+		seq := fmt.Sprintf("%04d", i+1)
+
+		packingNumber := fmt.Sprintf("%s-PKG-%s", dnNumber, seq)
+
+		items = append(items, models.PreviewDNItemResponse{
+			ItemUniqCode:  poItem.ItemUniqCode,
+			MaterialInfo:  poItem.ItemUniqCode, // atau gabung
+			TotalQty:      int64(poItem.OrderedQty),
+			RemainingQty:  int64(0), // sesuaikan dengan logika bisnis Anda
+			UOM:           poItem.UOM,
+			OrderQty:      int64(poItem.OrderedQty),
+			PcsPerKanban:  poItem.PcsPerKanban,
+			PackingNumber: packingNumber,
+		})
+	}
+
+	return &models.PreviewDNResponse{
+		Period:          req.Period,
+		PONumber:        po.PoNumber,
+		Supplier:        supplier.SupplierName,
+		TotalPO:         int64(totalQty),
+		TotalIncoming:   int64(totalIncoming),
+		TotalDNCreatd:   int64(len(poItems)),
+		TotalDNIncoming: int64(totalIncoming),
+		DateIncoming:    req.IncomingDate,
+		Items:           items,
+	}, nil
 }
