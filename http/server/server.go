@@ -51,6 +51,9 @@ func New(cfg *config.Config, modules []appmodule.HTTPModule) *Server {
 		c.Next()
 	})
 
+	// ── Static files — serve uploaded assets ────────────────────────────────
+	r.Static("/uploads", "./uploads")
+
 	// ── Routes (registered by each module) ──────────────────────────────────
 	setupRoutes(r, modules)
 
