@@ -146,7 +146,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 
 	// Upload module (chunked / resumable)
 	uploadRepo := uploadRepository.New(db)
-	uploadSvc := uploadService.New(uploadRepo, bomRepo)
+	uploadSvc := uploadService.New(uploadRepo, bomRepo, cfg.MaxChunkBytes)
 	uploadHTTPHandler := uploadHandler.New(uploadSvc)
 
 	// PO Budget module

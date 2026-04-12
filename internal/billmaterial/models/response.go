@@ -13,6 +13,7 @@ import "github.com/ganasa18/go-template/pkg/pagination"
 //	cad_viewable: true only for "3d-model" assets
 //	label       : "3D Available" | "2D Available" | "-"
 type AssetInfo struct {
+	ID          *int64  `json:"id"`           // nil if no asset; use this as asset_id when replacing via upload
 	URL         *string `json:"url"`          // nil if no asset
 	AssetType   string  `json:"asset_type"`   // raw type from DB
 	Label       string  `json:"label"`        // display label for the Drawing column

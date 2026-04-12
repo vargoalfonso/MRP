@@ -2,10 +2,10 @@
 package upload
 
 import (
-	uploadHandler "github.com/ganasa18/go-template/internal/upload/handler"
-	uploadService "github.com/ganasa18/go-template/internal/upload/service"
 	baseHandler "github.com/ganasa18/go-template/internal/base/handler"
 	appmodule "github.com/ganasa18/go-template/internal/module"
+	uploadHandler "github.com/ganasa18/go-template/internal/upload/handler"
+	uploadService "github.com/ganasa18/go-template/internal/upload/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -39,10 +39,10 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 
 		session := sessions.Group("/:session_id")
 		{
-			session.GET("", m.base.RunAction(m.handler.GetSession))
+			session.GET("/", m.base.RunAction(m.handler.GetSession))
 			session.POST("/chunks/:index", m.base.RunAction(m.handler.UploadChunk))
 			session.POST("/complete", m.base.RunAction(m.handler.Complete))
-			session.DELETE("", m.base.RunAction(m.handler.Cancel))
+			session.DELETE("/", m.base.RunAction(m.handler.Cancel))
 		}
 	}
 }

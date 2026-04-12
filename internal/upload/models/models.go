@@ -18,6 +18,7 @@ type UploadSession struct {
 	ChunkSize   int        `gorm:"not null"` // bytes per chunk
 	TotalChunks int        `gorm:"not null"`
 	Status      string     `gorm:"size:20;default:pending"` // pending/uploading/assembling/completed/failed/cancelled
+	AssetID     *int64     `gorm:"index"`                   // if set, Complete replaces this asset (edit flow)
 	FinalURL    *string    `gorm:"type:text"`
 	ExpiresAt   time.Time  `gorm:"not null"`
 	CreatedBy   *uuid.UUID `gorm:"type:uuid"`
@@ -55,6 +56,10 @@ type CreateSessionRequest struct {
 	FileSize    int64   `json:"file_size" validate:"required,min=1"`      // bytes
 	ChunkSize   int     `json:"chunk_size" validate:"required,min=65536"` // min 64 KB
 	TotalChunks int     `json:"total_chunks" validate:"required,min=1"`
+
+	// AssetID is optional. When provided, Complete will update the existing asset
+	// (file_url, asset_type) instead of inserting a new row — use this for edit/replace flow.
+	AssetID *int64 `json:"asset_id"`
 }
 
 // CompleteSessionRequest — body for POST /uploads/sessions/:id/complete
