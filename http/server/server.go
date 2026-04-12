@@ -42,8 +42,12 @@ func New(cfg *config.Config, modules []appmodule.HTTPModule) *Server {
 	r.Use(middleware.Security())
 	r.Use(middleware.CORS(cfg.CORSAllowedOrigins))
 	r.Use(middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst).Middleware())
+	// Apply body size limit globally, but skip for chunk upload routes
+	// (chunks are binary streams with their own size semantics).
 	r.Use(func(c *gin.Context) {
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, cfg.MaxBodyBytes)
+		if !strings.Contains(c.FullPath(), "/chunks/") {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, cfg.MaxBodyBytes)
+		}
 		c.Next()
 	})
 

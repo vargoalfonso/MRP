@@ -186,6 +186,7 @@ func (s *service) buildAssetInfo(asset *models.ItemAsset) models.AssetInfo {
 		return models.AssetInfo{Label: "-"}
 	}
 	info := models.AssetInfo{
+		ID:        &asset.ID,
 		URL:       &asset.FileURL,
 		AssetType: asset.AssetType,
 	}

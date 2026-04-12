@@ -17,6 +17,8 @@ type IRepository interface {
 	UpdateItem(ctx context.Context, item *models.Item) error
 	CreateRevision(ctx context.Context, rev *models.ItemRevision) error
 	CreateAsset(ctx context.Context, asset *models.ItemAsset) error
+	UpdateAsset(ctx context.Context, assetID int64, fileURL, assetType string) error
+	GetAssetByID(ctx context.Context, assetID int64) (*models.ItemAsset, error)
 	UpsertMaterialSpec(ctx context.Context, spec *models.ItemMaterialSpec) error
 	CreateRoutingHeader(ctx context.Context, h *models.RoutingHeader) error
 	CreateOperation(ctx context.Context, op *models.RoutingOperation) error
@@ -110,6 +112,27 @@ func (r *repository) CreateAsset(ctx context.Context, asset *models.ItemAsset) e
 		return apperror.InternalWrap("CreateAsset", err)
 	}
 	return nil
+}
+
+func (r *repository) UpdateAsset(ctx context.Context, assetID int64, fileURL, assetType string) error {
+	if err := r.db.WithContext(ctx).
+		Model(&models.ItemAsset{}).
+		Where("id = ?", assetID).
+		Updates(map[string]interface{}{"file_url": fileURL, "asset_type": assetType}).Error; err != nil {
+		return apperror.InternalWrap("UpdateAsset", err)
+	}
+	return nil
+}
+
+func (r *repository) GetAssetByID(ctx context.Context, assetID int64) (*models.ItemAsset, error) {
+	var a models.ItemAsset
+	if err := r.db.WithContext(ctx).First(&a, "id = ?", assetID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, apperror.NotFound("asset not found")
+		}
+		return nil, apperror.InternalWrap("GetAssetByID", err)
+	}
+	return &a, nil
 }
 
 func (r *repository) UpsertMaterialSpec(ctx context.Context, spec *models.ItemMaterialSpec) error {

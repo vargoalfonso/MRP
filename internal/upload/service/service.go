@@ -46,12 +46,13 @@ type IService interface {
 }
 
 type service struct {
-	repo    repository.IRepository
-	bomRepo bomRepo.IRepository
+	repo          repository.IRepository
+	bomRepo       bomRepo.IRepository
+	maxChunkBytes int64
 }
 
-func New(repo repository.IRepository, bomRepository bomRepo.IRepository) IService {
-	return &service{repo: repo, bomRepo: bomRepository}
+func New(repo repository.IRepository, bomRepository bomRepo.IRepository, maxChunkBytes int64) IService {
+	return &service{repo: repo, bomRepo: bomRepository, maxChunkBytes: maxChunkBytes}
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +75,7 @@ func (s *service) CreateSession(ctx context.Context, req models.CreateSessionReq
 		ChunkSize:   req.ChunkSize,
 		TotalChunks: req.TotalChunks,
 		Status:      "pending",
+		AssetID:     req.AssetID,
 		ExpiresAt:   time.Now().Add(SessionTTL),
 		CreatedBy:   createdBy,
 	}
@@ -142,9 +144,11 @@ func (s *service) UploadChunk(ctx context.Context, sessionID uuid.UUID, index in
 	}
 	defer f.Close()
 
+	limited := io.LimitReader(body, s.maxChunkBytes)
+
 	// Tee through MD5 hasher while writing
 	hasher := md5.New()
-	written, err := io.Copy(io.MultiWriter(f, hasher), body)
+	written, err := io.Copy(io.MultiWriter(f, hasher), limited)
 	if err != nil {
 		return nil, apperror.InternalWrap("write chunk", err)
 	}
@@ -234,16 +238,23 @@ func (s *service) Complete(ctx context.Context, sessionID uuid.UUID, _ models.Co
 		return nil, err
 	}
 
-	// Create item_asset record
-	asset := &bomModels.ItemAsset{
-		ItemID:    sess.ItemID,
-		AssetType: sess.AssetType,
-		FileURL:   finalURL,
-		Status:    "Active",
-	}
-	if err := s.bomRepo.CreateAsset(ctx, asset); err != nil {
-		slog.Error("upload complete: failed to create item_asset", slog.Any("error", err))
-		// Don't fail — file is assembled, just log
+	// Create or update item_asset record
+	if sess.AssetID != nil {
+		// Edit flow: replace file_url on the existing asset
+		if err := s.bomRepo.UpdateAsset(ctx, *sess.AssetID, finalURL, sess.AssetType); err != nil {
+			slog.Error("upload complete: failed to update item_asset", slog.Int64("asset_id", *sess.AssetID), slog.Any("error", err))
+		}
+	} else {
+		// Create flow: insert new asset row
+		asset := &bomModels.ItemAsset{
+			ItemID:    sess.ItemID,
+			AssetType: sess.AssetType,
+			FileURL:   finalURL,
+			Status:    "Active",
+		}
+		if err := s.bomRepo.CreateAsset(ctx, asset); err != nil {
+			slog.Error("upload complete: failed to create item_asset", slog.Any("error", err))
+		}
 	}
 
 	// Update session
