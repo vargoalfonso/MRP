@@ -116,19 +116,17 @@ type ClearRequest struct {
 // BulkFromPRLRequest is the single API call that covers all 3 wizard steps.
 //
 //	Step 1: prl_id + budget_subtype
-//	Step 2: items[] each with suppliers[] — total supplier qty MUST NOT exceed item budget_qty
-//	Step 3: period + po1_pct / po2_pct
+//	Step 2: items[] each with suppliers[] — total supplier qty comes from PRL item quantity
+//	Step 3: period
 type BulkFromPRLRequest struct {
 	PrlID         string          `json:"prl_id"         validate:"required"`
 	BudgetSubtype string          `json:"budget_subtype" validate:"required,oneof=adhoc regular"`
 	Period        string          `json:"period"         validate:"required"`
-	Po1Pct        *float64        `json:"po1_pct"` // optional; falls back to po_split_settings
-	Po2Pct        *float64        `json:"po2_pct"`
 	Items         []BulkItemInput `json:"items"          validate:"required,min=1,dive"`
 }
 
 // BulkItemInput is one UNIQ row from Step 2, with one or more supplier allocations.
-// The sum of all Suppliers[].Quantity MUST NOT exceed BudgetQty (from PRL item).
+// The sum of all Suppliers[].Quantity MUST NOT exceed the PRL item quantity ceiling.
 type BulkItemInput struct {
 	PrlItemID           int64               `json:"prl_item_id"   validate:"required"`
 	UniqCode            string              `json:"uniq_code"     validate:"required"`
@@ -137,11 +135,11 @@ type BulkItemInput struct {
 	PartName            *string             `json:"part_name"`
 	PartNumber          *string             `json:"part_number"`
 	WeightKg            *float64            `json:"weight_kg"`
-	BudgetQty           float64             `json:"budget_qty"    validate:"gt=0"` // PRL item qty ceiling
 	Uom                 *string             `json:"uom"`
 	ExistingRawMaterial *string             `json:"existing_raw_material"`
 	SalesPlan           float64             `json:"sales_plan"`
-	Prl                 float64             `json:"prl"`
+	Po1Pct              *float64            `json:"po1_pct"` // optional; falls back to po_split_settings
+	Po2Pct              *float64            `json:"po2_pct"`
 	Suppliers           []BulkSupplierInput `json:"suppliers"     validate:"required,min=1,dive"`
 }
 

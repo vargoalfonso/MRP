@@ -907,12 +907,6 @@ func (s *svc) GetPRLWithAllocation(ctx context.Context, prlID string, budgetType
 //
 //	existing_allocated + SUM(new suppliers for this item) ≤ item.Quantity
 func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req models.BulkFromPRLRequest, createdBy string) (*models.BulkFromPRLResult, error) {
-	// Resolve PO split percentages once for all items
-	po1Pct, po2Pct, err := s.resolveSplit(ctx, budgetType, req.Po1Pct, req.Po2Pct)
-	if err != nil {
-		return nil, err
-	}
-
 	periodDate, err := parsePeriod(req.Period)
 	if err != nil {
 		return nil, apperror.BadRequest("invalid period format, use 'Month YYYY', e.g. 'October 2025'")
@@ -988,6 +982,12 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 			partNumber = item.PartNumber
 		}
 
+		// Resolve PO split per item (falls back to po_split_settings)
+		po1Pct, po2Pct, err := s.resolveSplit(ctx, budgetType, item.Po1Pct, item.Po2Pct)
+		if err != nil {
+			return nil, err
+		}
+
 		// Validate: sum of new supplier quantities for this item
 		var newTotal float64
 		for _, sup := range item.Suppliers {
@@ -1003,28 +1003,17 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 			continue
 		}
 
-		// Validate: sum of suppliers for this item in the request itself ≤ budget_qty
-		if newTotal > budgetQty {
-			result.Errors = append(result.Errors,
-				fmt.Sprintf("uniq %s: supplier total (%.2f) exceeds budget qty (%.2f)",
-					uniqCode, newTotal, budgetQty),
-			)
-			continue
-		}
-
 		// Create one entry per supplier
 		for _, sup := range item.Suppliers {
 			cb := createdBy
 			prlRowID := item.PrlItemID
-			bq := budgetQty
 
 			entries = append(entries, models.POBudgetEntry{
-				BudgetType:   budgetType,
-				CustomerID:   nil,
-				CustomerName: prl.CustomerName,
-				UniqCode:     uniqCode,
-				ProductModel: productModel,
-				// UI currently doesn't provide material_type for PRL-based flow.
+				BudgetType:      budgetType,
+				CustomerID:      nil,
+				CustomerName:    prl.CustomerName,
+				UniqCode:        uniqCode,
+				ProductModel:    productModel,
 				MaterialType:    nil,
 				PartName:        partName,
 				PartNumber:      partNumber,
@@ -1042,7 +1031,6 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 				Prl:             budgetQty,
 				PrlRef:          &prlRef,
 				PrlRowID:        &prlRowID,
-				BudgetQty:       &bq,
 				BudgetSubtype:   &subtype,
 				Status:          "Pending",
 				CreatedBy:       &cb,
