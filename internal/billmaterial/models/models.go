@@ -70,7 +70,7 @@ type Item struct {
 	UniqCode        string    `gorm:"size:64;uniqueIndex;not null"`
 	PartNumber      *string   `gorm:"size:128"`
 	PartName        string    `gorm:"size:255;not null"`
-	UomID           int64     `gorm:"not null"`
+	Uom             string    `gorm:"column:uom;size:32"`
 	CurrentRevision *string   `gorm:"size:32"`
 	Status          string    `gorm:"size:20;default:Active"`
 	CreatedAt       time.Time
@@ -103,7 +103,7 @@ type ItemMaterialSpec struct {
 	ThicknessMm    *float64   `gorm:"type:numeric(18,4)"`
 	LengthMm       *float64   `gorm:"type:numeric(18,4)"`
 	WeightKg       *float64   `gorm:"type:numeric(18,6)"`
-	SupplierID     *uuid.UUID `gorm:"type:uuid"`
+	SupplierID     *string    `gorm:"column:supplier_id;size:64"` // stored as string, no FK (suppliers.id is bigint)
 	SupplierName   *string    `gorm:"size:255"`
 	CycleTimeSec   *float64   `gorm:"type:numeric(18,4)"`
 	SetupTimeMin   *float64   `gorm:"type:numeric(18,4)"`
@@ -187,7 +187,7 @@ type BomLine struct {
 	ChildItemID  int64   `gorm:"not null;index"`
 	Level        int16   `gorm:"default:1"`
 	QtyPerUniq   float64 `gorm:"type:numeric(18,6);default:1"`
-	UomID        *int64
+	Uom          *string `gorm:"column:uom;size:32"`
 	ScrapFactor  float64 `gorm:"type:numeric(9,6);default:0"`
 	IsPhantom    bool    `gorm:"default:false"`
 	CreatedAt    time.Time

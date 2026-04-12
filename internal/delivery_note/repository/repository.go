@@ -38,9 +38,8 @@ func (r *repository) UomByCode(ctx context.Context, itemUniqCode string) (string
 
 	err := r.db.WithContext(ctx).
 		Table("items").
-		Select("uom_parameters.name").
-		Joins("JOIN uom_parameters ON uom_parameters.id = items.uom_id").
-		Where("items.uniq_code = ?", itemUniqCode).
+		Select("uom").
+		Where("uniq_code = ?", itemUniqCode).
 		Scan(&uomName).Error
 
 	if err != nil {
