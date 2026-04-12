@@ -154,6 +154,7 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 				KanbanID:     kanban.ID,
 				// QR:            qrImage,
 				OrderQty:      int64(poItem.OrderedQty),
+				QtyStated:     int64(poItem.OrderedQty),
 				PcsPerKanban:  poItem.PcsPerKanban,
 				PackingNumber: packingNumber,
 				Check:         "progress",
@@ -297,9 +298,12 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string)
 		err = tx.Model(&models.DeliveryNoteItem{}).
 			Where("id = ?", item.ID).
 			Updates(map[string]interface{}{
-				"check":         "incoming",
-				"date_incoming": now,
-				"updated_at":    now,
+				"check":           "incoming",
+				"qty_received":    item.OrderQty, //asumsi qty received sama dengan qty stated, karena ini hasil scan qr di lapangan, jadi kita anggap barang yang diterima sesuai dengan yang tertera di DN
+				"weight_received": item.Weight,   //asumsi weight received sama dengan weight di DN, karena ini hasil scan qr di lapangan, jadi kita anggap barang yang diterima sesuai dengan yang tertera di DN
+				"date_incoming":   now,
+				"received_at":     now,
+				"updated_at":      now,
 			}).Error
 		if err != nil {
 			return err
