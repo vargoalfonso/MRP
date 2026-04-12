@@ -598,11 +598,25 @@ func (s *svc) resolveSplit(ctx context.Context, budgetType string, po1 *float64,
 	return setting.Po1Pct, setting.Po2Pct, nil
 }
 
-// parsePeriod converts "October 2025" → time.Date(2025, 10, 1, ...)
+// parsePeriod parses period in two formats:
+//   - "October 2025"  (month name + year)
+//   - "10-2025"       (MM-YYYY numeric)
 func parsePeriod(period string) (time.Time, error) {
+	// Try MM-YYYY numeric format first
+	if strings.Contains(period, "-") {
+		parts := strings.SplitN(period, "-", 2)
+		if len(parts) == 2 {
+			monthNum, err1 := strconv.Atoi(parts[0])
+			year, err2 := strconv.Atoi(parts[1])
+			if err1 == nil && err2 == nil && monthNum >= 1 && monthNum <= 12 {
+				return time.Date(year, time.Month(monthNum), 1, 0, 0, 0, 0, time.UTC), nil
+			}
+		}
+	}
+	// Fall back to "Month YYYY" text format
 	parts := strings.Fields(period)
 	if len(parts) != 2 {
-		return time.Time{}, fmt.Errorf("invalid period: %q", period)
+		return time.Time{}, fmt.Errorf("invalid period %q: use 'October 2025' or '10-2025'", period)
 	}
 	year, err := strconv.Atoi(parts[1])
 	if err != nil {
