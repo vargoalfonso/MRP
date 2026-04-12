@@ -214,7 +214,7 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 		UniqCode:   req.UniqCode,
 		PartName:   req.PartName,
 		PartNumber: req.PartNumber,
-		UomID:      req.UomID,
+		Uom:        req.Uom,
 		Status:     status,
 	}
 	if err := s.repo.CreateItem(ctx, parent); err != nil {
@@ -228,7 +228,7 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 	rev := &models.ItemRevision{
 		ItemID:     parent.ID,
 		Revision:   revStr,
-		Status:     "Active",
+		Status:     "Draft",
 		ChangeNote: req.Description,
 	}
 	if err := s.repo.CreateRevision(ctx, rev); err != nil {
@@ -263,7 +263,7 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 	bom := &models.BomItem{
 		ItemID:      parent.ID,
 		Version:     1,
-		Status:      "Active",
+		Status:      "Draft",
 		Description: req.Description,
 	}
 	if err := s.repo.CreateBomItem(ctx, bom); err != nil {
@@ -327,15 +327,15 @@ func (s *service) resolveOrCreateItem(ctx context.Context, c models.ChildInput) 
 	if c.UniqCode == nil || c.PartName == nil {
 		return 0, apperror.BadRequest("child must have item_id or uniq_code + part_name")
 	}
-	if c.UomID == nil {
-		return 0, apperror.BadRequest("child requires uom_id when creating new item: " + *c.UniqCode)
+	if c.Uom == nil {
+		return 0, apperror.BadRequest("child requires uom when creating new item: " + *c.UniqCode)
 	}
 
 	item := &models.Item{
 		UniqCode:   *c.UniqCode,
 		PartName:   *c.PartName,
 		PartNumber: c.PartNumber,
-		UomID:      *c.UomID,
+		Uom:        *c.Uom,
 		Status:     "Active",
 	}
 	if err := s.repo.CreateItem(ctx, item); err != nil {
@@ -349,7 +349,7 @@ func (s *service) resolveOrCreateItem(ctx context.Context, c models.ChildInput) 
 	item.CurrentRevision = &revStr
 	_ = s.repo.UpdateItem(ctx, item)
 
-	rev := &models.ItemRevision{ItemID: item.ID, Revision: revStr, Status: "Active"}
+	rev := &models.ItemRevision{ItemID: item.ID, Revision: revStr, Status: "Draft"}
 	if err := s.repo.CreateRevision(ctx, rev); err != nil {
 		return 0, err
 	}
@@ -402,7 +402,7 @@ func (s *service) createRouting(ctx context.Context, itemID, revID int64, routes
 		prevSeq = seq
 	}
 
-	rh := &models.RoutingHeader{ItemID: itemID, ItemRevisionID: &revID, Version: 1, Status: "Active"}
+	rh := &models.RoutingHeader{ItemID: itemID, ItemRevisionID: &revID, Version: 1, Status: "Draft"}
 	if err := s.repo.CreateRoutingHeader(ctx, rh); err != nil {
 		return err
 	}
@@ -448,14 +448,10 @@ func (s *service) saveMaterialSpec(ctx context.Context, revID int64, ms *models.
 		SetupTimeMin:   ms.SetupTimeMin,
 	}
 	if ms.SupplierID != nil {
-		sid, err := uuid.Parse(*ms.SupplierID)
-		if err != nil {
+		if _, err := uuid.Parse(*ms.SupplierID); err != nil {
 			return apperror.BadRequest("invalid supplier_id")
 		}
-		spec.SupplierID = &sid
-		if supplierName := s.repo.GetSupplierName(ctx, sid); supplierName != "" {
-			spec.SupplierName = &supplierName
-		}
+		spec.SupplierID = ms.SupplierID
 	}
 	return s.repo.UpsertMaterialSpec(ctx, spec)
 }

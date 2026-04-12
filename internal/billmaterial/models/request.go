@@ -42,7 +42,7 @@ type ChildInput struct {
 	UniqCode   *string `json:"uniq_code"`
 	PartName   *string `json:"part_name"`
 	PartNumber *string `json:"part_number"`
-	UomID      *int64  `json:"uom_id"`
+	Uom        *string `json:"uom"`
 
 	// BOM line
 	Level       int16    `json:"level" validate:"required,min=1,max=4"`
@@ -65,7 +65,7 @@ type CreateBomRequest struct {
 	UniqCode    string  `json:"uniq_code" validate:"required,max=64"`
 	PartName    string  `json:"part_name" validate:"required,max=255"`
 	PartNumber  *string `json:"part_number"`
-	UomID       int64   `json:"uom_id" validate:"required"`
+	Uom         string  `json:"uom" validate:"required,max=32"`
 	Status      string  `json:"status" validate:"omitempty,oneof=Active Inactive"`
 	Description *string `json:"description"`
 
@@ -91,7 +91,7 @@ type UpdateBomRequest struct {
 	PartNumber  *string `json:"part_number"`
 	Status      *string `json:"status"     validate:"omitempty,oneof=Active Inactive"`
 	Description *string `json:"description"`
-	BomStatus   *string `json:"bom_status" validate:"omitempty,oneof=Active Inactive"`
+	BomStatus   *string `json:"bom_status" validate:"omitempty,oneof=Draft Released Obsolete"`
 	PictureURL  *string `json:"picture_url"`
 
 	// Pointer-to-slice: nil = no change; non-nil (including empty) = replace all routes.
