@@ -449,7 +449,7 @@ func (r *repo) BulkCreateEntries(ctx context.Context, entries []models.POBudgetE
 	if len(entries) == 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).CreateInBatches(entries, 100).Error
+	return r.db.WithContext(ctx).Omit("BudgetQty").CreateInBatches(entries, 100).Error
 }
 
 // ---------------------------------------------------------------------------
