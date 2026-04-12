@@ -228,7 +228,7 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 	rev := &models.ItemRevision{
 		ItemID:     parent.ID,
 		Revision:   revStr,
-		Status:     "Draft",
+		Status:     "Active",
 		ChangeNote: req.Description,
 	}
 	if err := s.repo.CreateRevision(ctx, rev); err != nil {
@@ -263,7 +263,7 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 	bom := &models.BomItem{
 		ItemID:      parent.ID,
 		Version:     1,
-		Status:      "Draft",
+		Status:      "Active",
 		Description: req.Description,
 	}
 	if err := s.repo.CreateBomItem(ctx, bom); err != nil {
@@ -349,7 +349,7 @@ func (s *service) resolveOrCreateItem(ctx context.Context, c models.ChildInput) 
 	item.CurrentRevision = &revStr
 	_ = s.repo.UpdateItem(ctx, item)
 
-	rev := &models.ItemRevision{ItemID: item.ID, Revision: revStr, Status: "Draft"}
+	rev := &models.ItemRevision{ItemID: item.ID, Revision: revStr, Status: "Active"}
 	if err := s.repo.CreateRevision(ctx, rev); err != nil {
 		return 0, err
 	}
@@ -402,7 +402,7 @@ func (s *service) createRouting(ctx context.Context, itemID, revID int64, routes
 		prevSeq = seq
 	}
 
-	rh := &models.RoutingHeader{ItemID: itemID, ItemRevisionID: &revID, Version: 1, Status: "Draft"}
+	rh := &models.RoutingHeader{ItemID: itemID, ItemRevisionID: &revID, Version: 1, Status: "Active"}
 	if err := s.repo.CreateRoutingHeader(ctx, rh); err != nil {
 		return err
 	}

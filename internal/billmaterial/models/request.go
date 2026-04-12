@@ -91,7 +91,7 @@ type UpdateBomRequest struct {
 	PartNumber  *string `json:"part_number"`
 	Status      *string `json:"status"     validate:"omitempty,oneof=Active Inactive"`
 	Description *string `json:"description"`
-	BomStatus   *string `json:"bom_status" validate:"omitempty,oneof=Draft Released Obsolete"`
+	BomStatus   *string `json:"bom_status" validate:"omitempty,oneof=Active Inactive"`
 	PictureURL  *string `json:"picture_url"`
 
 	// Pointer-to-slice: nil = no change; non-nil (including empty) = replace all routes.
