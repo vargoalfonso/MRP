@@ -34,23 +34,17 @@ func New(db *gorm.DB) IRepository {
 	return &repo{db: db}
 }
 
-// LookupByPackingNumber finds a delivery_note_item by dn_number (= packing_number) and returns
-// full DN context (po_number, supplier, dn_type, dn_number) for UI auto-fill.
-// packing_number in this context = delivery_notes.dn_number.
+// LookupByPackingNumber finds a delivery_note_item by its packing_number column (unique per item)
+// and returns full DN context (po_number, supplier, dn_type, dn_number) for UI auto-fill.
 func (r *repo) LookupByPackingNumber(ctx context.Context, packingNumber, itemUniqCode string) (*models.IncomingScanDNItem, error) {
 	if strings.TrimSpace(packingNumber) == "" {
 		return nil, fmt.Errorf("packing_number is required")
 	}
 
-	q := r.db.WithContext(ctx).Model(&procModels.IncomingDNItem{}).
-		Joins("JOIN delivery_notes dn ON dn.id = delivery_note_items.dn_id").
-		Where("dn.dn_number = ?", packingNumber)
-	if strings.TrimSpace(itemUniqCode) != "" {
-		q = q.Where("delivery_note_items.item_uniq_code = ?", itemUniqCode)
-	}
-
 	var dnItem procModels.IncomingDNItem
-	if err := q.First(&dnItem).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Where("packing_number = ?", packingNumber).
+		First(&dnItem).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, apperror.NotFound("packing_number not found")
 		}
@@ -89,15 +83,13 @@ func (r *repo) CreateIncomingScan(ctx context.Context, req models.IncomingScanRe
 		return &models.IncomingScanResponse{QCTaskID: qcID, DNItem: *dnItemResp}, true, nil
 	}
 
-	// Resolve delivery_note_item by dn_number (= packing_number) + item_uniq_code
+	// Resolve delivery_note_item by packing_number (unique per item)
 	var resolvedItem procModels.IncomingDNItem
-	lookupQ := r.db.WithContext(ctx).
-		Model(&procModels.IncomingDNItem{}).
-		Joins("JOIN delivery_notes dn ON dn.id = delivery_note_items.dn_id").
-		Where("dn.dn_number = ? AND delivery_note_items.item_uniq_code = ?", req.PackingNumber, req.ItemUniqCode)
-	if err := lookupQ.First(&resolvedItem).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Where("packing_number = ?", req.PackingNumber).
+		First(&resolvedItem).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, false, apperror.NotFound(fmt.Sprintf("packing_number '%s' with item '%s' not found", req.PackingNumber, req.ItemUniqCode))
+			return nil, false, apperror.NotFound(fmt.Sprintf("packing_number '%s' not found", req.PackingNumber))
 		}
 		return nil, false, fmt.Errorf("lookup dn item: %w", err)
 	}
@@ -251,7 +243,7 @@ func (r *repo) buildIncomingScanDNItem(ctx context.Context, tx *gorm.DB, dnItem 
 
 	resp.PoNumber = &dn.PoNumber
 	resp.DnNumber = &dn.DnNumber
-	resp.PackingNumber = &dn.DnNumber // packing_number = dn_number (scanned QR/kanban)
+	// PackingNumber already populated from dnItem.PackingNumber (the actual DB column on delivery_note_items)
 	dnTypeLabel := mapDnTypeLabel(dn.DnType)
 	resp.RawMaterialType = &dnTypeLabel
 

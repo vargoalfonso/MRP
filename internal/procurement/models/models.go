@@ -114,7 +114,7 @@ type IncomingDNItem struct {
 	QtyReceived    int        `gorm:"column:qty_received;default:0"`
 	WeightReceived *float64   `gorm:"column:weight_received"`
 	QualityStatus  string     `gorm:"column:quality_status;size:32;default:Pending"`
-	PackingNumber  *string    `gorm:"-"` // not a DB column; populated in application layer from dn.dn_number
+	PackingNumber  *string    `gorm:"column:packing_number;size:64"` // unique per item; scanned from QR/kanban label
 	PcsPerKanban   *int       `gorm:"column:pcs_per_kanban"`
 	Uom            *string    `gorm:"column:uom;size:32"`
 	ReceivedAt     *time.Time `gorm:"column:received_at"`
