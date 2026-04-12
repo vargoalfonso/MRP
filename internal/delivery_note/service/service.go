@@ -19,7 +19,7 @@ type IDeliveryNoteService interface {
 	Create(ctx context.Context, req models.CreateDNRequest) (*models.DeliveryNote, error)
 	GetAll(ctx context.Context) ([]models.DeliveryNote, error)
 	GetByID(ctx context.Context, id int64) (*models.DeliveryNote, error)
-	ScanAndUpdate(ctx context.Context, packing string) error
+	ScanAndUpdate(ctx context.Context, packing string) (string, error)
 	PreviewDN(ctx context.Context, req models.CreateDNRequest) (*models.PreviewDNResponse, error)
 }
 
@@ -274,8 +274,10 @@ func generateQRBase64(value string) (string, error) {
 	return "data:image/png;base64," + base64Str, nil
 }
 
-func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string) (string, error) {
+	returnStatus := ""
+
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
 		var item models.DeliveryNoteItem
 
@@ -295,17 +297,16 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string)
 		// 🔥 2. kalau sudah pernah scan
 		if item.Check == "incoming" || item.Check == "completed" {
 
-			// pastikan ada waktu sebelumnya
 			if item.ReceivedAt != nil {
 
 				diff := now.Sub(*item.ReceivedAt).Seconds()
 
-				// ❌ kalau < 60 detik → duplicate
+				// ❌ duplicate < 60 detik
 				if diff <= 60 {
 					return fmt.Errorf("duplicate scan detected, please wait before scanning again")
 				}
 
-				// 🔥 kalau > 60 detik → update jadi completed
+				// 🔥 > 60 detik → completed
 				err = tx.Model(&models.DeliveryNoteItem{}).
 					Where("id = ?", item.ID).
 					Updates(map[string]interface{}{
@@ -313,7 +314,12 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string)
 						"updated_at": now,
 					}).Error
 
-				return err
+				if err != nil {
+					return err
+				}
+
+				returnStatus = "completed"
+				return nil
 			}
 		}
 
@@ -328,6 +334,7 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string)
 				"received_at":     now,
 				"updated_at":      now,
 			}).Error
+
 		if err != nil {
 			return err
 		}
@@ -340,8 +347,19 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string)
 				"total_po_incoming": gorm.Expr("COALESCE(total_po_incoming, 0) + ?", item.OrderQty),
 			}).Error
 
-		return err
+		if err != nil {
+			return err
+		}
+
+		returnStatus = "incoming"
+		return nil
 	})
+
+	if err != nil {
+		return "", err
+	}
+
+	return returnStatus, nil
 }
 
 func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.CreateDNRequest) (*models.PreviewDNResponse, error) {

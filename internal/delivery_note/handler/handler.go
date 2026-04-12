@@ -110,7 +110,7 @@ func (h *HTTPHandler) ScanDeliveryNoteItem(appCtx *app.Context) *app.CostumeResp
 		}
 	}
 
-	err := h.service.ScanAndUpdate(appCtx.Request.Context(), packing)
+	response, err := h.service.ScanAndUpdate(appCtx.Request.Context(), packing)
 	if err != nil {
 		return app.NewError(appCtx, err)
 	}
@@ -118,7 +118,7 @@ func (h *HTTPHandler) ScanDeliveryNoteItem(appCtx *app.Context) *app.CostumeResp
 	return &app.CostumeResponse{
 		RequestID: appCtx.APIReqID,
 		Status:    http.StatusOK,
-		Message:   "item status updated to incoming",
+		Message:   "item status updated to " + response,
 		Data:      nil,
 	}
 }
