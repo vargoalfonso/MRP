@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS unit_measurement;
+DROP TABLE IF EXISTS unit_measurements;
