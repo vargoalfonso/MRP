@@ -304,6 +304,23 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string)
 			return err
 		}
 
+		var dn models.DeliveryNote
+
+		err = tx.Where("id = ?", item.DNID).
+			First(&dn).Error
+
+		if err != nil {
+			return err
+		}
+
+		if dn.Status == "completed" {
+			return fmt.Errorf("delivery note sudah completed, tidak bisa scan")
+		}
+
+		if dn.Status != "draft" && dn.Status != "incoming" {
+			return fmt.Errorf("delivery note tidak aktif")
+		}
+
 		now := time.Now()
 
 		// 🔥 2. kalau sudah pernah scan
