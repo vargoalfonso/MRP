@@ -110,13 +110,14 @@ func (r *repo) CreateIncomingScan(ctx context.Context, req models.IncomingScanRe
 		// Insert receiving scan (append-only)
 		idk := req.ClientEventID
 		scan := models.IncomingReceivingScan{
-			IncomingDNItemID: dnItem.ID,
-			IdempotencyKey:   &idk,
-			ScanRef:          req.PackingNumber,
-			Qty:              float64(req.DeltaQty),
-			WeightKg:         req.DeltaWeightKg,
-			ScannedAt:        time.Now(),
-			ScannedBy:        &scannedBy,
+			IncomingDNItemID:  dnItem.ID,
+			IdempotencyKey:    &idk,
+			ScanRef:           req.PackingNumber,
+			Qty:               float64(req.DeltaQty),
+			WeightKg:          req.DeltaWeightKg,
+			WarehouseLocation: req.WarehouseLocation,
+			ScannedAt:         time.Now(),
+			ScannedBy:         &scannedBy,
 		}
 		if err := tx.Create(&scan).Error; err != nil {
 			return fmt.Errorf("insert incoming_receiving_scans: %w", err)

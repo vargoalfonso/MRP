@@ -573,3 +573,28 @@ func (h *HTTPHandler) ListSubconReceived(ctx *app.Context) *app.CostumeResponse 
 		Data:      data,
 	}
 }
+
+// GetKanbanSummary returns kanban totals and incomplete stock for a given item_uniq_code.
+// Frontend calls this asynchronously per row in the DN list to show kanban progress.
+//
+//	GET /api/v1/inventory/kanban-summary?uniq_code=EMA-LV7-001
+func (h *HTTPHandler) GetKanbanSummary(ctx *app.Context) *app.CostumeResponse {
+	uniqCode := ctx.Query("uniq_code")
+	if uniqCode == "" {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "uniq_code is required",
+		}
+	}
+	data, err := h.svc.GetKanbanSummary(ctx.Request.Context(), uniqCode)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}

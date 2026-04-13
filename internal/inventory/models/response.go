@@ -6,6 +6,15 @@ import "time"
 // Shared
 // ---------------------------------------------------------------------------
 
+// KanbanSummary is returned by GET /api/v1/inventory/kanban-summary?uniq_code=X
+// Frontend calls this per-row asynchronously to show kanban progress per item in a DN.
+type KanbanSummary struct {
+	UniqCode         string `json:"uniq_code"`
+	TotalKanban      int64  `json:"total_kanban"`      // COUNT(DISTINCT kanban_id) across all DNs
+	IncompleteKanban int64  `json:"incomplete_kanban"` // kanban where qty_received < quantity
+	StockToComplete  int64  `json:"stock_to_complete"` // SUM(quantity - qty_received) for incomplete rows
+}
+
 type InventoryPagination struct {
 	Total      int64 `json:"total"`
 	Page       int   `json:"page"`

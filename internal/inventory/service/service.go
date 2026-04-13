@@ -43,6 +43,9 @@ type IService interface {
 
 	// Incoming scans (tab view - shared)
 	ListIncoming(ctx context.Context, dnType string, p pagination.InventoryIncomingPaginationInput) (*invModels.IncomingListResponse, error)
+
+	// Kanban summary — per item_uniq_code, called async per row by frontend
+	GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -647,6 +650,14 @@ func (s *service) ListIncoming(ctx context.Context, dnType string, p pagination.
 			TotalPages: totalPages,
 		},
 	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Kanban Summary
+// ---------------------------------------------------------------------------
+
+func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error) {
+	return s.repo.GetKanbanSummary(ctx, uniqCode)
 }
 
 // ---------------------------------------------------------------------------

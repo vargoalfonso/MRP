@@ -198,6 +198,9 @@ type IRepository interface {
 
 	// Movement log
 	CreateMovementLog(ctx context.Context, log *invModels.InventoryMovementLog) error
+
+	// Kanban summary — per item_uniq_code across all delivery_note_items
+	GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -634,8 +637,7 @@ func (r *repo) ListIncoming(ctx context.Context, f IncomingListFilter) ([]Incomi
 			SELECT id, status FROM qc_tasks
 			WHERE task_type = 'incoming_qc' AND incoming_dn_item_id = dni.id
 			ORDER BY id DESC LIMIT 1
-		) qt ON TRUE`).
-		Joins("LEFT JOIN raw_materials rm ON rm.uniq_code = dni.item_uniq_code AND rm.deleted_at IS NULL")
+		) qt ON TRUE`)
 
 	if f.DNType != "" {
 		q = q.Where("UPPER(TRIM(dn.type)) IN ?", dnTypeVariants(f.DNType))
@@ -666,7 +668,7 @@ func (r *repo) ListIncoming(ctx context.Context, f IncomingListFilter) ([]Incomi
 		irs.id                                    AS scan_id,
 		dni.item_uniq_code,
 		irs.qty                                   AS incoming_qty,
-		rm.warehouse_location                     AS warehouse,
+		irs.warehouse_location                    AS warehouse,
 		irs.scanned_at                            AS scan_date,
 		s.supplier_name,
 		dn.po_number,
@@ -802,4 +804,39 @@ func (r *repo) CreateMovementLog(ctx context.Context, log *invModels.InventoryMo
 		log.LoggedAt = time.Now()
 	}
 	return r.db.WithContext(ctx).Create(log).Error
+}
+
+// ---------------------------------------------------------------------------
+// Kanban Summary
+// ---------------------------------------------------------------------------
+
+func (r *repo) GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error) {
+	type result struct {
+		TotalKanban      int64
+		IncompleteKanban int64
+		StockToComplete  int64
+	}
+	var res result
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			COUNT(*)                                                                     AS total_kanban,
+			COUNT(*) FILTER (WHERE COALESCE(qty_received, 0) < COALESCE(quantity, 0))   AS incomplete_kanban,
+			COALESCE(SUM(
+				CASE WHEN COALESCE(qty_received, 0) < COALESCE(quantity, 0)
+				     THEN COALESCE(quantity, 0) - COALESCE(qty_received, 0)
+				     ELSE 0
+				END
+			), 0)                                                                        AS stock_to_complete
+		FROM delivery_note_items
+		WHERE item_uniq_code = ?
+	`, uniqCode).Scan(&res).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("GetKanbanSummary", err)
+	}
+	return &invModels.KanbanSummary{
+		UniqCode:         uniqCode,
+		TotalKanban:      res.TotalKanban,
+		IncompleteKanban: res.IncompleteKanban,
+		StockToComplete:  res.StockToComplete,
+	}, nil
 }

@@ -118,4 +118,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	sc.PUT("/:id", perm("inventory", "update"), m.base.RunAction(m.handler.UpdateSubconInventory))
 	sc.DELETE("/:id", perm("inventory", "delete"), m.base.RunAction(m.handler.DeleteSubconInventory))
 	sc.GET("/:id/history", perm("inventory", "view"), m.base.RunAction(m.handler.GetSubconHistory))
+
+	// --- Kanban Summary (async per-row, used by DN list UI) ---
+	g.GET("/kanban-summary", perm("inventory", "view"), m.base.RunAction(m.handler.GetKanbanSummary))
 }

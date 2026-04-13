@@ -194,13 +194,13 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 		}
 
 		event := map[string]interface{}{
-			"event":            "qc_approve",
-			"approved_qty":     approvedQty,
-			"ng_qty":           ngQty,
+			"event":             "qc_approve",
+			"approved_qty":      approvedQty,
+			"ng_qty":            ngQty,
 			"number_of_defects": numberOfDefects,
-			"date_checked":     dateChecked,
-			"performed_by":     performedBy,
-			"occurred_at":      time.Now().UTC().Format(time.RFC3339),
+			"date_checked":      dateChecked,
+			"performed_by":      performedBy,
+			"occurred_at":       time.Now().UTC().Format(time.RFC3339),
 		}
 		if err := appendRoundEventTx(tx, taskID, event); err != nil {
 			return err
@@ -211,7 +211,18 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 			return err
 		}
 		if approvedQty > 0 {
-			if err := r.postToInventoryByDNType(tx, dnType, dnItem.ItemUniqCode, approvedQty, dnItem.WeightReceived, dnItem.Uom, performedBy); err != nil {
+			// Look up warehouse_location from the most recent scan for this dn_item.
+			var warehouseLocation *string
+			var latestScan struct {
+				WarehouseLocation *string `gorm:"column:warehouse_location"`
+			}
+			tx.Table("incoming_receiving_scans").
+				Select("warehouse_location").
+				Where("incoming_dn_item_id = ? AND warehouse_location IS NOT NULL", *task.IncomingDNItemID).
+				Order("scanned_at DESC").Limit(1).Scan(&latestScan)
+			warehouseLocation = latestScan.WarehouseLocation
+
+			if err := r.postToInventoryByDNType(tx, dnType, dnItem.ItemUniqCode, approvedQty, dnItem.WeightReceived, dnItem.Uom, warehouseLocation, performedBy); err != nil {
 				return err
 			}
 			_ = poNumber // reserved for future PO rollup
