@@ -317,7 +317,7 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string)
 			return fmt.Errorf("delivery note sudah completed, tidak bisa scan")
 		}
 
-		if dn.Status != "draft" && dn.Status != "incoming" {
+		if dn.Status != "draft" && dn.Status != "incoming" && dn.Status != "waiting" {
 			return fmt.Errorf("delivery note tidak aktif")
 		}
 
