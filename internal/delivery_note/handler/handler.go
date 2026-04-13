@@ -57,7 +57,7 @@ func (h *HTTPHandler) CreateDeliveryNote(appCtx *app.Context) *app.CostumeRespon
 	}
 
 	// call service
-	data, err := h.service.Create(appCtx.Request.Context(), req)
+	_, err := h.service.Create(appCtx.Request.Context(), req)
 	if err != nil {
 		return app.NewError(appCtx, err)
 	}
@@ -66,7 +66,7 @@ func (h *HTTPHandler) CreateDeliveryNote(appCtx *app.Context) *app.CostumeRespon
 		RequestID: appCtx.APIReqID,
 		Status:    http.StatusCreated,
 		Message:   "delivery note created successfully",
-		Data:      data,
+		Data:      nil,
 	}
 }
 
