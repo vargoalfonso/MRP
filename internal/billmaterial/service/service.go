@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
+	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
 	"github.com/ganasa18/go-template/internal/billmaterial/models"
 	"github.com/ganasa18/go-template/internal/billmaterial/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
@@ -37,6 +39,11 @@ type IService interface {
 
 	// Delete a subtree from BOM by line id (frontend-friendly unique node target)
 	DeleteBomLine(ctx context.Context, bomID, lineID int64) (int64, error)
+
+	// ApproveBom processes an approve or reject action for the BOM's approval instance.
+	// userRoles are the caller's JWT roles used to verify the current-level role.
+	// On full approval, bom_item.status and all child items.status are set to Active.
+	ApproveBom(ctx context.Context, bomID int64, userID string, userRoles []string, req models.ApproveBomRequest) (*awmodels.ApprovalInstance, error)
 }
 
 type service struct{ repo repository.IRepository }
@@ -114,8 +121,10 @@ func (s *service) ListBom(ctx context.Context, q models.ListBomQuery) (*models.L
 		}
 
 		// Build parent row
+		bomID := b.ID
 		row := models.BomTreeRow{
 			ID:         parent.ID,
+			BomID:      &bomID,
 			UniqCode:   parent.UniqCode,
 			PartName:   parent.PartName,
 			PartNumber: parent.PartNumber,
@@ -206,16 +215,14 @@ func (s *service) buildAssetInfo(asset *models.ItemAsset) models.AssetInfo {
 
 func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*models.BomDetailResponse, error) {
 	// 1. Create parent item
-	status := "Active"
-	if req.Status != "" {
-		status = req.Status
-	}
+	// Semua items (parent & child) mulai sebagai Draft — baru jadi Active
+	// setelah BOM selesai di-approve di semua level.
 	parent := &models.Item{
 		UniqCode:   req.UniqCode,
 		PartName:   req.PartName,
 		PartNumber: req.PartNumber,
 		Uom:        req.Uom,
-		Status:     status,
+		Status:     "Draft",
 	}
 	if err := s.repo.CreateItem(ctx, parent); err != nil {
 		return nil, err
@@ -267,6 +274,34 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 		Description: req.Description,
 	}
 	if err := s.repo.CreateBomItem(ctx, bom); err != nil {
+		return nil, err
+	}
+
+	// 6a. Auto-create approval instance — one row in approval_instances tracks
+	// this BOM through all configured levels. Progress is stored as JSONB so
+	// the frontend can render per-level status without parsing complex state.
+	wf, err := s.repo.GetApprovalWorkflowByActionName(ctx, "bom")
+	if err != nil {
+		return nil, err
+	}
+	if wf == nil {
+		return nil, apperror.BadRequest("no active approval workflow configured for action 'bom'")
+	}
+	maxLevel := wfMaxLevel(wf)
+	if maxLevel < 2 {
+		return nil, apperror.BadRequest("approval workflow 'bom' must have at least 2 levels configured")
+	}
+	instance := &awmodels.ApprovalInstance{
+		ActionName:         "bom",
+		ReferenceTable:     "bom_item",
+		ReferenceID:        bom.ID,
+		ApprovalWorkflowID: wf.ID,
+		CurrentLevel:       1,
+		MaxLevel:           maxLevel,
+		Status:             "pending",
+		ApprovalProgress:   buildApprovalProgress(wf, maxLevel),
+	}
+	if err := s.repo.CreateApprovalInstance(ctx, instance); err != nil {
 		return nil, err
 	}
 
@@ -336,7 +371,7 @@ func (s *service) resolveOrCreateItem(ctx context.Context, c models.ChildInput) 
 		PartName:   *c.PartName,
 		PartNumber: c.PartNumber,
 		Uom:        *c.Uom,
-		Status:     "Active",
+		Status:     "Draft",
 	}
 	if err := s.repo.CreateItem(ctx, item); err != nil {
 		return 0, err
@@ -1052,4 +1087,144 @@ func uniqueInt64Keys(values map[int64]struct{}) []int64 {
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
 	return result
+}
+
+// ---------------------------------------------------------------------------
+// ApproveBom — multi-level approval state machine using approval_instances
+// ---------------------------------------------------------------------------
+
+func (s *service) ApproveBom(ctx context.Context, bomID int64, userID string, userRoles []string, req models.ApproveBomRequest) (*awmodels.ApprovalInstance, error) {
+	instance, err := s.repo.GetApprovalInstanceByRef(ctx, "bom", "bom_item", bomID)
+	if err != nil {
+		return nil, err
+	}
+	if instance == nil {
+		return nil, apperror.NotFound("approval record not found for this BOM")
+	}
+	if instance.Status == "approved" || instance.Status == "rejected" {
+		return nil, apperror.BadRequest(fmt.Sprintf("BOM is already %s", instance.Status))
+	}
+
+	wf, err := s.repo.GetApprovalWorkflowByID(ctx, instance.ApprovalWorkflowID)
+	if err != nil {
+		return nil, err
+	}
+
+	requiredRole := wfLevelRole(wf, int16(instance.CurrentLevel))
+	if requiredRole == "" {
+		return nil, apperror.BadRequest(fmt.Sprintf("no role configured for approval level %d", instance.CurrentLevel))
+	}
+	if !bomHasRole(userRoles, requiredRole) {
+		return nil, apperror.Forbidden(fmt.Sprintf(
+			"level %d approval requires role '%s'", instance.CurrentLevel, requiredRole,
+		))
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	lvlIdx := instance.CurrentLevel - 1 // 0-based index into Levels slice
+	note := ""
+	if req.Notes != nil {
+		note = *req.Notes
+	}
+
+	if req.Action == "reject" {
+		instance.ApprovalProgress.Levels[lvlIdx].Status = "rejected"
+		instance.ApprovalProgress.Levels[lvlIdx].ApprovedBy = userID
+		instance.ApprovalProgress.Levels[lvlIdx].ApprovedAt = now
+		instance.ApprovalProgress.Levels[lvlIdx].Note = note
+		instance.Status = "rejected"
+
+		// Reset bom_item back to Draft so creator can revise and resubmit
+		if bom, _ := s.repo.GetBomByID(ctx, bomID); bom != nil {
+			bom.Status = "Draft"
+			_ = s.repo.UpdateBomItem(ctx, bom)
+		}
+	} else {
+		instance.ApprovalProgress.Levels[lvlIdx].Status = "approved"
+		instance.ApprovalProgress.Levels[lvlIdx].ApprovedBy = userID
+		instance.ApprovalProgress.Levels[lvlIdx].ApprovedAt = now
+		instance.ApprovalProgress.Levels[lvlIdx].Note = note
+
+		if instance.CurrentLevel >= instance.MaxLevel {
+			// All levels passed — activate bom_item + all children items
+			instance.Status = "approved"
+			if bom, _ := s.repo.GetBomByID(ctx, bomID); bom != nil {
+				bom.Status = "Active"
+				_ = s.repo.UpdateBomItem(ctx, bom)
+			}
+			_ = s.repo.BulkActivateItemsByBomID(ctx, bomID)
+		} else {
+			instance.CurrentLevel++
+		}
+	}
+
+	if err := s.repo.UpdateApprovalInstance(ctx, instance); err != nil {
+		return nil, err
+	}
+	return instance, nil
+}
+
+// buildApprovalProgress builds the initial JSONB progress from the workflow config.
+// Levels up to maxLevel are set to "pending"; the rest are "skipped".
+func buildApprovalProgress(wf *awmodels.ApprovalWorkflow, maxLevel int) awmodels.ApprovalProgress {
+	roles := []string{wf.Level1Role, wf.Level2Role, wf.Level3Role, wf.Level4Role}
+	levels := make([]awmodels.ApprovalLevelProgress, 4)
+	for i := 0; i < 4; i++ {
+		lvl := i + 1
+		status := "skipped"
+		if lvl <= maxLevel {
+			status = "pending"
+		}
+		levels[i] = awmodels.ApprovalLevelProgress{
+			Level:  lvl,
+			Role:   roles[i],
+			Status: status,
+		}
+	}
+	return awmodels.ApprovalProgress{Levels: levels}
+}
+
+// wfLevelRole returns the role required for a given level from the master workflow.
+func wfLevelRole(wf *awmodels.ApprovalWorkflow, level int16) string {
+	if wf == nil {
+		return ""
+	}
+	switch level {
+	case 1:
+		return wf.Level1Role
+	case 2:
+		return wf.Level2Role
+	case 3:
+		return wf.Level3Role
+	case 4:
+		return wf.Level4Role
+	}
+	return ""
+}
+
+// wfMaxLevel returns the highest configured level (non-empty role) in the workflow.
+func wfMaxLevel(wf *awmodels.ApprovalWorkflow) int {
+	if wf == nil {
+		return 1
+	}
+	max := 1
+	if wf.Level2Role != "" {
+		max = 2
+	}
+	if wf.Level3Role != "" {
+		max = 3
+	}
+	if wf.Level4Role != "" {
+		max = 4
+	}
+	return max
+}
+
+func bomHasRole(userRoles []string, required string) bool {
+	for _, r := range userRoles {
+		if r == required {
+			return true
+		}
+	}
+	return false
 }

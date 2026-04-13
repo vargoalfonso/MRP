@@ -26,6 +26,7 @@ type AssetInfo struct {
 
 type BomTreeRow struct {
 	ID         int64        `json:"id"`
+	BomID      *int64       `json:"bom_id,omitempty"` // bom_item.id — hanya ada di parent row; gunakan untuk GET /products/bom/:bom_id
 	LineID     *int64       `json:"line_id,omitempty"`
 	UniqCode   string       `json:"uniq_code"`
 	PartName   string       `json:"part_name"`
