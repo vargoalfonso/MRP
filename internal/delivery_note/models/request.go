@@ -4,8 +4,8 @@ type CreateDNRequest struct {
 	PONumber      string                `json:"po_number" validate:"required"`
 	CustomerID    int64                 `json:"customer_id"`
 	ContactPerson string                `json:"contact_person"`
-	Period        string                `json:"period"`
-	IncomingDate  string                `json:"incoming_date"`
+	Period        string                `json:"period" validate:"required"`
+	IncomingDate  string                `json:"incoming_date" validate:"required"`
 	Type          string                `json:"type"`
 	Items         []CreateDNItemRequest `json:"items" validate:"required,dive"`
 }

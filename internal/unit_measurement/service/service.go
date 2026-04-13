@@ -8,10 +8,10 @@ import (
 )
 
 type IUnitMeasurementService interface {
-	GetAll(ctx context.Context) ([]models.UnitMeasurement, error)
-	GetByID(ctx context.Context, id int64) (*models.UnitMeasurement, error)
-	Create(ctx context.Context, req models.CreateUnitRequest) (*models.UnitMeasurement, error)
-	Update(ctx context.Context, id int64, req models.UpdateUnitRequest) (*models.UnitMeasurement, error)
+	GetAll(ctx context.Context) ([]models.UomParameter, error)
+	GetByID(ctx context.Context, id int64) (*models.UomParameter, error)
+	Create(ctx context.Context, req models.CreateUnitRequest) (*models.UomParameter, error)
+	Update(ctx context.Context, id int64, req models.UpdateUnitRequest) (*models.UomParameter, error)
 	Delete(ctx context.Context, id int64) error
 }
 
@@ -27,16 +27,17 @@ func New(repo unitMeasurementRepo.IUnitMeasurementRepository) IUnitMeasurementSe
 // =========================
 // CRUD
 // =========================
-func (s *service) GetAll(ctx context.Context) ([]models.UnitMeasurement, error) {
+func (s *service) GetAll(ctx context.Context) ([]models.UomParameter, error) {
 	return s.repo.FindAll(ctx)
 }
 
-func (s *service) GetByID(ctx context.Context, id int64) (*models.UnitMeasurement, error) {
+func (s *service) GetByID(ctx context.Context, id int64) (*models.UomParameter, error) {
 	return s.repo.FindByID(ctx, id)
 }
 
-func (s *service) Create(ctx context.Context, req models.CreateUnitRequest) (*models.UnitMeasurement, error) {
-	data := models.UnitMeasurement{
+func (s *service) Create(ctx context.Context, req models.CreateUnitRequest) (*models.UomParameter, error) {
+	data := models.UomParameter{
+		Code:     req.Code,
 		Name:     req.Name,
 		Category: req.Category,
 		Status:   req.Status,
@@ -49,7 +50,7 @@ func (s *service) Create(ctx context.Context, req models.CreateUnitRequest) (*mo
 	return &data, nil
 }
 
-func (s *service) Update(ctx context.Context, id int64, req models.UpdateUnitRequest) (*models.UnitMeasurement, error) {
+func (s *service) Update(ctx context.Context, id int64, req models.UpdateUnitRequest) (*models.UomParameter, error) {
 
 	existing, err := s.repo.FindByID(ctx, id)
 	if err != nil {
@@ -57,6 +58,14 @@ func (s *service) Update(ctx context.Context, id int64, req models.UpdateUnitReq
 	}
 
 	updateData := map[string]interface{}{}
+
+	if req.Code != "" {
+		updateData["code"] = req.Code
+	}
+
+	if req.Name != "" {
+		updateData["name"] = req.Name
+	}
 
 	if req.Category != "" {
 		updateData["category"] = req.Category

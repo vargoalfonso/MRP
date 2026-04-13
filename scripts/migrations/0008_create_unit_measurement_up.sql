@@ -6,7 +6,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- =========================
 -- TABLE: unit_measurement
 -- =========================
-CREATE TABLE IF NOT EXISTS unit_measurement (
+CREATE TABLE IF NOT EXISTS unit_measurements (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     category VARCHAR(50) NOT NULL,
