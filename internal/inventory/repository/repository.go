@@ -162,6 +162,12 @@ type RMStats struct {
 	LowStockItems      int64 `gorm:"column:low_stock_items"`
 }
 
+// SafetyStockRow is a minimal projection from safety_stock_parameters.
+type SafetyStockRow struct {
+	CalculationType string  `gorm:"column:calculation_type"`
+	Constanta       float64 `gorm:"column:constanta"`
+}
+
 // ---------------------------------------------------------------------------
 // Interface
 // ---------------------------------------------------------------------------
@@ -199,8 +205,18 @@ type IRepository interface {
 	// Movement log
 	CreateMovementLog(ctx context.Context, log *invModels.InventoryMovementLog) error
 
-	// Kanban summary — per item_uniq_code across all delivery_note_items
-	GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error)
+	// Kanban summary helpers — each returns one piece of data used to compute KanbanSummary.
+	GetRawMaterialByUniqCode(ctx context.Context, uniqCode string) (*RawMaterialRow, error)
+	GetSafetyStockParam(ctx context.Context, uniqCode string) (*SafetyStockRow, error)
+	GetActiveWorkingDays(ctx context.Context) (int, error)
+	GetPRLQtyByUniqCode(ctx context.Context, uniqCode string) (float64, error)
+	GetActivePOQtyByUniqCode(ctx context.Context, uniqCode string) (float64, error)
+	// GetForecastDailyUsage returns the latest forecasted daily usage from forecast_results.
+	// Used as fallback daily_usage when no safety_stock_parameter is active for the item.
+	GetForecastDailyUsage(ctx context.Context, uniqCode string) (float64, error)
+	// GetKanbanPkgQty returns pcs_per_kanban from supplier_item for the given uniq_code.
+	// Returns 0 when no active supplier_item record exists (caller must apply default).
+	GetKanbanPkgQty(ctx context.Context, uniqCode string) (int, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -807,36 +823,126 @@ func (r *repo) CreateMovementLog(ctx context.Context, log *invModels.InventoryMo
 }
 
 // ---------------------------------------------------------------------------
-// Kanban Summary
+// Kanban Summary helpers
 // ---------------------------------------------------------------------------
 
-func (r *repo) GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error) {
-	type result struct {
-		TotalKanban      int64
-		IncompleteKanban int64
-		StockToComplete  int64
-	}
-	var res result
-	err := r.db.WithContext(ctx).Raw(`
-		SELECT
-			COUNT(*)                                                                     AS total_kanban,
-			COUNT(*) FILTER (WHERE COALESCE(qty_received, 0) < COALESCE(quantity, 0))   AS incomplete_kanban,
-			COALESCE(SUM(
-				CASE WHEN COALESCE(qty_received, 0) < COALESCE(quantity, 0)
-				     THEN COALESCE(quantity, 0) - COALESCE(qty_received, 0)
-				     ELSE 0
-				END
-			), 0)                                                                        AS stock_to_complete
-		FROM delivery_note_items
-		WHERE item_uniq_code = ?
-	`, uniqCode).Scan(&res).Error
+func (r *repo) GetRawMaterialByUniqCode(ctx context.Context, uniqCode string) (*RawMaterialRow, error) {
+	var row RawMaterialRow
+	// Only select the columns that will remain after derived fields are dropped:
+	// stock_qty is the only truly persistent field needed for kanban computation.
+	// raw_material_type is kept to detect SSP (buy/not-buy = n/a).
+	err := r.db.WithContext(ctx).
+		Table("raw_materials").
+		Select("id, uniq_code, stock_qty, raw_material_type").
+		Where("uniq_code = ? AND deleted_at IS NULL", uniqCode).
+		First(&row).Error
 	if err != nil {
-		return nil, apperror.InternalWrap("GetKanbanSummary", err)
+		return nil, apperror.InternalWrap("GetRawMaterialByUniqCode", err)
 	}
-	return &invModels.KanbanSummary{
-		UniqCode:         uniqCode,
-		TotalKanban:      res.TotalKanban,
-		IncompleteKanban: res.IncompleteKanban,
-		StockToComplete:  res.StockToComplete,
-	}, nil
+	return &row, nil
+}
+
+func (r *repo) GetSafetyStockParam(ctx context.Context, uniqCode string) (*SafetyStockRow, error) {
+	var row SafetyStockRow
+	err := r.db.WithContext(ctx).
+		Table("safety_stock_parameters").
+		Select("calculation_type, constanta").
+		Where("item_uniq_code = ?", uniqCode).
+		First(&row).Error
+	if err != nil {
+		return nil, err // caller treats not-found as "no param"
+	}
+	return &row, nil
+}
+
+func (r *repo) GetActiveWorkingDays(ctx context.Context) (int, error) {
+	var result struct {
+		WorkingDays int `gorm:"column:working_days"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("global_parameters").
+		Select("working_days").
+		Where("status = 'active'").
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.WorkingDays, nil
+}
+
+// GetPRLQtyByUniqCode returns the total PRL quantity from active PRL forecasts for the given item.
+func (r *repo) GetPRLQtyByUniqCode(ctx context.Context, uniqCode string) (float64, error) {
+	var result struct {
+		Total float64 `gorm:"column:total"`
+	}
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(fi.quantity), 0) AS total
+		FROM prl_forecast_items fi
+		JOIN prl_forecasts f ON f.id = fi.prl_id
+		WHERE fi.uniq_code = ?
+		  AND f.status = 'Active'
+	`, uniqCode).Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.Total, nil
+}
+
+// GetActivePOQtyByUniqCode returns the total open PO quantity for the given item.
+func (r *repo) GetActivePOQtyByUniqCode(ctx context.Context, uniqCode string) (float64, error) {
+	var result struct {
+		Total float64 `gorm:"column:total"`
+	}
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(poi.ordered_qty), 0) AS total
+		FROM purchase_order_items poi
+		JOIN purchase_orders po ON po.po_id = poi.po_id
+		WHERE poi.item_uniq_code = ?
+		  AND poi.status = 'open'
+		  AND po.status NOT IN ('cancelled', 'closed')
+	`, uniqCode).Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.Total, nil
+}
+
+// GetForecastDailyUsage returns the latest forecasted daily usage from forecast_results.
+// Used as fallback when no safety_stock_parameter is active for the item.
+func (r *repo) GetForecastDailyUsage(ctx context.Context, uniqCode string) (float64, error) {
+	var result struct {
+		ForecastQty float64 `gorm:"column:forecast_qty"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("forecast_results").
+		Select("forecast_qty").
+		Where("item_code = ?", uniqCode).
+		Order("created_at DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.ForecastQty, nil
+}
+
+// GetKanbanPkgQty returns pcs_per_kanban from supplier_item for the given uniq_code.
+// Returns 0 if no active record found — caller applies the default (50).
+func (r *repo) GetKanbanPkgQty(ctx context.Context, uniqCode string) (int, error) {
+	var result struct {
+		PcsPerKanban int `gorm:"column:pcs_per_kanban"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("supplier_item").
+		Select("pcs_per_kanban").
+		Where("uniq_code = ? AND status = 'active' AND deleted_at IS NULL", uniqCode).
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.PcsPerKanban, nil
 }

@@ -222,6 +222,7 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 		UniqCode:   req.UniqCode,
 		PartName:   req.PartName,
 		PartNumber: req.PartNumber,
+		Model:      req.Model,
 		Uom:        req.Uom,
 		Status:     "Draft",
 	}
@@ -371,6 +372,7 @@ func (s *service) resolveOrCreateItem(ctx context.Context, c models.ChildInput) 
 		UniqCode:   *c.UniqCode,
 		PartName:   *c.PartName,
 		PartNumber: c.PartNumber,
+		Model:      c.Model,
 		Uom:        *c.Uom,
 		Status:     "Draft",
 	}
@@ -525,6 +527,7 @@ func (s *service) GetBomDetail(ctx context.Context, bomID int64) (*models.BomDet
 		UniqCode:    parent.UniqCode,
 		PartName:    parent.PartName,
 		PartNumber:  parent.PartNumber,
+		Model:       parent.Model,
 		Status:      parent.Status,
 		Description: bom.Description,
 		Asset:       s.buildAssetInfo(preload.assetByItemID(parent.ID)),
@@ -563,6 +566,10 @@ func (s *service) UpdateBom(ctx context.Context, bomID int64, req models.UpdateB
 	}
 	if req.PartNumber != nil {
 		item.PartNumber = req.PartNumber
+		itemChanged = true
+	}
+	if req.Model != nil {
+		item.Model = req.Model
 		itemChanged = true
 	}
 	if req.Status != nil {
@@ -858,6 +865,7 @@ func (s *service) buildDetailTree(lines []models.BomLine, preload *bomPreload, p
 			UniqCode:   child.UniqCode,
 			PartName:   child.PartName,
 			PartNumber: child.PartNumber,
+			Model:      child.Model,
 			Level:      level,
 			QPU:        line.QtyPerUniq,
 			Asset:      s.buildAssetInfo(preload.assetByItemID(child.ID)),

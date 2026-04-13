@@ -84,6 +84,7 @@ type BomDetailChild struct {
 	UniqCode      string               `json:"uniq_code"`
 	PartName      string               `json:"part_name"`
 	PartNumber    *string              `json:"part_number"`
+	Model         *string              `json:"model"`
 	Level         int16                `json:"level"`
 	QPU           float64              `json:"qty_per_uniq"`
 	Version       *string              `json:"version"`
@@ -102,6 +103,7 @@ type BomDetailResponse struct {
 	UniqCode      string               `json:"uniq_code"`
 	PartName      string               `json:"part_name"`
 	PartNumber    *string              `json:"part_number"`
+	Model         *string              `json:"model"`
 	Version       *string              `json:"version"`
 	Asset         AssetInfo            `json:"asset"`
 	Status        string               `json:"status"`

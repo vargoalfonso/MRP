@@ -70,6 +70,7 @@ type Item struct {
 	UniqCode        string    `gorm:"size:64;uniqueIndex;not null"`
 	PartNumber      *string   `gorm:"size:128"`
 	PartName        string    `gorm:"size:255;not null"`
+	Model           *string   `gorm:"size:128"`
 	Uom             string    `gorm:"column:uom;size:32"`
 	CurrentRevision *string   `gorm:"size:32"`
 	Status          string    `gorm:"size:20;default:Active"`

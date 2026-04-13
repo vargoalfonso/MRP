@@ -42,6 +42,7 @@ type ChildInput struct {
 	UniqCode   *string `json:"uniq_code"`
 	PartName   *string `json:"part_name"`
 	PartNumber *string `json:"part_number"`
+	Model      *string `json:"model"`
 	Uom        *string `json:"uom"`
 
 	// BOM line
@@ -65,6 +66,7 @@ type CreateBomRequest struct {
 	UniqCode    string  `json:"uniq_code" validate:"required,max=64"`
 	PartName    string  `json:"part_name" validate:"required,max=255"`
 	PartNumber  *string `json:"part_number"`
+	Model       *string `json:"model"`
 	Uom         string  `json:"uom" validate:"required,max=32"`
 	Status      string  `json:"status" validate:"omitempty,oneof=Active Inactive"`
 	Description *string `json:"description"`
@@ -89,6 +91,7 @@ type CreateBomRequest struct {
 type UpdateBomRequest struct {
 	PartName    *string `json:"part_name"  validate:"omitempty,max=255"`
 	PartNumber  *string `json:"part_number"`
+	Model       *string `json:"model"`
 	Status      *string `json:"status"     validate:"omitempty,oneof=Active Inactive"`
 	Description *string `json:"description"`
 	BomStatus   *string `json:"bom_status" validate:"omitempty,oneof=Draft Released Obsolete"`

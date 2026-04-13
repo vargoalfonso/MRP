@@ -656,8 +656,111 @@ func (s *service) ListIncoming(ctx context.Context, dnType string, p pagination.
 // Kanban Summary
 // ---------------------------------------------------------------------------
 
+const (
+	kanbanDefaultPkgQty = 10  // pcs per package until supplier package table is ready
+	kanbanHighRatio     = 2.0 // overstock threshold = safety_stock * highRatio
+)
+
 func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error) {
-	return s.repo.GetKanbanSummary(ctx, uniqCode)
+	// 1. Load only the persistent stock data from raw_materials.
+	//    Derived/computed columns (safety_stock_qty, kanban_standard_qty, daily_usage_qty,
+	//    status, stock_days, buy_not_buy) are intentionally NOT read here because they
+	//    will be dropped — all values are computed from the parameter tables below.
+	rm, err := s.repo.GetRawMaterialByUniqCode(ctx, uniqCode)
+	if err != nil {
+		// Item not found — return a zero summary so the frontend row still renders.
+		return &invModels.KanbanSummary{
+			UniqCode:  uniqCode,
+			Status:    "normal",
+			BuyNotBuy: "n/a",
+		}, nil
+	}
+
+	stockQty := rm.StockQty
+
+	// 2. Kanban pcs per package — from supplier_item.pcs_per_kanban, fallback to 50.
+	kanbanPkgQty := kanbanDefaultPkgQty
+	if pkgQty, err := s.repo.GetKanbanPkgQty(ctx, uniqCode); err == nil && pkgQty > 0 {
+		kanbanPkgQty = pkgQty
+	}
+	kanbanPkgF := float64(kanbanPkgQty)
+
+	// 3. Resolve daily_usage and safety_stock — two paths, pick one:
+	//
+	//   PATH A — safety_stock_parameter is active for this item:
+	//     daily_usage  = (PRL + PO) / working_days
+	//     safety_stock = daily_usage × constanta
+	//
+	//   PATH B — no parameter configured:
+	//     daily_usage  = forecasted_usage_per_day from forecast_results (historical)
+	//     safety_stock = 0  (no threshold → no buy recommendation yet)
+
+	safetyStockQty := 0.0
+	var dailyUsage float64
+
+	param, paramErr := s.repo.GetSafetyStockParam(ctx, uniqCode)
+	if paramErr == nil && param != nil {
+		// PATH A: parameter active — derive daily usage from PRL + PO demand.
+		workingDays, _ := s.repo.GetActiveWorkingDays(ctx)
+		if workingDays <= 0 {
+			workingDays = 20
+		}
+		prl, _ := s.repo.GetPRLQtyByUniqCode(ctx, uniqCode)
+		po, _ := s.repo.GetActivePOQtyByUniqCode(ctx, uniqCode)
+		dailyUsage = (prl + po) / float64(workingDays)
+		safetyStockQty = dailyUsage * param.Constanta
+	} else {
+		// PATH B: no parameter — fall back to historical forecast per day.
+		dailyUsage, _ = s.repo.GetForecastDailyUsage(ctx, uniqCode)
+	}
+
+	// 4. Kanban metrics.
+	totalKanban := int64(stockQty / kanbanPkgF)
+
+	deficit := safetyStockQty - stockQty
+	var kanbansNeeded int64
+	var stockToComplete float64
+	if deficit > 0 {
+		kanbansNeeded = int64((deficit + kanbanPkgF - 1) / kanbanPkgF) // ceil
+		stockToComplete = float64(kanbansNeeded) * kanbanPkgF
+	}
+
+	// 5. Status.
+	status := "normal"
+	if stockQty < safetyStockQty {
+		status = "low_on_stock"
+	} else if safetyStockQty > 0 && stockQty > safetyStockQty*kanbanHighRatio {
+		status = "overstock"
+	}
+
+	// 6. Buy / Not Buy.
+	buyNotBuy := "not_buy"
+	if rm.RawMaterialType == "ssp" {
+		buyNotBuy = "n/a"
+	} else if stockQty < safetyStockQty {
+		buyNotBuy = "buy"
+	}
+
+	// 7. Stock days = floor(stock / max(1, daily_usage)).
+	//    max(1, ...) prevents division-by-zero when no demand data exists.
+	var stockDays *int
+	if dailyUsage > 0 {
+		d := int(stockQty / dailyUsage)
+		stockDays = &d
+	}
+
+	return &invModels.KanbanSummary{
+		UniqCode:        uniqCode,
+		StockQty:        stockQty,
+		TotalKanban:     totalKanban,
+		KanbansNeeded:   kanbansNeeded,
+		StockToComplete: stockToComplete,
+		KanbanPkgQty:    kanbanPkgQty,
+		SafetyStockQty:  safetyStockQty,
+		Status:          status,
+		BuyNotBuy:       buyNotBuy,
+		StockDays:       stockDays,
+	}, nil
 }
 
 // ---------------------------------------------------------------------------

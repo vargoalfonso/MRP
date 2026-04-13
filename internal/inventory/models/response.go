@@ -7,12 +7,26 @@ import "time"
 // ---------------------------------------------------------------------------
 
 // KanbanSummary is returned by GET /api/v1/inventory/kanban-summary?uniq_code=X
-// Frontend calls this per-row asynchronously to show kanban progress per item in a DN.
+// Frontend calls this per-row asynchronously to show kanban progress and stock status per item.
 type KanbanSummary struct {
-	UniqCode         string `json:"uniq_code"`
-	TotalKanban      int64  `json:"total_kanban"`      // COUNT(DISTINCT kanban_id) across all DNs
-	IncompleteKanban int64  `json:"incomplete_kanban"` // kanban where qty_received < quantity
-	StockToComplete  int64  `json:"stock_to_complete"` // SUM(quantity - qty_received) for incomplete rows
+	UniqCode string `json:"uniq_code"`
+
+	// Stock expressed in kanban units
+	StockQty    float64 `json:"stock_qty"`     // raw stock qty in UoM
+	TotalKanban int64   `json:"total_kanban"`  // floor(stock_qty / kanban_pkg_qty)
+
+	// How many more kanbans must be ordered to reach safety stock
+	KanbansNeeded   int64   `json:"kanbans_needed"`    // ceil(deficit / kanban_pkg_qty), 0 if no deficit
+	StockToComplete float64 `json:"stock_to_complete"` // kanbans_needed × kanban_pkg_qty (pcs)
+	KanbanPkgQty    int     `json:"kanban_pkg_qty"`    // pcs per kanban/package
+
+	// Safety stock threshold (computed from parameter or stored value)
+	SafetyStockQty float64 `json:"safety_stock_qty"`
+
+	// Status & buy recommendation
+	Status    string `json:"status"`     // low_on_stock | normal | overstock
+	BuyNotBuy string `json:"buy_not_buy"` // buy | not_buy | n/a
+	StockDays *int   `json:"stock_days"` // floor(stock_qty / daily_usage_qty)
 }
 
 type InventoryPagination struct {
