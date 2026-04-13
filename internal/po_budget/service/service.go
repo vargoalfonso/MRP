@@ -11,6 +11,8 @@ import (
 	"github.com/ganasa18/go-template/internal/po_budget/models"
 	"github.com/ganasa18/go-template/internal/po_budget/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/approval"
+	"gorm.io/gorm"
 )
 
 // IService is the business-logic contract for PO Budget.
@@ -56,11 +58,12 @@ type IService interface {
 
 type svc struct {
 	repo     repository.IRepository
+	db       *gorm.DB
 	robotURL string // ROBOT_SPLIT_URL env
 }
 
-func New(r repository.IRepository, robotURL string) IService {
-	return &svc{repo: r, robotURL: robotURL}
+func New(r repository.IRepository, db *gorm.DB, robotURL string) IService {
+	return &svc{repo: r, db: db, robotURL: robotURL}
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +167,17 @@ func (s *svc) CreateEntry(ctx context.Context, req models.CreateEntryRequest, cr
 	}
 	if err := s.repo.CreateLog(ctx, &models.POBudgetEntryLog{EntryID: e.ID, Action: "Submitted", Username: &cb, Notes: strPtr("Submitted for approval")}); err != nil {
 		return nil, apperror.InternalWrap("database error", err)
+	}
+
+	// Create approval instance (MinLevels=1 — single-level approval is sufficient).
+	if _, err := approval.CreateInstance(ctx, s.db, approval.CreateInstanceParams{
+		ActionName:     "po-budget",
+		ReferenceTable: "po_budget_entries",
+		ReferenceID:    e.ID,
+		SubmittedBy:    createdBy,
+		MinLevels:      1,
+	}); err != nil {
+		return nil, err
 	}
 
 	// Re-fetch to get generated columns
@@ -1055,6 +1069,18 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 	if len(entries) > 0 {
 		if err := s.repo.BulkCreateEntries(ctx, entries); err != nil {
 			return nil, apperror.InternalWrap("database error", err)
+		}
+		// Create one approval instance per entry (MinLevels=1).
+		for _, e := range entries {
+			if _, err := approval.CreateInstance(ctx, s.db, approval.CreateInstanceParams{
+				ActionName:     "po-budget",
+				ReferenceTable: "po_budget_entries",
+				ReferenceID:    e.ID,
+				SubmittedBy:    createdBy,
+				MinLevels:      1,
+			}); err != nil {
+				return nil, err
+			}
 		}
 	}
 
