@@ -132,7 +132,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	roleHTTPHandler := roleHandler.New(roleSvc)
 
 	employeeRepo := employeeRepository.New(db)
-	employeeSvc := employeeService.New(employeeRepo)
+	employeeSvc := employeeService.New(employeeRepo, authRepo)
 	employeeHTTPHandler := employeeHandler.New(employeeSvc)
 
 	userRepo := userRepository.New(db)
@@ -191,7 +191,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	poSplitSettingHTTPHandler := poSplitSettingHandler.New(poSplitSettingSvc)
 
 	approvalWorkflowRepo := approvalWorkflowRepository.New(db)
-	approvalWorkflowSvc := approvalWorkflowService.New(approvalWorkflowRepo)
+	approvalWorkflowSvc := approvalWorkflowService.New(approvalWorkflowRepo, roleRepo)
 	approvalWorkflowHTTPHandler := approvalWorkflowHandler.New(approvalWorkflowSvc)
 
 	globalParameterRepo := globalParameterRepository.New(db)
@@ -207,7 +207,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	kanbanHTTPHandler := kanbanHandler.New(kanbanSvc)
 
 	deliveryNoteRepo := deliveryNoteRepository.New(db)
-	deliveryNoteSvc := deliveryNoteService.New(deliveryNoteRepo, db)
+	deliveryNoteSvc := deliveryNoteService.New(deliveryNoteRepo, db, approvalWorkflowRepo)
 	deliveryNoteHTTPHandler := deliveryNoteHandler.New(deliveryNoteSvc)
 
 	modules := []appmodule.HTTPModule{

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/ganasa18/go-template/internal/approval_workflow/models"
 	"gorm.io/gorm"
@@ -11,9 +12,12 @@ import (
 type IApprovalWorkflowRepository interface {
 	FindAll(ctx context.Context) ([]models.ApprovalWorkflow, error)
 	FindByID(ctx context.Context, id int64) (*models.ApprovalWorkflow, error)
+	FindByActionName(ctx context.Context, actionName string) (*models.ApprovalWorkflow, error)
 	Create(ctx context.Context, req models.CreateApprovalWorkflowRequest) (*models.ApprovalWorkflow, error)
 	Update(ctx context.Context, id int64, req models.UpdateApprovalWorkflowRequest) (*models.ApprovalWorkflow, error)
 	Delete(ctx context.Context, id int64) error
+	CreateInstance(ctx context.Context, tx *gorm.DB, data *models.ApprovalInstance) error
+	ResetInstancesByWorkflow(ctx context.Context, workflowID int64, progress models.ApprovalProgress, maxLevel int) error
 }
 
 type repository struct {
@@ -22,6 +26,38 @@ type repository struct {
 
 func New(db *gorm.DB) IApprovalWorkflowRepository {
 	return &repository{db: db}
+}
+
+func (r *repository) CreateInstance(ctx context.Context, tx *gorm.DB, data *models.ApprovalInstance) error {
+	return r.db.WithContext(ctx).Create(data).Error
+}
+
+func (r *repository) FindByActionName(ctx context.Context, actionName string) (*models.ApprovalWorkflow, error) {
+	var approvalWorkflow models.ApprovalWorkflow
+
+	err := r.db.WithContext(ctx).
+		Where("action_name = ?", actionName).
+		First(&approvalWorkflow).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &approvalWorkflow, nil
+}
+
+func (r *repository) ResetInstancesByWorkflow(ctx context.Context, workflowID int64, progress models.ApprovalProgress, maxLevel int) error {
+
+	return r.db.WithContext(ctx).
+		Model(&models.ApprovalInstance{}).
+		Where("approval_workflow_id = ?", workflowID).
+		Updates(map[string]interface{}{
+			"approval_progress": progress,
+			"current_level":     1,
+			"max_level":         maxLevel,
+			"status":            "pending",
+			"updated_at":        time.Now(),
+		}).Error
 }
 
 func (r *repository) FindAll(ctx context.Context) ([]models.ApprovalWorkflow, error) {

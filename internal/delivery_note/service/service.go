@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	workflowModels "github.com/ganasa18/go-template/internal/approval_workflow/models"
+	approvalRepo "github.com/ganasa18/go-template/internal/approval_workflow/repository"
 	"github.com/ganasa18/go-template/internal/delivery_note/models"
 	deliveryNoteRepo "github.com/ganasa18/go-template/internal/delivery_note/repository"
 	"github.com/skip2/go-qrcode"
@@ -25,14 +27,16 @@ type IDeliveryNoteService interface {
 
 // implementation
 type deliveryNoteService struct {
-	repo deliveryNoteRepo.IDeliveryNoteRepository
-	db   *gorm.DB
+	repo         deliveryNoteRepo.IDeliveryNoteRepository
+	db           *gorm.DB
+	approvalRepo approvalRepo.IApprovalWorkflowRepository
 }
 
-func New(repo deliveryNoteRepo.IDeliveryNoteRepository, db *gorm.DB) IDeliveryNoteService {
+func New(repo deliveryNoteRepo.IDeliveryNoteRepository, db *gorm.DB, approvalRepo approvalRepo.IApprovalWorkflowRepository) IDeliveryNoteService {
 	return &deliveryNoteService{
-		repo: repo,
-		db:   db,
+		repo:         repo,
+		db:           db,
+		approvalRepo: approvalRepo,
 	}
 }
 
@@ -112,6 +116,37 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 		}
 
 		if err := s.repo.Create(ctx, tx, &dn); err != nil {
+			return err
+		}
+
+		workflow, err := s.approvalRepo.FindByActionName(ctx, "Delivery Note")
+		if err != nil {
+			return fmt.Errorf("workflow belum dibuat oleh operator")
+		}
+
+		// ==============================
+		// 🔥 BUILD APPROVAL
+		// ==============================
+		progress, maxLevel := BuildApprovalProgress(*workflow)
+
+		// ==============================
+		// 🔥 CREATE APPROVAL INSTANCE
+		// ==============================
+		instance := workflowModels.ApprovalInstance{
+			ActionName:         workflow.ActionName,
+			ReferenceTable:     "delivery_notes",
+			ReferenceID:        dn.ID,
+			ApprovalWorkflowID: workflow.ID,
+			CurrentLevel:       1,
+			MaxLevel:           maxLevel,
+			Status:             "pending",
+			SubmittedBy:        "system",
+			ApprovalProgress:   progress,
+			CreatedAt:          time.Now(),
+			UpdatedAt:          time.Now(),
+		}
+
+		if err := s.approvalRepo.CreateInstance(ctx, tx, &instance); err != nil {
 			return err
 		}
 
@@ -466,4 +501,39 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.CreateDN
 		TotalDNIncoming: int64(totalIncoming),
 		Items:           items,
 	}, nil
+}
+
+func BuildApprovalProgress(workflow workflowModels.ApprovalWorkflow) (workflowModels.ApprovalProgress, int) {
+
+	roles := []string{
+		workflow.Level1Role,
+		workflow.Level2Role,
+		workflow.Level3Role,
+		workflow.Level4Role,
+	}
+
+	var levels []workflowModels.ApprovalLevel
+	maxLevel := 0
+
+	for i, role := range roles {
+		level := i + 1
+
+		status := "pending"
+		if role == "" {
+			status = "skipped"
+		} else {
+			maxLevel = level
+		}
+
+		levels = append(levels, workflowModels.ApprovalLevel{
+			Note:       "",
+			Role:       role,
+			Level:      level,
+			Status:     status,
+			ApprovedAt: "",
+			ApprovedBy: "",
+		})
+	}
+
+	return workflowModels.ApprovalProgress{Levels: levels}, maxLevel
 }

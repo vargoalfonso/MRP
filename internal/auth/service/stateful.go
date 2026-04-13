@@ -13,6 +13,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Redis key schema:
@@ -160,3 +161,59 @@ func (s *stateful) issueTokenPair(ctx context.Context, userID string, roles []st
 
 func refreshKey(jti string) string { return fmt.Sprintf("refresh:%s", jti) }
 func revokedKey(jti string) string { return fmt.Sprintf("revoked:%s", jti) }
+
+func (s *stateful) SetPassword(ctx context.Context, token string, password string, confirm string) error {
+
+	// ==============================
+	// 🔥 VALIDASI PASSWORD MATCH
+	// ==============================
+	if password != confirm {
+		return fmt.Errorf("password dan konfirmasi password tidak sama")
+	}
+
+	if len(password) < 6 {
+		return fmt.Errorf("password minimal 6 karakter")
+	}
+
+	// ==============================
+	// 🔥 AMBIL TOKEN
+	// ==============================
+	act, err := s.repo.FindValidActivation(ctx, token)
+	if err != nil {
+		return fmt.Errorf("token tidak valid")
+	}
+
+	if act.Used {
+		return fmt.Errorf("token sudah digunakan")
+	}
+
+	if time.Now().After(act.ExpiredAt) {
+		return fmt.Errorf("token expired")
+	}
+
+	// ==============================
+	// 🔥 HASH PASSWORD
+	// ==============================
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	// ==============================
+	// 🔥 UPDATE USER
+	// ==============================
+	err = s.repo.UpdateUserPassword(ctx, act.UserID, string(hashed))
+	if err != nil {
+		return err
+	}
+
+	// ==============================
+	// 🔥 MARK TOKEN USED
+	// ==============================
+	err = s.repo.MarkTokenUsed(ctx, act.ID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

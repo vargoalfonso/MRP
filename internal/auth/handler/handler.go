@@ -163,3 +163,52 @@ func (h *HTTPHandler) Logout(appCtx *app.Context) *app.CostumeResponse {
 		Message:   "logged out successfully",
 	}
 }
+
+func (h *HTTPHandler) SetPassword(appCtx *app.Context) *app.CostumeResponse {
+	var req models.SetPasswordRequest
+
+	// ==============================
+	// 🔥 1. BIND REQUEST
+	// ==============================
+	if err := appCtx.BindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request",
+		}
+	}
+
+	// ==============================
+	// 🔥 2. VALIDASI PASSWORD MATCH
+	// ==============================
+	if req.Password != req.ConfirmPassword {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "password dan konfirmasi tidak sama",
+		}
+	}
+
+	// ==============================
+	// 🔥 3. CALL SERVICE
+	// ==============================
+	err := h.auth.SetPassword(
+		appCtx.Request.Context(),
+		req.Token,
+		req.Password,
+		req.ConfirmPassword,
+	)
+
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	// ==============================
+	// 🔥 4. RESPONSE
+	// ==============================
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "password berhasil dibuat",
+	}
+}
