@@ -25,15 +25,16 @@ func (r *repo) postToInventoryByDNType(
 	approvedQty int,
 	weightKg *float64,
 	uom *string,
+	warehouseLocation *string,
 	createdBy string,
 ) error {
 	createdBy = normalizeActor(createdBy)
 
 	switch strings.ToUpper(strings.TrimSpace(dnType)) {
 	case "RM", "RAW MATERIAL":
-		return r.upsertRawMaterial(tx, itemUniqCode, float64(approvedQty), weightKg, uom, createdBy)
+		return r.upsertRawMaterial(tx, itemUniqCode, float64(approvedQty), weightKg, uom, warehouseLocation, createdBy)
 	case "IB", "INDIRECT", "INDIRECT RAW MATERIAL":
-		return r.upsertIndirectRawMaterial(tx, itemUniqCode, float64(approvedQty), weightKg, uom, createdBy)
+		return r.upsertIndirectRawMaterial(tx, itemUniqCode, float64(approvedQty), weightKg, uom, warehouseLocation, createdBy)
 	case "SC", "SUBCON", "SUBCON MATERIAL", "SUBCON RAW MATERIAL", "SUB CON", "SUB-CON":
 		return r.upsertSubconInventory(tx, itemUniqCode, float64(approvedQty), weightKg, uom, createdBy)
 	default:
@@ -61,6 +62,7 @@ func (r *repo) upsertRawMaterial(
 	approvedQty float64,
 	weightKg *float64,
 	uom *string,
+	warehouseLocation *string,
 	createdBy string,
 ) error {
 	var rm invModels.RawMaterial
@@ -75,19 +77,25 @@ func (r *repo) upsertRawMaterial(
 		partNumber, partName, materialType := lookupPOItem(tx, itemUniqCode)
 		now := time.Now()
 		rm = invModels.RawMaterial{
-			UUID:            uuid.New(),
-			UniqCode:        itemUniqCode,
-			PartNumber:      partNumber,
-			PartName:        partName,
-			RawMaterialType: func() string { if materialType != nil { return *materialType }; return "" }(),
-			RMSource:        "supplier",
-			UOM:             uom,
-			StockQty:        approvedQty,
-			Status:          "normal",
-			BuyNotBuy:       "not_buy",
-			CreatedBy:       &createdBy,
-			CreatedAt:       now,
-			UpdatedAt:       now,
+			UUID:       uuid.New(),
+			UniqCode:   itemUniqCode,
+			PartNumber: partNumber,
+			PartName:   partName,
+			RawMaterialType: func() string {
+				if materialType != nil {
+					return *materialType
+				}
+				return ""
+			}(),
+			RMSource:          "supplier",
+			UOM:               uom,
+			WarehouseLocation: warehouseLocation,
+			StockQty:          approvedQty,
+			Status:            "normal",
+			BuyNotBuy:         "not_buy",
+			CreatedBy:         &createdBy,
+			CreatedAt:         now,
+			UpdatedAt:         now,
 		}
 
 		if weightKg != nil {
@@ -165,6 +173,7 @@ func (r *repo) upsertIndirectRawMaterial(
 	approvedQty float64,
 	weightKg *float64,
 	uom *string,
+	warehouseLocation *string,
 	createdBy string,
 ) error {
 	var irm invModels.IndirectRawMaterial
@@ -177,17 +186,18 @@ func (r *repo) upsertIndirectRawMaterial(
 		partNumber, partName, _ := lookupPOItem(tx, itemUniqCode)
 		now := time.Now()
 		irm = invModels.IndirectRawMaterial{
-			UUID:      uuid.New(),
-			UniqCode:  itemUniqCode,
-			PartNumber: partNumber,
-			PartName:  partName,
-			UOM:       uom,
-			StockQty:  approvedQty,
-			Status:    stringPtr("normal"),
-			BuyNotBuy: "not_buy",
-			CreatedBy: &createdBy,
-			CreatedAt: now,
-			UpdatedAt: now,
+			UUID:              uuid.New(),
+			UniqCode:          itemUniqCode,
+			PartNumber:        partNumber,
+			PartName:          partName,
+			UOM:               uom,
+			WarehouseLocation: warehouseLocation,
+			StockQty:          approvedQty,
+			Status:            stringPtr("normal"),
+			BuyNotBuy:         "not_buy",
+			CreatedBy:         &createdBy,
+			CreatedAt:         now,
+			UpdatedAt:         now,
 		}
 
 		if weightKg != nil {

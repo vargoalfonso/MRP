@@ -26,6 +26,10 @@ type IncomingScanRequest struct {
 
 	// DeltaWeightKg is optional; used for weight-tracked items (e.g. wire/sheet).
 	DeltaWeightKg *float64 `json:"delta_weight"`
+
+	// WarehouseLocation is optional; destination warehouse for this incoming material.
+	// Stored on the scan record and used to populate warehouse_location in inventory on QC approval.
+	WarehouseLocation *string `json:"warehouse_location"`
 }
 
 // IncomingLookupRequest resolves packing_number → DN context for UI auto-fill.

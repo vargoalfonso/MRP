@@ -11,6 +11,7 @@ import (
 	"github.com/ganasa18/go-template/internal/billmaterial/models"
 	"github.com/ganasa18/go-template/internal/billmaterial/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/approval"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/google/uuid"
 )
@@ -287,7 +288,7 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 	if wf == nil {
 		return nil, apperror.BadRequest("no active approval workflow configured for action 'bom'")
 	}
-	maxLevel := wfMaxLevel(wf)
+	maxLevel := approval.MaxLevel(wf)
 	if maxLevel < 2 {
 		return nil, apperror.BadRequest("approval workflow 'bom' must have at least 2 levels configured")
 	}
@@ -299,7 +300,7 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 		CurrentLevel:       1,
 		MaxLevel:           maxLevel,
 		Status:             "pending",
-		ApprovalProgress:   buildApprovalProgress(wf, maxLevel),
+		ApprovalProgress:   approval.BuildProgress(wf, maxLevel),
 	}
 	if err := s.repo.CreateApprovalInstance(ctx, instance); err != nil {
 		return nil, err
@@ -1110,11 +1111,11 @@ func (s *service) ApproveBom(ctx context.Context, bomID int64, userID string, us
 		return nil, err
 	}
 
-	requiredRole := wfLevelRole(wf, int16(instance.CurrentLevel))
+	requiredRole := approval.LevelRole(wf, int16(instance.CurrentLevel))
 	if requiredRole == "" {
 		return nil, apperror.BadRequest(fmt.Sprintf("no role configured for approval level %d", instance.CurrentLevel))
 	}
-	if !bomHasRole(userRoles, requiredRole) {
+	if !approval.HasRole(userRoles, requiredRole) {
 		return nil, apperror.Forbidden(fmt.Sprintf(
 			"level %d approval requires role '%s'", instance.CurrentLevel, requiredRole,
 		))
@@ -1164,67 +1165,4 @@ func (s *service) ApproveBom(ctx context.Context, bomID int64, userID string, us
 	return instance, nil
 }
 
-// buildApprovalProgress builds the initial JSONB progress from the workflow config.
-// Levels up to maxLevel are set to "pending"; the rest are "skipped".
-func buildApprovalProgress(wf *awmodels.ApprovalWorkflow, maxLevel int) awmodels.ApprovalProgress {
-	roles := []string{wf.Level1Role, wf.Level2Role, wf.Level3Role, wf.Level4Role}
-	levels := make([]awmodels.ApprovalLevelProgress, 4)
-	for i := 0; i < 4; i++ {
-		lvl := i + 1
-		status := "skipped"
-		if lvl <= maxLevel {
-			status = "pending"
-		}
-		levels[i] = awmodels.ApprovalLevelProgress{
-			Level:  lvl,
-			Role:   roles[i],
-			Status: status,
-		}
-	}
-	return awmodels.ApprovalProgress{Levels: levels}
-}
 
-// wfLevelRole returns the role required for a given level from the master workflow.
-func wfLevelRole(wf *awmodels.ApprovalWorkflow, level int16) string {
-	if wf == nil {
-		return ""
-	}
-	switch level {
-	case 1:
-		return wf.Level1Role
-	case 2:
-		return wf.Level2Role
-	case 3:
-		return wf.Level3Role
-	case 4:
-		return wf.Level4Role
-	}
-	return ""
-}
-
-// wfMaxLevel returns the highest configured level (non-empty role) in the workflow.
-func wfMaxLevel(wf *awmodels.ApprovalWorkflow) int {
-	if wf == nil {
-		return 1
-	}
-	max := 1
-	if wf.Level2Role != "" {
-		max = 2
-	}
-	if wf.Level3Role != "" {
-		max = 3
-	}
-	if wf.Level4Role != "" {
-		max = 4
-	}
-	return max
-}
-
-func bomHasRole(userRoles []string, required string) bool {
-	for _, r := range userRoles {
-		if r == required {
-			return true
-		}
-	}
-	return false
-}

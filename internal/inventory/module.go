@@ -69,13 +69,13 @@ func NewHTTPModule(
 //
 // Subcon Inventory:
 //
-//	GET    /subcon                         stock in vendor list
-//	POST   /subcon                         create
-//	GET    /subcon/received                stock received from vendor
-//	GET    /subcon/:id                     detail
-//	PUT    /subcon/:id                     update
-//	DELETE /subcon/:id                     soft delete
-//	GET    /subcon/:id/history             movement logs
+//	GET    /subcon-materials                         stock in vendor list
+//	POST   /subcon-materials                         create
+//	GET    /subcon-materials/received                stock received from vendor
+//	GET    /subcon-materials/:id                     detail
+//	PUT    /subcon-materials/:id                     update
+//	DELETE /subcon-materials/:id                     soft delete
+//	GET    /subcon-materials/:id/history             movement logs
 func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	auth := authMiddleware.JWTMiddleware(m.authenticator)
 	perm := func(resource, action string) gin.HandlerFunc {
@@ -109,7 +109,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	ind.GET("/:id/history", perm("inventory", "view"), m.base.RunAction(m.handler.GetIndirectHistory))
 
 	// --- Subcon Inventory ---
-	sc := g.Group("/subcon")
+	sc := g.Group("/subcon-materials")
 	sc.GET("", perm("inventory", "view"), m.base.RunAction(m.handler.ListSubconInventory))
 	sc.POST("", perm("inventory", "create"), m.base.RunAction(m.handler.CreateSubconInventory))
 	// NOTE: /received must be registered before /:id
@@ -118,4 +118,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	sc.PUT("/:id", perm("inventory", "update"), m.base.RunAction(m.handler.UpdateSubconInventory))
 	sc.DELETE("/:id", perm("inventory", "delete"), m.base.RunAction(m.handler.DeleteSubconInventory))
 	sc.GET("/:id/history", perm("inventory", "view"), m.base.RunAction(m.handler.GetSubconHistory))
+
+	// --- Kanban Summary (async per-row, used by DN list UI) ---
+	g.GET("/kanban-summary", perm("inventory", "view"), m.base.RunAction(m.handler.GetKanbanSummary))
 }
