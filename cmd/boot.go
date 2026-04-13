@@ -46,6 +46,10 @@ import (
 	kanbanService "github.com/ganasa18/go-template/internal/kanban/service"
 	appmodule "github.com/ganasa18/go-template/internal/module"
 	poBudgetModule "github.com/ganasa18/go-template/internal/po_budget"
+	procModule "github.com/ganasa18/go-template/internal/procurement"
+	procHandler "github.com/ganasa18/go-template/internal/procurement/handler"
+	procRepository "github.com/ganasa18/go-template/internal/procurement/repository"
+	procService "github.com/ganasa18/go-template/internal/procurement/service"
 	poBudgetHandler "github.com/ganasa18/go-template/internal/po_budget/handler"
 	poBudgetRepository "github.com/ganasa18/go-template/internal/po_budget/repository"
 	poBudgetService "github.com/ganasa18/go-template/internal/po_budget/service"
@@ -138,6 +142,11 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	poBudgetSvc := poBudgetService.New(poBudgetRepo)
 	poBudgetHTTPHandler := poBudgetHandler.New(poBudgetSvc)
 
+	// Procurement module
+	procRepo := procRepository.New(db)
+	procSvc := procService.New(procRepo)
+	procHTTPHandler := procHandler.New(procSvc)
+
 	safetyStockRepository := safetyStockRepo.New(db)
 	safetyStockService := safetyStockService.New(safetyStockRepository)
 	safetyStockHandler := safetyStockHandler.New(safetyStockService)
@@ -184,6 +193,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		employeeModule.NewHTTPModule(cfg, baseHTTPHandler, employeeHTTPHandler, authSvc, roleSvc, employeeSvc),
 		userModule.NewHTTPModule(cfg, baseHTTPHandler, userHTTPHandler, authSvc, roleSvc, userSvc),
 		poBudgetModule.NewHTTPModule(cfg, baseHTTPHandler, poBudgetHTTPHandler, authSvc, roleSvc),
+		procModule.NewHTTPModule(cfg, baseHTTPHandler, procHTTPHandler, authSvc, roleSvc),
 		safetyStockModule.NewHTTPModule(cfg, baseHTTPHandler, safetyStockHandler, authSvc, roleSvc, safetyStockService),
 		typeParameterModule.NewHTTPModule(cfg, baseHTTPHandler, typeParameterHTTPHandler, authSvc, roleSvc, typeParameterSvc),
 		UnitMeasureModule.NewHTTPModule(cfg, baseHTTPHandler, unitMeasureHTTPHandler, authSvc, roleSvc, unitMeasureSvc),

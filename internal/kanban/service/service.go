@@ -31,8 +31,15 @@ func New(repo kanbanRepo.IKanbanParameterRepository) IKanbanParameterService {
 // CRUD
 // =========================
 func (s *service) Create(ctx context.Context, req models.CreateKanbanParameterRequest) (*models.KanbanParameter, error) {
-	totalPO := "004"
-	kanbanNumber := fmt.Sprintf("KBN-%s-%d", totalPO, time.Now().Year())
+	totalKanban, err := s.repo.Count(ctx)
+	if err != nil {
+		return nil, err
+	}
+	totalPO := totalKanban + 1
+
+	formatted := fmt.Sprintf("%04d", totalPO)
+
+	kanbanNumber := fmt.Sprintf("KBN-%d-%s", time.Now().Year(), formatted)
 
 	data := models.KanbanParameter{
 		KanbanNumber: kanbanNumber,

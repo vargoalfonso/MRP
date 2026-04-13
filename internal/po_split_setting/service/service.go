@@ -37,10 +37,12 @@ func (s *service) GetByID(ctx context.Context, id int64) (*models.POSplitSetting
 
 func (s *service) Create(ctx context.Context, req models.CreatePOSplitRequest) (*models.POSplitSetting, error) {
 	data := models.POSplitSetting{
+		ItemUniqCode:  req.ItemUniqCode,
 		BudgetType:    req.BudgetType,
 		MinOrderQty:   req.MinOrderQty,
 		MaxSplitLines: req.MaxSplitLines,
 		SplitRule:     req.SplitRule,
+		Type:          req.Type,
 		Status:        req.Status,
 	}
 

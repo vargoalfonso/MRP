@@ -27,6 +27,7 @@ import (
 	"strconv"
 	"strings"
 
+	authModels "github.com/ganasa18/go-template/internal/auth/models"
 	"github.com/ganasa18/go-template/internal/base/app"
 	"github.com/ganasa18/go-template/internal/po_budget/models"
 	"github.com/ganasa18/go-template/internal/po_budget/service"
@@ -70,6 +71,7 @@ func (h *HTTPHandler) ListEntries(ctx *app.Context) *app.CostumeResponse {
 
 	resp, err := h.svc.ListEntries(ctx.Request.Context(), models.ListBudgetQuery{
 		BudgetType:     normalizeBudgetType(budgetType),
+		BudgetSubtype:  p.BudgetSubtype,
 		UniqCode:       p.UniqCode,
 		CustomerID:     p.CustomerID,
 		Period:         p.Period,
@@ -100,12 +102,13 @@ func (h *HTTPHandler) ListAggregated(ctx *app.Context) *app.CostumeResponse {
 	budgetType := ctx.Param("type")
 
 	resp, err := h.svc.ListAggregated(ctx.Request.Context(), models.ListBudgetQuery{
-		BudgetType: normalizeBudgetType(budgetType),
-		UniqCode:   p.UniqCode,
-		CustomerID: p.CustomerID,
-		Period:     p.Period,
-		Page:       p.Page,
-		Limit:      p.Limit,
+		BudgetType:    normalizeBudgetType(budgetType),
+		BudgetSubtype: p.BudgetSubtype,
+		UniqCode:      p.UniqCode,
+		CustomerID:    p.CustomerID,
+		Period:        p.Period,
+		Page:          p.Page,
+		Limit:         p.Limit,
 	})
 	if err != nil {
 		return app.NewError(ctx, err)
@@ -133,7 +136,7 @@ func (h *HTTPHandler) CreateEntry(ctx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
 	}
 
-	createdBy := ctx.GetString("username")
+	createdBy := mustUserID(ctx)
 	result, err := h.svc.CreateEntry(ctx.Request.Context(), req, createdBy)
 	if err != nil {
 		return app.NewError(ctx, err)
@@ -181,6 +184,56 @@ func (h *HTTPHandler) GetEntryDetail(ctx *app.Context) *app.CostumeResponse {
 	if err != nil {
 		return app.NewError(ctx, err)
 	}
+
+	if strings.EqualFold(ctx.Query("format"), "grouped") {
+		e := result.Entry
+		grouped := models.EntryDetailGroupedResponse{
+			BasicInformation: models.EntryBasicInformation{
+				ID:           e.ID,
+				PoBudgetRef:  e.PoBudgetRef,
+				CustomerName: e.CustomerName,
+				Uniq:         e.Uniq,
+				ProductModel: e.ProductModel,
+				PartName:     e.PartName,
+				PartNumber:   e.PartNumber,
+				SupplierName: e.SupplierName,
+				BudgetType:   e.BudgetType,
+				TypeLabel:    e.BudgetSubtype,
+				Period:       e.Period,
+			},
+			BudgetCalculations: models.EntryBudgetCalculations{
+				SalesPlan:       e.SalesPlan,
+				PurchaseRequest: e.PurchaseRequest,
+				PrlAmount:       e.Prl,
+				Po1Pct:          e.Po1Pct,
+				Po2Pct:          e.Po2Pct,
+			},
+			CalculationResults: models.EntryCalculationResults{
+				Po1Amount:   e.Po1Amount,
+				Po2Amount:   e.Po2Amount,
+				TotalPO:     e.TotalPO,
+				ApoPrlAbs:   result.Summary.ApoPrlAbs,
+				ApoPrlState: result.Summary.ApoPrlState,
+			},
+			AdditionalInformation: models.EntryAdditionalInformation{
+				SubmittedBy:     e.SubmittedBy,
+				SubmittedByName: e.SubmittedByName,
+				SubmittedAt:     e.SubmittedAt,
+				ApprovedBy:      e.ApprovedBy,
+				ApprovedByName:  e.ApprovedByName,
+				ApprovedAt:      e.ApprovedAt,
+				Notes:           e.Description,
+			},
+			History: result.History,
+		}
+
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusOK,
+			Message:   http.StatusText(http.StatusOK),
+			Data:      grouped,
+		}
+	}
 	return &app.CostumeResponse{
 		RequestID: ctx.APIReqID,
 		Status:    http.StatusOK,
@@ -203,7 +256,7 @@ func (h *HTTPHandler) UpdateEntry(ctx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body"}
 	}
 
-	updatedBy := ctx.GetString("username")
+	updatedBy := mustUserID(ctx)
 	result, err := h.svc.UpdateEntry(ctx.Request.Context(), id, req, updatedBy)
 	if err != nil {
 		return app.NewError(ctx, err)
@@ -283,9 +336,8 @@ func (h *HTTPHandler) ApproveEntry(ctx *app.Context) *app.CostumeResponse {
 			req.Status = "Approved"
 		}
 	}
-	if req.ApprovedBy == "" {
-		req.ApprovedBy = ctx.GetString("username")
-	}
+	// Always derive from JWT uid, never trust frontend payload.
+	req.ApprovedBy = mustUserID(ctx)
 	if errs := validator.Validate(req); errs != nil {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
 	}
@@ -361,7 +413,7 @@ func (h *HTTPHandler) ImportEntries(ctx *app.Context) *app.CostumeResponse {
 		})
 	}
 
-	createdBy := ctx.GetString("username")
+	createdBy := mustUserID(ctx)
 	result, err := h.svc.ImportEntries(ctx.Request.Context(), budgetType, period, rows, createdBy)
 	if err != nil {
 		return app.NewError(ctx, err)
@@ -479,7 +531,7 @@ func (h *HTTPHandler) BulkCreateFromPRL(ctx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
 	}
 
-	createdBy := ctx.GetString("username")
+	createdBy := mustUserID(ctx)
 	result, err := h.svc.BulkCreateFromPRL(ctx.Request.Context(), budgetType, req, createdBy)
 	if err != nil {
 		return app.NewError(ctx, err)
@@ -506,7 +558,7 @@ func normalizeBudgetType(t string) string {
 }
 
 func parseID(s string) (int64, error) {
-	return strconv.ParseInt(s, 10, 64)
+	return strconv.ParseInt(strings.TrimSpace(s), 10, 64)
 }
 
 func buildColIndex(header []string) map[string]int {
@@ -529,4 +581,16 @@ func csvFloat(rec []string, idx map[string]int, col string) float64 {
 	v := csvVal(rec, idx, col)
 	f, _ := strconv.ParseFloat(v, 64)
 	return f
+}
+
+func mustUserID(ctx *app.Context) string {
+	claimsRaw, ok := ctx.Get("claims")
+	if !ok {
+		return ""
+	}
+	claims, ok := claimsRaw.(*authModels.Claims)
+	if !ok {
+		return ""
+	}
+	return claims.UserID
 }

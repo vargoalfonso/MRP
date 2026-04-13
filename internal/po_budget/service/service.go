@@ -60,6 +60,7 @@ func New(r repository.IRepository) IService { return &svc{repo: r} }
 func (s *svc) ListEntries(ctx context.Context, q models.ListBudgetQuery) (*models.ListEntryResponse, error) {
 	rows, total, err := s.repo.ListEntries(ctx, repository.ListFilter{
 		BudgetType:     q.BudgetType,
+		BudgetSubtype:  q.BudgetSubtype,
 		UniqCode:       q.UniqCode,
 		CustomerID:     q.CustomerID,
 		Period:         q.Period,
@@ -105,6 +106,11 @@ func (s *svc) CreateEntry(ctx context.Context, req models.CreateEntryRequest, cr
 		return nil, err
 	}
 
+	subtype := "regular"
+	if req.BudgetSubtype != nil {
+		subtype = *req.BudgetSubtype
+	}
+
 	periodDate, err := parsePeriod(req.Period)
 	if err != nil {
 		return nil, apperror.BadRequest("invalid period format, use 'Month YYYY', e.g. 'October 2025'")
@@ -112,6 +118,7 @@ func (s *svc) CreateEntry(ctx context.Context, req models.CreateEntryRequest, cr
 
 	e := models.POBudgetEntry{
 		BudgetType:      req.BudgetType,
+		BudgetSubtype:   &subtype,
 		CustomerID:      req.CustomerID,
 		CustomerName:    req.CustomerName,
 		UniqCode:        req.UniqCode,
@@ -189,12 +196,56 @@ func (s *svc) GetEntryDetail(ctx context.Context, budgetType string, id int64) (
 	if err != nil {
 		return nil, apperror.InternalWrap("database error", err)
 	}
+
+	// Resolve uid -> username for display.
+	var uids []string
+	if e.CreatedBy != nil {
+		uids = append(uids, *e.CreatedBy)
+	}
+	if e.ApprovedBy != nil {
+		uids = append(uids, *e.ApprovedBy)
+	}
+	for _, l := range logs {
+		if l.Username != nil {
+			uids = append(uids, *l.Username)
+		}
+	}
+	uidToName, err := s.repo.ResolveUsernames(ctx, uids)
+	if err != nil {
+		return nil, apperror.InternalWrap("database error", err)
+	}
+	if entry.CreatedBy != nil {
+		if name, ok := uidToName[*entry.CreatedBy]; ok {
+			entry.CreatedByName = &name
+		}
+	}
+	if entry.ApprovedBy != nil {
+		if name, ok := uidToName[*entry.ApprovedBy]; ok {
+			entry.ApprovedByName = &name
+		}
+	}
+	if entry.SubmittedBy != nil {
+		if name, ok := uidToName[*entry.SubmittedBy]; ok {
+			entry.SubmittedByName = &name
+		}
+	}
+
 	hist := make([]models.HistoryLogItem, len(logs))
 	for i, l := range logs {
+		uid := l.Username
+		var display *string
+		if uid != nil {
+			if name, ok := uidToName[*uid]; ok {
+				display = &name
+			} else {
+				display = uid
+			}
+		}
 		hist[i] = models.HistoryLogItem{
 			DateTime: l.CreatedAt.Format(time.RFC3339),
 			Action:   l.Action,
-			User:     l.Username,
+			User:     display,
+			UserID:   uid,
 			Notes:    l.Notes,
 		}
 	}
@@ -212,6 +263,9 @@ func (s *svc) UpdateEntry(ctx context.Context, id int64, req models.UpdateEntryR
 	}
 
 	// Apply partial updates
+	if req.BudgetSubtype != nil {
+		e.BudgetSubtype = req.BudgetSubtype
+	}
 	if req.CustomerID != nil {
 		e.CustomerID = req.CustomerID
 	}
@@ -302,15 +356,19 @@ func (s *svc) DeleteEntry(ctx context.Context, id int64) error {
 
 func (s *svc) ListAggregated(ctx context.Context, q models.ListBudgetQuery) (*models.AggregatedResponse, error) {
 	rows, total, err := s.repo.ListAggregated(ctx, repository.AggFilter{
-		BudgetType: q.BudgetType,
-		UniqCode:   q.UniqCode,
-		CustomerID: q.CustomerID,
-		Period:     q.Period,
-		Page:       q.Page,
-		Limit:      q.Limit,
+		BudgetType:    q.BudgetType,
+		BudgetSubtype: q.BudgetSubtype,
+		UniqCode:      q.UniqCode,
+		CustomerID:    q.CustomerID,
+		Period:        q.Period,
+		Page:          q.Page,
+		Limit:         q.Limit,
 	})
 	if err != nil {
 		return nil, apperror.InternalWrap("database error", err)
+	}
+	for i := range rows {
+		rows[i].Uniq = rows[i].UniqCode
 	}
 
 	totalPages := 0
@@ -401,17 +459,34 @@ func (s *svc) ListSplitSettings(ctx context.Context) ([]models.SplitSettingRespo
 }
 
 func (s *svc) UpdateSplitSetting(ctx context.Context, budgetType string, req models.UpdateSplitSettingRequest) (*models.SplitSettingResponse, error) {
-	if req.Po1Pct+req.Po2Pct != 100 {
-		return nil, apperror.BadRequest("po1_pct + po2_pct must equal 100")
-	}
-
 	setting, err := s.repo.GetSplitSetting(ctx, budgetType)
 	if err != nil {
 		return nil, apperror.NotFound(fmt.Sprintf("split setting for %q not found", budgetType))
 	}
 
-	setting.Po1Pct = req.Po1Pct
-	setting.Po2Pct = req.Po2Pct
+	// Update PO1/PO2 only if both provided.
+	if req.Po1Pct != nil || req.Po2Pct != nil {
+		if req.Po1Pct == nil || req.Po2Pct == nil {
+			return nil, apperror.BadRequest("po1_pct and po2_pct must be provided together")
+		}
+		if *req.Po1Pct+*req.Po2Pct != 100 {
+			return nil, apperror.BadRequest("po1_pct + po2_pct must equal 100")
+		}
+		setting.Po1Pct = *req.Po1Pct
+		setting.Po2Pct = *req.Po2Pct
+	}
+	if req.MinOrderQty != nil {
+		setting.MinOrderQty = req.MinOrderQty
+	}
+	if req.MaxSplitLines != nil {
+		setting.MaxSplitLines = req.MaxSplitLines
+	}
+	if req.SplitRule != nil {
+		setting.SplitRule = req.SplitRule
+	}
+	if req.Status != nil {
+		setting.Status = *req.Status
+	}
 	if req.Description != nil {
 		setting.Description = *req.Description
 	}
@@ -558,11 +633,20 @@ func toResponse(e models.POBudgetEntry) models.EntryResponse {
 	if e.TotalPO != 0 {
 		total = e.TotalPO
 	}
+	apoPrl := total - e.Prl
+	state := "match"
+	if apoPrl > 0 {
+		state = "over"
+	} else if apoPrl < 0 {
+		state = "under"
+	}
 	return models.EntryResponse{
 		ID:              e.ID,
+		PoBudgetRef:     firstNonEmpty(e.PoBudgetRef, poBudgetRef(e)),
 		BudgetType:      e.BudgetType,
 		CustomerID:      e.CustomerID,
 		CustomerName:    e.CustomerName,
+		Uniq:            e.UniqCode,
 		UniqCode:        e.UniqCode,
 		ProductModel:    e.ProductModel,
 		MaterialType:    e.MaterialType,
@@ -583,8 +667,13 @@ func toResponse(e models.POBudgetEntry) models.EntryResponse {
 		Po1Qty:          po1,
 		Po2Qty:          po2,
 		TotalPO:         total,
+		Po1Amount:       po1,
+		Po2Amount:       po2,
+		TotalPOAmount:   total,
+		ApoPrlAmount:    apoPrl,
+		ApoPrlState:     state,
 		Prl:             e.Prl,
-		DeltaApoPrl:     total - e.Prl,
+		DeltaApoPrl:     apoPrl,
 		Status:          e.Status,
 		BudgetSubtype:   e.BudgetSubtype,
 		PrlRef:          e.PrlRef,
@@ -599,13 +688,45 @@ func toResponse(e models.POBudgetEntry) models.EntryResponse {
 	}
 }
 
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
+}
+
+func poBudgetRef(e models.POBudgetEntry) string {
+	// Use the budget period year for easier tracing.
+	y := e.PeriodDate.Year()
+	if y <= 0 {
+		y = time.Now().Year()
+	}
+
+	code := "UNK"
+	switch strings.ToLower(strings.TrimSpace(e.BudgetType)) {
+	case "raw_material":
+		code = "RM"
+	case "subcon":
+		code = "SC"
+	case "indirect":
+		code = "IB"
+	}
+
+	// id is already unique; we just format it nicely.
+	return fmt.Sprintf("POB-%04d-%s-%06d", y, code, e.ID)
+}
+
 func toSettingResponse(s models.POSplitSetting) models.SplitSettingResponse {
 	return models.SplitSettingResponse{
-		ID:          s.ID,
-		BudgetType:  s.BudgetType,
-		Po1Pct:      s.Po1Pct,
-		Po2Pct:      s.Po2Pct,
-		Description: s.Description,
+		ID:            s.ID,
+		BudgetType:    s.BudgetType,
+		Po1Pct:        s.Po1Pct,
+		Po2Pct:        s.Po2Pct,
+		MinOrderQty:   s.MinOrderQty,
+		MaxSplitLines: s.MaxSplitLines,
+		SplitRule:     s.SplitRule,
+		Status:        s.Status,
+		Description:   s.Description,
 	}
 }
 

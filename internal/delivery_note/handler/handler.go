@@ -98,3 +98,62 @@ func (h *HTTPHandler) GetDeliveryNoteByID(appCtx *app.Context) *app.CostumeRespo
 		Data:      data,
 	}
 }
+
+func (h *HTTPHandler) ScanDeliveryNoteItem(appCtx *app.Context) *app.CostumeResponse {
+	packing := appCtx.Query("packing")
+
+	if packing == "" {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid qr parameter",
+		}
+	}
+
+	response, err := h.service.ScanAndUpdate(appCtx.Request.Context(), packing)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "item status updated to " + response,
+		Data:      nil,
+	}
+}
+
+func (h *HTTPHandler) PreviewDN(appCtx *app.Context) *app.CostumeResponse {
+	var req models.CreateDNRequest
+
+	// bind request
+	if err := appCtx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body",
+		}
+	}
+
+	// validate
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": errs},
+		}
+	}
+
+	data, err := h.service.PreviewDN(appCtx.Request.Context(), req)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "success",
+		Data:      data,
+	}
+}

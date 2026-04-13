@@ -168,8 +168,9 @@ type POBudgetPaginationInput struct {
 	OrderDirection string        `json:"order_direction"`
 	UniqCode       string        `json:"uniq_code"`
 	CustomerID     int64         `json:"customer_id"`
-	Period         string        `json:"period"` // e.g. "October 2025"
-	Status         string        `json:"status"` // Draft | Pending | Approved | Rejected
+	Period         string        `json:"period"`         // e.g. "October 2025"
+	Status         string        `json:"status"`         // Draft | Pending | Approved | Rejected
+	BudgetSubtype  string        `json:"budget_subtype"` // regular | adhoc
 }
 
 func (p POBudgetPaginationInput) Offset() int {
@@ -203,6 +204,64 @@ func POBudgetPagination(c *app.Context) POBudgetPaginationInput {
 		CustomerID:     customerID,
 		Period:         c.Query("period"),
 		Status:         c.Query("status"),
+		BudgetSubtype:  c.Query("budget_subtype"),
+	}
+}
+
+// POBoardPaginationInput extends PaginationInput with PO board-specific filters.
+type POBoardPaginationInput struct {
+	Limit          int           `json:"limit"`
+	Page           int           `json:"page"`
+	Search         string        `json:"search"`
+	Filter         []FilterInput `json:"filter"`
+	OrderBy        string        `json:"order_by"`
+	OrderDirection string        `json:"order_direction"`
+	PoType         string        `json:"po_type"`         // RM | INDIRECT | SUBCON
+	Period         string        `json:"period"`           // YYYY-MM
+	SupplierID     int64         `json:"supplier_id"`      // legacy bigint
+	UniqCode       string        `json:"uniq_code"`
+	Status         string        `json:"status"`
+	LateOnly       bool          `json:"late_only"`
+}
+
+func (p POBoardPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// POBoardPagination parses PO-board-specific pagination params.
+//
+//	?po_type=RM&period=2024-01&supplier_id=12&uniq_code=LV7&status=draft&late_only=true
+func POBoardPagination(c *app.Context) POBoardPaginationInput {
+	base := Pagination(c)
+
+	var supplierID int64
+	if v := c.Query("supplier_id"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			supplierID = n
+		}
+	}
+
+	lateOnly := false
+	if c.Query("late_only") == "true" {
+		lateOnly = true
+	}
+
+	return POBoardPaginationInput{
+		Limit:          base.Limit,
+		Page:           base.Page,
+		Search:         base.Search,
+		Filter:         base.Filter,
+		OrderBy:        base.OrderBy,
+		OrderDirection: base.OrderDirection,
+		PoType:         c.Query("po_type"),
+		Period:         c.Query("period"),
+		SupplierID:     supplierID,
+		UniqCode:       c.Query("uniq_code"),
+		Status:         c.Query("status"),
+		LateOnly:       lateOnly,
 	}
 }
 
