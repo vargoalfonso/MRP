@@ -56,7 +56,12 @@ func (h *HTTPHandler) CreateApprovalWorkflow(appCtx *app.Context) *app.CostumeRe
 
 	data, err := h.service.Create(appCtx.Request.Context(), req)
 	if err != nil {
-		return app.NewError(appCtx, err)
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
 	}
 
 	return &app.CostumeResponse{
@@ -137,7 +142,12 @@ func (h *HTTPHandler) UpdateApprovalWorkflow(appCtx *app.Context) *app.CostumeRe
 
 	data, err := h.service.Update(appCtx.Request.Context(), id, req)
 	if err != nil {
-		return app.NewError(appCtx, err)
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
 	}
 
 	return &app.CostumeResponse{

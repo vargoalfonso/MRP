@@ -11,10 +11,10 @@ type CreateApprovalWorkflowRequest struct {
 }
 
 type UpdateApprovalWorkflowRequest struct {
-	ActionName string `json:"action_name"`
-	Level1Role string `json:"level_1_role"`
-	Level2Role string `json:"level_2_role"`
-	Level3Role string `json:"level_3_role"`
-	Level4Role string `json:"level_4_role"`
-	Status     string `json:"status" validate:"omitempty,oneof=active inactive"`
+	ActionName string  `json:"action_name"`
+	Level1Role *string `json:"level_1_role"`
+	Level2Role *string `json:"level_2_role"`
+	Level3Role *string `json:"level_3_role"`
+	Level4Role *string `json:"level_4_role"`
+	Status     *string `json:"status"`
 }

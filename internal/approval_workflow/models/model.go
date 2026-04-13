@@ -26,7 +26,7 @@ func (ApprovalWorkflow) TableName() string {
 // ---------------------------------------------------------------------------
 
 // ApprovalLevelProgress holds the per-level state stored inside approval_progress JSONB.
-type ApprovalLevelProgress struct {
+type ApprovalLevel struct {
 	Level      int    `json:"level"`
 	Role       string `json:"role"`        // role required for this level; empty when skipped
 	Status     string `json:"status"`      // pending | approved | rejected | skipped
@@ -37,7 +37,7 @@ type ApprovalLevelProgress struct {
 
 // ApprovalProgress is serialized as JSONB in approval_instances.approval_progress.
 type ApprovalProgress struct {
-	Levels []ApprovalLevelProgress `json:"levels"`
+	Levels []ApprovalLevel `json:"levels"`
 }
 
 // ApprovalInstance tracks one approval process for any document.

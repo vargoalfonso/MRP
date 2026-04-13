@@ -32,6 +32,8 @@ type Authenticator interface {
 	// RevokeToken invalidates a token by its jti (stateful only; no-op for stateless).
 	RevokeToken(ctx context.Context, jti string) error
 
+	SetPassword(ctx context.Context, token string, password string, confirm string) error
+
 	// Mode returns "stateless" or "stateful".
 	Mode() string
 }

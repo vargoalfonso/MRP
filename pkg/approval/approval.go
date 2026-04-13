@@ -99,14 +99,14 @@ func CreateInstance(ctx context.Context, db *gorm.DB, p CreateInstanceParams) (*
 // Levels 1..maxLevel are "pending"; the rest are "skipped".
 func BuildProgress(wf *awmodels.ApprovalWorkflow, maxLevel int) awmodels.ApprovalProgress {
 	roles := []string{wf.Level1Role, wf.Level2Role, wf.Level3Role, wf.Level4Role}
-	levels := make([]awmodels.ApprovalLevelProgress, 4)
+	levels := make([]awmodels.ApprovalLevel, 4)
 	for i := 0; i < 4; i++ {
 		lvl := i + 1
 		status := "skipped"
 		if lvl <= maxLevel {
 			status = "pending"
 		}
-		levels[i] = awmodels.ApprovalLevelProgress{
+		levels[i] = awmodels.ApprovalLevel{
 			Level:  lvl,
 			Role:   roles[i],
 			Status: status,

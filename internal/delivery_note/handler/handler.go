@@ -59,7 +59,12 @@ func (h *HTTPHandler) CreateDeliveryNote(appCtx *app.Context) *app.CostumeRespon
 	// call service
 	_, err := h.service.Create(appCtx.Request.Context(), req)
 	if err != nil {
-		return app.NewError(appCtx, err)
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
 	}
 
 	return &app.CostumeResponse{

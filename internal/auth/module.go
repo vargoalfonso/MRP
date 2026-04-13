@@ -38,12 +38,15 @@ func NewHTTPModule(
 // RegisterRoutes implements module.HTTPModule.
 func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	v1 := r.Group("/api/v1")
+
 	authGroup := v1.Group("/auth")
 	{
 		authGroup.POST("/register", m.base.RunAction(m.handler.Register))
 		authGroup.POST("/login", m.base.RunAction(m.handler.Login))
 
 		authGroup.POST("/refresh", m.base.RunAction(m.handler.Refresh))
+
+		authGroup.POST("/set-password", m.base.RunAction(m.handler.SetPassword))
 
 		logoutGroup := authGroup.Group("")
 		logoutGroup.Use(authMiddleware.JWTMiddleware(m.authenticator))

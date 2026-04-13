@@ -16,6 +16,7 @@ type IRoleRepository interface {
 	Delete(ctx context.Context, id int64) error
 
 	GetPermissionsByRole(ctx context.Context, roleName string) (map[string]interface{}, error)
+	FindByName(ctx context.Context, name string) (*models.Role, error)
 }
 
 type repository struct {
@@ -114,4 +115,17 @@ func (r *repository) GetPermissionsByRole(ctx context.Context, roleName string) 
 	}
 
 	return role.Permissions, nil
+}
+
+func (r *repository) FindByName(ctx context.Context, name string) (*models.Role, error) {
+	var role models.Role
+	err := r.db.WithContext(ctx).
+		Where("name = ?", name).
+		First(&role).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &role, nil
 }
