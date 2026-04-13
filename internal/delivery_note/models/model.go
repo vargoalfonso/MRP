@@ -13,7 +13,6 @@ type DeliveryNote struct {
 	PONumber        string    `json:"po_number"`                                           //request diambil dari po_number check po ini ada atau tidak, kalau tidak ada maka error
 	Type            string    `json:"type"`                                                //request
 	Status          string    `json:"status"`                                              //draft, incoming, completed. default draft. nanti kalau semua item sudah diterima maka status jadi completed
-	IncomingDate    time.Time `json:"incoming_date"`                                       //request format dd/mm/yyyy
 	SupplierID      int64     `json:"supplier_id"`                                         //request diambil dari supplier_id di purchase order
 	Supplier        Supplier  `json:"supplier" gorm:"foreignKey:SupplierID;references:ID"` //relasi ke supplier untuk mendapatkan nama supplier
 	TotalPOQty      int64     `json:"total_po_qty"`                                        //request diambil dari total qty di purchase order items bedasarkan po_id
