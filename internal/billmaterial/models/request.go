@@ -135,3 +135,13 @@ type ListBomQuery struct {
 	OrderBy        string
 	OrderDirection string
 }
+
+// ---------------------------------------------------------------------------
+// Approve / Reject BOM
+// POST /api/v1/products/bom/:id/approval
+// ---------------------------------------------------------------------------
+
+type ApproveBomRequest struct {
+	Action string  `json:"action" validate:"required,oneof=approve reject"`
+	Notes  *string `json:"notes"`
+}

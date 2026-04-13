@@ -3,8 +3,10 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"strings"
 
+	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
 	"github.com/ganasa18/go-template/internal/billmaterial/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/google/uuid"
@@ -61,6 +63,23 @@ type IRepository interface {
 	GetBomByID(ctx context.Context, bomID int64) (*models.BomItem, error)
 	// BOM lines flat for a given bom_item_id, ordered by level then line creation
 	GetBomLines(ctx context.Context, bomItemID int64) ([]models.BomLine, error)
+
+	// BOM Approval (legacy bom_approvals table — kept for backward compatibility)
+	CreateBomApproval(ctx context.Context, a *models.BomApproval) error
+	GetBomApproval(ctx context.Context, bomItemID int64) (*models.BomApproval, error)
+	UpdateBomApproval(ctx context.Context, a *models.BomApproval) error
+
+	// Approval Instances — generic multi-module approval tracker
+	CreateApprovalInstance(ctx context.Context, a *awmodels.ApprovalInstance) error
+	GetApprovalInstanceByRef(ctx context.Context, actionName, refTable string, refID int64) (*awmodels.ApprovalInstance, error)
+	UpdateApprovalInstance(ctx context.Context, a *awmodels.ApprovalInstance) error
+	// BulkActivateItemsByBomID sets items.status='Active' for all child items of a BOM
+	// and also updates bom_item.status='Active'. Called when a BOM reaches full approval.
+	BulkActivateItemsByBomID(ctx context.Context, bomItemID int64) error
+
+	// Approval workflow master — looked up at approval time, not copied into bom_approvals
+	GetApprovalWorkflowByActionName(ctx context.Context, actionName string) (*awmodels.ApprovalWorkflow, error)
+	GetApprovalWorkflowByID(ctx context.Context, id int64) (*awmodels.ApprovalWorkflow, error)
 }
 
 type ListFilter struct {
@@ -639,6 +658,87 @@ func (r *repository) GetBomLines(ctx context.Context, bomItemID int64) ([]models
 		return nil, apperror.InternalWrap("GetBomLines", err)
 	}
 	return lines, nil
+}
+
+func (r *repository) CreateBomApproval(ctx context.Context, a *models.BomApproval) error {
+	return r.db.WithContext(ctx).Create(a).Error
+}
+
+func (r *repository) GetBomApproval(ctx context.Context, bomItemID int64) (*models.BomApproval, error) {
+	var a models.BomApproval
+	err := r.db.WithContext(ctx).Where("bom_item_id = ?", bomItemID).First(&a).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, apperror.InternalWrap("GetBomApproval", err)
+	}
+	return &a, nil
+}
+
+func (r *repository) UpdateBomApproval(ctx context.Context, a *models.BomApproval) error {
+	return r.db.WithContext(ctx).Save(a).Error
+}
+
+func (r *repository) GetApprovalWorkflowByActionName(ctx context.Context, actionName string) (*awmodels.ApprovalWorkflow, error) {
+	var w awmodels.ApprovalWorkflow
+	err := r.db.WithContext(ctx).Where("action_name = ?", actionName).First(&w).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+func (r *repository) GetApprovalWorkflowByID(ctx context.Context, id int64) (*awmodels.ApprovalWorkflow, error) {
+	var w awmodels.ApprovalWorkflow
+	err := r.db.WithContext(ctx).First(&w, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// ---------------------------------------------------------------------------
+// Approval Instances
+// ---------------------------------------------------------------------------
+
+func (r *repository) CreateApprovalInstance(ctx context.Context, a *awmodels.ApprovalInstance) error {
+	return r.db.WithContext(ctx).Create(a).Error
+}
+
+func (r *repository) GetApprovalInstanceByRef(ctx context.Context, actionName, refTable string, refID int64) (*awmodels.ApprovalInstance, error) {
+	var a awmodels.ApprovalInstance
+	err := r.db.WithContext(ctx).
+		Where("action_name = ? AND reference_table = ? AND reference_id = ?", actionName, refTable, refID).
+		Order("id DESC").
+		First(&a).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, apperror.InternalWrap("GetApprovalInstanceByRef", err)
+	}
+	return &a, nil
+}
+
+func (r *repository) UpdateApprovalInstance(ctx context.Context, a *awmodels.ApprovalInstance) error {
+	return r.db.WithContext(ctx).Save(a).Error
+}
+
+// BulkActivateItemsByBomID activates the parent item and all child items of the given BOM.
+// Both parent (via bom_item.item_id) and children (via bom_lines.child_item_id) start as Draft.
+func (r *repository) BulkActivateItemsByBomID(ctx context.Context, bomItemID int64) error {
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE items SET status = 'Active', updated_at = NOW()
+		WHERE id = (SELECT item_id FROM bom_item WHERE id = ?)
+		   OR id IN (SELECT child_item_id FROM bom_lines WHERE bom_item_id = ?)
+	`, bomItemID, bomItemID).Error
 }
 
 // ---------------------------------------------------------------------------

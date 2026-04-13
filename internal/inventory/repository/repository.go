@@ -10,6 +10,7 @@ import (
 	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ---------------------------------------------------------------------------
@@ -194,6 +195,9 @@ type IRepository interface {
 
 	// Incoming scans (cross-type tab view)
 	ListIncoming(ctx context.Context, f IncomingListFilter) ([]IncomingRow, int64, error)
+
+	// Movement log
+	CreateMovementLog(ctx context.Context, log *invModels.InventoryMovementLog) error
 }
 
 // ---------------------------------------------------------------------------
@@ -262,11 +266,43 @@ func (r *repo) GetRawMaterialByID(ctx context.Context, id int64) (*invModels.Raw
 }
 
 func (r *repo) CreateRawMaterial(ctx context.Context, rm *invModels.RawMaterial) error {
-	return r.db.WithContext(ctx).Create(rm).Error
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_qty":          gorm.Expr("raw_materials.stock_qty + EXCLUDED.stock_qty"),
+				"stock_weight_kg":    gorm.Expr("COALESCE(raw_materials.stock_weight_kg, 0) + COALESCE(EXCLUDED.stock_weight_kg, 0)"),
+				"warehouse_location": gorm.Expr("COALESCE(EXCLUDED.warehouse_location, raw_materials.warehouse_location)"),
+				"uom":                gorm.Expr("COALESCE(EXCLUDED.uom, raw_materials.uom)"),
+				"raw_material_type":  gorm.Expr("COALESCE(EXCLUDED.raw_material_type, raw_materials.raw_material_type)"),
+				"rm_source":          gorm.Expr("COALESCE(EXCLUDED.rm_source, raw_materials.rm_source)"),
+				"part_name":          gorm.Expr("COALESCE(EXCLUDED.part_name, raw_materials.part_name)"),
+				"part_number":        gorm.Expr("COALESCE(EXCLUDED.part_number, raw_materials.part_number)"),
+				"deleted_at":         nil,
+				"updated_at":         gorm.Expr("now()"),
+			}),
+		}).
+		Create(rm).Error
 }
 
 func (r *repo) BulkCreateRawMaterials(ctx context.Context, items []invModels.RawMaterial) error {
-	return r.db.WithContext(ctx).CreateInBatches(items, 100).Error
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_qty":          gorm.Expr("raw_materials.stock_qty + EXCLUDED.stock_qty"),
+				"stock_weight_kg":    gorm.Expr("COALESCE(raw_materials.stock_weight_kg, 0) + COALESCE(EXCLUDED.stock_weight_kg, 0)"),
+				"warehouse_location": gorm.Expr("COALESCE(EXCLUDED.warehouse_location, raw_materials.warehouse_location)"),
+				"uom":                gorm.Expr("COALESCE(EXCLUDED.uom, raw_materials.uom)"),
+				"raw_material_type":  gorm.Expr("COALESCE(EXCLUDED.raw_material_type, raw_materials.raw_material_type)"),
+				"rm_source":          gorm.Expr("COALESCE(EXCLUDED.rm_source, raw_materials.rm_source)"),
+				"part_name":          gorm.Expr("COALESCE(EXCLUDED.part_name, raw_materials.part_name)"),
+				"part_number":        gorm.Expr("COALESCE(EXCLUDED.part_number, raw_materials.part_number)"),
+				"deleted_at":         nil,
+				"updated_at":         gorm.Expr("now()"),
+			}),
+		}).
+		CreateInBatches(items, 100).Error
 }
 
 func (r *repo) UpdateRawMaterial(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.RawMaterial, error) {
@@ -376,11 +412,39 @@ func (r *repo) GetIndirectByID(ctx context.Context, id int64) (*invModels.Indire
 }
 
 func (r *repo) CreateIndirectMaterial(ctx context.Context, irm *invModels.IndirectRawMaterial) error {
-	return r.db.WithContext(ctx).Create(irm).Error
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_qty":          gorm.Expr("indirect_raw_materials.stock_qty + EXCLUDED.stock_qty"),
+				"stock_weight_kg":    gorm.Expr("COALESCE(indirect_raw_materials.stock_weight_kg, 0) + COALESCE(EXCLUDED.stock_weight_kg, 0)"),
+				"warehouse_location": gorm.Expr("COALESCE(EXCLUDED.warehouse_location, indirect_raw_materials.warehouse_location)"),
+				"uom":                gorm.Expr("COALESCE(EXCLUDED.uom, indirect_raw_materials.uom)"),
+				"part_name":          gorm.Expr("COALESCE(EXCLUDED.part_name, indirect_raw_materials.part_name)"),
+				"part_number":        gorm.Expr("COALESCE(EXCLUDED.part_number, indirect_raw_materials.part_number)"),
+				"deleted_at":         nil,
+				"updated_at":         gorm.Expr("now()"),
+			}),
+		}).
+		Create(irm).Error
 }
 
 func (r *repo) BulkCreateIndirectMaterials(ctx context.Context, items []invModels.IndirectRawMaterial) error {
-	return r.db.WithContext(ctx).CreateInBatches(items, 100).Error
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_qty":          gorm.Expr("indirect_raw_materials.stock_qty + EXCLUDED.stock_qty"),
+				"stock_weight_kg":    gorm.Expr("COALESCE(indirect_raw_materials.stock_weight_kg, 0) + COALESCE(EXCLUDED.stock_weight_kg, 0)"),
+				"warehouse_location": gorm.Expr("COALESCE(EXCLUDED.warehouse_location, indirect_raw_materials.warehouse_location)"),
+				"uom":                gorm.Expr("COALESCE(EXCLUDED.uom, indirect_raw_materials.uom)"),
+				"part_name":          gorm.Expr("COALESCE(EXCLUDED.part_name, indirect_raw_materials.part_name)"),
+				"part_number":        gorm.Expr("COALESCE(EXCLUDED.part_number, indirect_raw_materials.part_number)"),
+				"deleted_at":         nil,
+				"updated_at":         gorm.Expr("now()"),
+			}),
+		}).
+		CreateInBatches(items, 100).Error
 }
 
 func (r *repo) UpdateIndirectMaterial(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.IndirectRawMaterial, error) {
@@ -485,7 +549,20 @@ func (r *repo) GetSubconByID(ctx context.Context, id int64) (*invModels.SubconIn
 }
 
 func (r *repo) CreateSubconInventory(ctx context.Context, si *invModels.SubconInventory) error {
-	return r.db.WithContext(ctx).Create(si).Error
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_at_vendor_qty": gorm.Expr("subcon_inventories.stock_at_vendor_qty + EXCLUDED.stock_at_vendor_qty"),
+				"part_name":           gorm.Expr("COALESCE(EXCLUDED.part_name, subcon_inventories.part_name)"),
+				"part_number":         gorm.Expr("COALESCE(EXCLUDED.part_number, subcon_inventories.part_number)"),
+				"subcon_vendor_id":    gorm.Expr("COALESCE(EXCLUDED.subcon_vendor_id, subcon_inventories.subcon_vendor_id)"),
+				"subcon_vendor_name":  gorm.Expr("COALESCE(EXCLUDED.subcon_vendor_name, subcon_inventories.subcon_vendor_name)"),
+				"deleted_at":          nil,
+				"updated_at":          gorm.Expr("now()"),
+			}),
+		}).
+		Create(si).Error
 }
 
 func (r *repo) UpdateSubconInventory(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.SubconInventory, error) {
@@ -715,3 +792,14 @@ func dnTypeVariants(t string) []string {
 }
 
 func strPtr(s string) *string { return &s }
+
+// ---------------------------------------------------------------------------
+// Movement Log
+// ---------------------------------------------------------------------------
+
+func (r *repo) CreateMovementLog(ctx context.Context, log *invModels.InventoryMovementLog) error {
+	if log.LoggedAt.IsZero() {
+		log.LoggedAt = time.Now()
+	}
+	return r.db.WithContext(ctx).Create(log).Error
+}
