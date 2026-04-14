@@ -2,6 +2,8 @@ package models
 
 import (
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 type ApprovalWorkflow struct {
@@ -58,3 +60,10 @@ type ApprovalInstance struct {
 }
 
 func (ApprovalInstance) TableName() string { return "approval_instances" }
+
+type Claims struct {
+	jwt.RegisteredClaims
+	// UserID mirrors RegisteredClaims.Subject but is kept here for clarity.
+	UserID string   `json:"uid"`
+	Roles  []string `json:"roles"`
+}

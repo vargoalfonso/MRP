@@ -18,3 +18,7 @@ type UpdateApprovalWorkflowRequest struct {
 	Level4Role *string `json:"level_4_role"`
 	Status     *string `json:"status"`
 }
+
+type RejectRequest struct {
+	Note string `json:"note"`
+}
