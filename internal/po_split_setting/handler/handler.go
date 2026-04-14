@@ -69,7 +69,11 @@ func (h *HTTPHandler) Create(appCtx *app.Context) *app.CostumeResponse {
 
 	data, err := h.service.Create(appCtx.Request.Context(), req)
 	if err != nil {
-		return app.NewError(appCtx, err)
+		return &app.CostumeResponse{
+			Status:  http.StatusUnprocessableEntity,
+			Message: "validation failed",
+			Data:    map[string]interface{}{"errors": err.Error()},
+		}
 	}
 
 	return &app.CostumeResponse{
