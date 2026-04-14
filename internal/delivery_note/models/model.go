@@ -5,24 +5,58 @@ import (
 )
 
 type DeliveryNote struct {
-	ID              int64     `json:"id" gorm:"primaryKey"`              //request
-	DNNumber        string    `json:"dn_number" gorm:"type:varchar(50)"` //request
-	CustomerID      int64     `json:"customer_id"`                       //request
-	ContactPerson   string    `json:"contact_person"`                    //request
-	Period          string    `json:"period"`                            //request
-	PONumber        string    `json:"po_number"`                         //request diambil dari po_number check po ini ada atau tidak, kalau tidak ada maka error
-	Type            string    `json:"type"`                              //request
-	Status          string    `json:"status"`                            //draft, incoming, completed. default draft. nanti kalau semua item sudah diterima maka status jadi completed
-	IncomingDate    time.Time `json:"incoming_date"`                     //request format dd/mm/yyyy
-	SupplierID      int64     `json:"supplier_id"`                       //request diambil dari supplier_id di purchase order
-	TotalPOQty      int64     `json:"total_po_qty"`                      //request diambil dari total qty di purchase order items bedasarkan po_id
-	TotalDNCreated  int64     `json:"total_dn_created"`                  //request total data dari purchaase order items dari po_id yang sudah dibuat dn nya (bedasarkan po_number)
-	TotalDNIncoming int64     `json:"total_dn_incoming"`                 //request total data dari purchaase order items dari po_id yang sudah diterima barangnya (bedasarkan po_number)
+	ID              int64     `json:"id" gorm:"primaryKey"`                                //request
+	DNNumber        string    `json:"dn_number" gorm:"type:varchar(50)"`                   //request
+	CustomerID      int64     `json:"customer_id"`                                         //request
+	ContactPerson   string    `json:"contact_person"`                                      //request
+	Period          string    `json:"period"`                                              //request
+	PONumber        string    `json:"po_number"`                                           //request diambil dari po_number check po ini ada atau tidak, kalau tidak ada maka error
+	Type            string    `json:"type"`                                                //request
+	Status          string    `json:"status"`                                              //draft, incoming, completed. default draft. nanti kalau semua item sudah diterima maka status jadi completed
+	SupplierID      int64     `json:"supplier_id"`                                         //request diambil dari supplier_id di purchase order
+	Supplier        Supplier  `json:"supplier" gorm:"foreignKey:SupplierID;references:ID"` //relasi ke supplier untuk mendapatkan nama supplier
+	TotalPOQty      int64     `json:"total_po_qty"`                                        //request diambil dari total qty di purchase order items bedasarkan po_id
+	TotalPOIncoming int64     `json:"total_po_incoming"`                                   //request diambil dari total qty yang sudah diterima di delivery note items bedasarkan po_id
+	TotalDNCreated  int64     `json:"total_dn_created"`                                    //request total data dari purchaase order items dari po_id yang sudah dibuat dn nya (bedasarkan po_number)
+	TotalDNIncoming int64     `json:"total_dn_incoming"`                                   //request total data dari purchaase order items dari po_id yang sudah diterima barangnya (bedasarkan po_number)
 	CreatedBy       string    `json:"created_by"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 
 	Items []DeliveryNoteItem `json:"items" gorm:"foreignKey:DNID;references:ID"`
+}
+
+type Supplier struct {
+	ID   int64  `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
+	UUID string `json:"uuid" gorm:"column:uuid;type:uuid;not null"`
+
+	SupplierCode  string `json:"supplier_code" gorm:"column:supplier_code;size:50;not null"`
+	SupplierName  string `json:"supplier_name" gorm:"column:supplier_name;size:255;not null"`
+	ContactPerson string `json:"contact_person" gorm:"column:contact_person;size:255;not null"`
+	ContactNumber string `json:"contact_number" gorm:"column:contact_number;size:50;not null"`
+	EmailAddress  string `json:"email_address" gorm:"column:email_address;size:255;not null"`
+
+	MaterialCategory *string `json:"material_category,omitempty" gorm:"column:material_category;size:50"`
+
+	FullAddress string `json:"full_address" gorm:"column:full_address;type:text;not null"`
+	City        string `json:"city" gorm:"column:city;size:150;not null"`
+	Province    string `json:"province" gorm:"column:province;size:150;not null"`
+	Country     string `json:"country" gorm:"column:country;size:150;not null"`
+
+	TaxIDNPWP string `json:"tax_id_npwp" gorm:"column:tax_id_npwp;size:50;not null"`
+
+	BankName          string `json:"bank_name" gorm:"column:bank_name;size:150;not null"`
+	BankAccountNumber string `json:"bank_account_number" gorm:"column:bank_account_number;size:100;not null"`
+	BankAccountName   string `json:"bank_account_name" gorm:"column:bank_account_name;size:255;not null"`
+
+	PaymentTerms         string `json:"payment_terms" gorm:"column:payment_terms;size:150;not null"`
+	DeliveryLeadTimeDays int32  `json:"delivery_lead_time_days" gorm:"column:delivery_lead_time_days;default:0"`
+
+	Status string `json:"status" gorm:"column:status;size:20;default:Active"`
+
+	CreatedAt time.Time  `json:"created_at" gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt time.Time  `json:"updated_at" gorm:"column:updated_at;autoUpdateTime"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty" gorm:"column:deleted_at"`
 }
 
 type DeliveryNoteItem struct {

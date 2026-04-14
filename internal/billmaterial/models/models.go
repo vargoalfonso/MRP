@@ -70,7 +70,8 @@ type Item struct {
 	UniqCode        string    `gorm:"size:64;uniqueIndex;not null"`
 	PartNumber      *string   `gorm:"size:128"`
 	PartName        string    `gorm:"size:255;not null"`
-	UomID           int64     `gorm:"not null"`
+	Model           *string   `gorm:"size:128"`
+	Uom             string    `gorm:"column:uom;size:32"`
 	CurrentRevision *string   `gorm:"size:32"`
 	Status          string    `gorm:"size:20;default:Active"`
 	CreatedAt       time.Time
@@ -94,19 +95,19 @@ type ItemRevision struct {
 func (ItemRevision) TableName() string { return "item_revisions" }
 
 type ItemMaterialSpec struct {
-	ID             int64      `gorm:"primaryKey;autoIncrement"`
-	ItemRevisionID int64      `gorm:"uniqueIndex;not null"`
-	MaterialGrade  *string    `gorm:"size:64"`
-	Form           *string    `gorm:"size:32"`
-	WidthMm        *float64   `gorm:"type:numeric(18,4)"`
-	DiameterMm     *float64   `gorm:"type:numeric(18,4)"`
-	ThicknessMm    *float64   `gorm:"type:numeric(18,4)"`
-	LengthMm       *float64   `gorm:"type:numeric(18,4)"`
-	WeightKg       *float64   `gorm:"type:numeric(18,6)"`
-	SupplierID     *uuid.UUID `gorm:"type:uuid"`
-	SupplierName   *string    `gorm:"size:255"`
-	CycleTimeSec   *float64   `gorm:"type:numeric(18,4)"`
-	SetupTimeMin   *float64   `gorm:"type:numeric(18,4)"`
+	ID             int64    `gorm:"primaryKey;autoIncrement"`
+	ItemRevisionID int64    `gorm:"uniqueIndex;not null"`
+	MaterialGrade  *string  `gorm:"size:64"`
+	Form           *string  `gorm:"size:32"`
+	WidthMm        *float64 `gorm:"type:numeric(18,4)"`
+	DiameterMm     *float64 `gorm:"type:numeric(18,4)"`
+	ThicknessMm    *float64 `gorm:"type:numeric(18,4)"`
+	LengthMm       *float64 `gorm:"type:numeric(18,4)"`
+	WeightKg       *float64 `gorm:"type:numeric(18,6)"`
+	SupplierID     *string  `gorm:"column:supplier_id;size:64"` // stored as string, no FK (suppliers.id is bigint)
+	SupplierName   *string  `gorm:"size:255"`
+	CycleTimeSec   *float64 `gorm:"type:numeric(18,4)"`
+	SetupTimeMin   *float64 `gorm:"type:numeric(18,4)"`
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -187,7 +188,7 @@ type BomLine struct {
 	ChildItemID  int64   `gorm:"not null;index"`
 	Level        int16   `gorm:"default:1"`
 	QtyPerUniq   float64 `gorm:"type:numeric(18,6);default:1"`
-	UomID        *int64
+	Uom          *string `gorm:"column:uom;size:32"`
 	ScrapFactor  float64 `gorm:"type:numeric(9,6);default:0"`
 	IsPhantom    bool    `gorm:"default:false"`
 	CreatedAt    time.Time
@@ -195,3 +196,39 @@ type BomLine struct {
 }
 
 func (BomLine) TableName() string { return "bom_lines" }
+
+// BomApproval tracks multi-level sign-off per BOM version.
+// Created automatically (status=pending) when a BOM is first created.
+// ApprovalWorkflowID references the approval_workflows master — roles are NOT copied here.
+// Approval progresses through configured levels; rejection short-circuits to rejected.
+type BomApproval struct {
+	ID                 int64  `gorm:"primaryKey;autoIncrement"`
+	BomItemID          int64  `gorm:"not null;index"`
+	ApprovalWorkflowID *int64 `gorm:"column:approval_workflow_id"` // FK → approval_workflows.id
+	CurrentLevel       int16  `gorm:"column:current_level;default:1"`
+
+	Level1ApprovedBy *string    `gorm:"column:level_1_approved_by;type:uuid"`
+	Level1ApprovedAt *time.Time `gorm:"column:level_1_approved_at"`
+	Level2ApprovedBy *string    `gorm:"column:level_2_approved_by;type:uuid"`
+	Level2ApprovedAt *time.Time `gorm:"column:level_2_approved_at"`
+	Level3ApprovedBy *string    `gorm:"column:level_3_approved_by;type:uuid"`
+	Level3ApprovedAt *time.Time `gorm:"column:level_3_approved_at"`
+	Level4ApprovedBy *string    `gorm:"column:level_4_approved_by;type:uuid"`
+	Level4ApprovedAt *time.Time `gorm:"column:level_4_approved_at"`
+
+	// Set when every required level has approved
+	ApprovedBy *string    `gorm:"column:approved_by;type:uuid"`
+	ApprovedAt *time.Time `gorm:"column:approved_at"`
+
+	// Set when any level rejects
+	RejectedBy *string    `gorm:"column:rejected_by;type:uuid"`
+	RejectedAt *time.Time `gorm:"column:rejected_at"`
+
+	Status string  `gorm:"size:20;default:pending"` // pending | approved | rejected
+	Notes  *string `gorm:"type:text"`
+
+	CreatedAt time.Time `gorm:"not null;default:now()"`
+	UpdatedAt time.Time `gorm:"not null;default:now()"`
+}
+
+func (BomApproval) TableName() string { return "bom_approvals" }

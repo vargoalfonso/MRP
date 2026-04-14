@@ -48,3 +48,18 @@ type RegisterResponse struct {
 	Email     string `json:"email"`
 	CreatedAt string `json:"created_at"`
 }
+
+type UserActivation struct {
+	ID        int64
+	UserID    int64
+	Token     string
+	ExpiredAt time.Time
+	Used      bool
+	CreatedAt time.Time
+}
+
+type SetPasswordRequest struct {
+	Token           string `json:"token" binding:"required"`
+	Password        string `json:"password" binding:"required,min=6"`
+	ConfirmPassword string `json:"confirm_password" binding:"required"`
+}

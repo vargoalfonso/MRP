@@ -22,7 +22,6 @@ type PurchaseOrder struct {
 	SupplierID       *int64     `gorm:"column:supplier_id"`        // legacy supplier.supplier_id
 	Status           string     `gorm:"column:status;size:32;default:pending"`
 	PoDate           *time.Time `gorm:"column:po_date;type:date"`
-	ExpectedDelivery *time.Time `gorm:"column:expected_delivery_date;type:date"`
 	Currency         *string    `gorm:"column:currency;size:8"`
 	TotalWeight      *float64   `gorm:"column:total_weight;type:numeric(15,4)"`
 	TotalAmount      *float64   `gorm:"column:total_amount;type:numeric(18,2)"`
@@ -115,7 +114,7 @@ type IncomingDNItem struct {
 	QtyReceived    int        `gorm:"column:qty_received;default:0"`
 	WeightReceived *float64   `gorm:"column:weight_received"`
 	QualityStatus  string     `gorm:"column:quality_status;size:32;default:Pending"`
-	PackingNumber  *string    `gorm:"-"` // not a DB column; populated in application layer from dn.dn_number
+	PackingNumber  *string    `gorm:"column:packing_number;size:64"` // unique per item; scanned from QR/kanban label
 	PcsPerKanban   *int       `gorm:"column:pcs_per_kanban"`
 	Uom            *string    `gorm:"column:uom;size:32"`
 	ReceivedAt     *time.Time `gorm:"column:received_at"`

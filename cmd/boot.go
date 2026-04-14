@@ -24,25 +24,14 @@ import (
 	authService "github.com/ganasa18/go-template/internal/auth/service"
 	baseModule "github.com/ganasa18/go-template/internal/base"
 	baseHandler "github.com/ganasa18/go-template/internal/base/handler"
-<<<<<<< HEAD
-	customerModule "github.com/ganasa18/go-template/internal/customer"
-	customerHandler "github.com/ganasa18/go-template/internal/customer/handler"
-	customerRepository "github.com/ganasa18/go-template/internal/customer/repository"
-	customerService "github.com/ganasa18/go-template/internal/customer/service"
-	appmodule "github.com/ganasa18/go-template/internal/module"
-	prlModule "github.com/ganasa18/go-template/internal/prl"
-	prlHandler "github.com/ganasa18/go-template/internal/prl/handler"
-	prlRepository "github.com/ganasa18/go-template/internal/prl/repository"
-	prlService "github.com/ganasa18/go-template/internal/prl/service"
-	supplierModule "github.com/ganasa18/go-template/internal/supplier"
-	supplierHandler "github.com/ganasa18/go-template/internal/supplier/handler"
-	supplierRepository "github.com/ganasa18/go-template/internal/supplier/repository"
-	supplierService "github.com/ganasa18/go-template/internal/supplier/service"
-=======
 	bomModule "github.com/ganasa18/go-template/internal/billmaterial"
 	bomHandler "github.com/ganasa18/go-template/internal/billmaterial/handler"
 	bomRepository "github.com/ganasa18/go-template/internal/billmaterial/repository"
 	bomService "github.com/ganasa18/go-template/internal/billmaterial/service"
+	customerModule "github.com/ganasa18/go-template/internal/customer"
+	customerHandler "github.com/ganasa18/go-template/internal/customer/handler"
+	customerRepository "github.com/ganasa18/go-template/internal/customer/repository"
+	customerService "github.com/ganasa18/go-template/internal/customer/service"
 	deliveryNoteModule "github.com/ganasa18/go-template/internal/delivery_note"
 	deliveryNoteHandler "github.com/ganasa18/go-template/internal/delivery_note/handler"
 	deliveryNoteRepository "github.com/ganasa18/go-template/internal/delivery_note/repository"
@@ -76,6 +65,10 @@ import (
 	poSplitSettingHandler "github.com/ganasa18/go-template/internal/po_split_setting/handler"
 	poSplitSettingRepository "github.com/ganasa18/go-template/internal/po_split_setting/repository"
 	poSplitSettingService "github.com/ganasa18/go-template/internal/po_split_setting/service"
+	prlModule "github.com/ganasa18/go-template/internal/prl"
+	prlHandler "github.com/ganasa18/go-template/internal/prl/handler"
+	prlRepository "github.com/ganasa18/go-template/internal/prl/repository"
+	prlService "github.com/ganasa18/go-template/internal/prl/service"
 	processParameterModule "github.com/ganasa18/go-template/internal/process_parameter"
 	processParameterHandler "github.com/ganasa18/go-template/internal/process_parameter/handler"
 	processParameterRepository "github.com/ganasa18/go-template/internal/process_parameter/repository"
@@ -96,6 +89,10 @@ import (
 	safetyStockHandler "github.com/ganasa18/go-template/internal/safety_stock_parameter/handler"
 	safetyStockRepo "github.com/ganasa18/go-template/internal/safety_stock_parameter/repository"
 	safetyStockService "github.com/ganasa18/go-template/internal/safety_stock_parameter/service"
+	supplierModule "github.com/ganasa18/go-template/internal/supplier"
+	supplierHandler "github.com/ganasa18/go-template/internal/supplier/handler"
+	supplierRepository "github.com/ganasa18/go-template/internal/supplier/repository"
+	supplierService "github.com/ganasa18/go-template/internal/supplier/service"
 	typeParameterModule "github.com/ganasa18/go-template/internal/type_parameter"
 	typeParameterHandler "github.com/ganasa18/go-template/internal/type_parameter/handler"
 	typeParameterRepository "github.com/ganasa18/go-template/internal/type_parameter/repository"
@@ -108,7 +105,10 @@ import (
 	uploadHandler "github.com/ganasa18/go-template/internal/upload/handler"
 	uploadRepository "github.com/ganasa18/go-template/internal/upload/repository"
 	uploadService "github.com/ganasa18/go-template/internal/upload/service"
->>>>>>> 638ed4f01643abcd23a703ea5603b6ec4c0d5a5d
+	workOrderModule "github.com/ganasa18/go-template/internal/work_order"
+	workOrderHandler "github.com/ganasa18/go-template/internal/work_order/handler"
+	workOrderRepository "github.com/ganasa18/go-template/internal/work_order/repository"
+	workOrderService "github.com/ganasa18/go-template/internal/work_order/service"
 )
 
 // initHTTP wires every module inside the modular monolith and returns an HTTP server.
@@ -145,7 +145,6 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 
 	baseHTTPHandler := baseHandler.NewBaseHTTPHandler(db)
 	authHTTPHandler := authHandler.New(authSvc)
-<<<<<<< HEAD
 	customerRepo := customerRepository.New(db)
 	customerSvc := customerService.New(customerRepo)
 	customerHTTPHandler := customerHandler.New(customerSvc)
@@ -155,11 +154,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	supplierRepo := supplierRepository.New(db)
 	supplierSvc := supplierService.New(supplierRepo)
 	supplierHTTPHandler := supplierHandler.New(supplierSvc)
-=======
 	roleHTTPHandler := roleHandler.New(roleSvc)
 
 	employeeRepo := employeeRepository.New(db)
-	employeeSvc := employeeService.New(employeeRepo)
+	employeeSvc := employeeService.New(employeeRepo, authRepo)
 	employeeHTTPHandler := employeeHandler.New(employeeSvc)
 
 	userRepo := userRepository.New(db)
@@ -173,12 +171,12 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 
 	// Upload module (chunked / resumable)
 	uploadRepo := uploadRepository.New(db)
-	uploadSvc := uploadService.New(uploadRepo, bomRepo)
+	uploadSvc := uploadService.New(uploadRepo, bomRepo, cfg.MaxChunkBytes)
 	uploadHTTPHandler := uploadHandler.New(uploadSvc)
 
 	// PO Budget module
 	poBudgetRepo := poBudgetRepository.New(db)
-	poBudgetSvc := poBudgetService.New(poBudgetRepo, cfg.RobotSplitURL)
+	poBudgetSvc := poBudgetService.New(poBudgetRepo, db, cfg.RobotSplitURL)
 	poBudgetHTTPHandler := poBudgetHandler.New(poBudgetSvc)
 
 	// Procurement module
@@ -201,6 +199,11 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	invSvc := inventoryService.New(invRepository)
 	invHTTPHandler := inventoryHandler.New(invSvc)
 
+	// Work Order module (Manufacturing)
+	woRepo := workOrderRepository.New(db)
+	woSvc := workOrderService.New(woRepo, db, invSvc)
+	woHTTPHandler := workOrderHandler.New(woSvc)
+
 	safetyStockRepository := safetyStockRepo.New(db)
 	safetyStockService := safetyStockService.New(safetyStockRepository)
 	safetyStockHandler := safetyStockHandler.New(safetyStockService)
@@ -218,7 +221,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	poSplitSettingHTTPHandler := poSplitSettingHandler.New(poSplitSettingSvc)
 
 	approvalWorkflowRepo := approvalWorkflowRepository.New(db)
-	approvalWorkflowSvc := approvalWorkflowService.New(approvalWorkflowRepo)
+	approvalWorkflowSvc := approvalWorkflowService.New(approvalWorkflowRepo, roleRepo)
 	approvalWorkflowHTTPHandler := approvalWorkflowHandler.New(approvalWorkflowSvc)
 
 	globalParameterRepo := globalParameterRepository.New(db)
@@ -234,20 +237,17 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	kanbanHTTPHandler := kanbanHandler.New(kanbanSvc)
 
 	deliveryNoteRepo := deliveryNoteRepository.New(db)
-	deliveryNoteSvc := deliveryNoteService.New(deliveryNoteRepo, db)
+	deliveryNoteSvc := deliveryNoteService.New(deliveryNoteRepo, db, approvalWorkflowRepo)
 	deliveryNoteHTTPHandler := deliveryNoteHandler.New(deliveryNoteSvc)
->>>>>>> 638ed4f01643abcd23a703ea5603b6ec4c0d5a5d
 
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
-<<<<<<< HEAD
 		customerModule.NewHTTPModule(cfg, baseHTTPHandler, customerHTTPHandler, authSvc),
 		prlModule.NewHTTPModule(cfg, baseHTTPHandler, prlHTTPHandler, authSvc),
 		supplierModule.NewHTTPModule(cfg, baseHTTPHandler, supplierHTTPHandler, authSvc),
-=======
 		bomModule.NewHTTPModule(cfg, baseHTTPHandler, bomHTTPHandler, authSvc, roleSvc, bomSvc),
-		uploadModule.NewHTTPModule(baseHTTPHandler, uploadHTTPHandler, uploadSvc),
+		uploadModule.NewHTTPModule(baseHTTPHandler, uploadHTTPHandler, uploadSvc, authSvc, roleSvc),
 		roleModule.NewHTTPModule(cfg, baseHTTPHandler, roleHTTPHandler, authSvc, roleSvc),
 		departementModule.NewHTTPModule(cfg, baseHTTPHandler, departementHTTPHandler, authSvc, roleSvc, departementSvc),
 		employeeModule.NewHTTPModule(cfg, baseHTTPHandler, employeeHTTPHandler, authSvc, roleSvc, employeeSvc),
@@ -257,6 +257,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		actionUIModule.NewHTTPModule(cfg, baseHTTPHandler, actionHTTPHandler, authSvc, roleSvc),
 		qcModule.NewHTTPModule(cfg, baseHTTPHandler, qcHTTPHandler, authSvc, roleSvc),
 		inventoryModule.NewHTTPModule(cfg, baseHTTPHandler, invHTTPHandler, authSvc, roleSvc, invSvc),
+		workOrderModule.NewHTTPModule(cfg, baseHTTPHandler, woHTTPHandler, authSvc, roleSvc, woSvc),
 		safetyStockModule.NewHTTPModule(cfg, baseHTTPHandler, safetyStockHandler, authSvc, roleSvc, safetyStockService),
 		typeParameterModule.NewHTTPModule(cfg, baseHTTPHandler, typeParameterHTTPHandler, authSvc, roleSvc, typeParameterSvc),
 		UnitMeasureModule.NewHTTPModule(cfg, baseHTTPHandler, unitMeasureHTTPHandler, authSvc, roleSvc, unitMeasureSvc),
@@ -266,7 +267,6 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		processParameterModule.NewHTTPModule(cfg, baseHTTPHandler, processParameterHTTPHandler, authSvc, roleSvc, processParameterSvc),
 		kanbanModule.NewHTTPModule(cfg, baseHTTPHandler, kanbanHTTPHandler, authSvc, roleSvc, kanbanSvc),
 		deliveryNoteModule.NewHTTPModule(cfg, baseHTTPHandler, deliveryNoteHTTPHandler, authSvc, roleSvc, deliveryNoteSvc),
->>>>>>> 638ed4f01643abcd23a703ea5603b6ec4c0d5a5d
 	}
 
 	// --- Server ---

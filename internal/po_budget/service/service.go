@@ -11,6 +11,8 @@ import (
 	"github.com/ganasa18/go-template/internal/po_budget/models"
 	"github.com/ganasa18/go-template/internal/po_budget/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/approval"
+	"gorm.io/gorm"
 )
 
 // IService is the business-logic contract for PO Budget.
@@ -56,11 +58,12 @@ type IService interface {
 
 type svc struct {
 	repo     repository.IRepository
+	db       *gorm.DB
 	robotURL string // ROBOT_SPLIT_URL env
 }
 
-func New(r repository.IRepository, robotURL string) IService {
-	return &svc{repo: r, robotURL: robotURL}
+func New(r repository.IRepository, db *gorm.DB, robotURL string) IService {
+	return &svc{repo: r, db: db, robotURL: robotURL}
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +167,17 @@ func (s *svc) CreateEntry(ctx context.Context, req models.CreateEntryRequest, cr
 	}
 	if err := s.repo.CreateLog(ctx, &models.POBudgetEntryLog{EntryID: e.ID, Action: "Submitted", Username: &cb, Notes: strPtr("Submitted for approval")}); err != nil {
 		return nil, apperror.InternalWrap("database error", err)
+	}
+
+	// Create approval instance (MinLevels=1 — single-level approval is sufficient).
+	if _, err := approval.CreateInstance(ctx, s.db, approval.CreateInstanceParams{
+		ActionName:     "po-budget",
+		ReferenceTable: "po_budget_entries",
+		ReferenceID:    e.ID,
+		SubmittedBy:    createdBy,
+		MinLevels:      1,
+	}); err != nil {
+		return nil, err
 	}
 
 	// Re-fetch to get generated columns
@@ -598,11 +612,25 @@ func (s *svc) resolveSplit(ctx context.Context, budgetType string, po1 *float64,
 	return setting.Po1Pct, setting.Po2Pct, nil
 }
 
-// parsePeriod converts "October 2025" → time.Date(2025, 10, 1, ...)
+// parsePeriod parses period in two formats:
+//   - "October 2025"  (month name + year)
+//   - "10-2025"       (MM-YYYY numeric)
 func parsePeriod(period string) (time.Time, error) {
+	// Try MM-YYYY numeric format first
+	if strings.Contains(period, "-") {
+		parts := strings.SplitN(period, "-", 2)
+		if len(parts) == 2 {
+			monthNum, err1 := strconv.Atoi(parts[0])
+			year, err2 := strconv.Atoi(parts[1])
+			if err1 == nil && err2 == nil && monthNum >= 1 && monthNum <= 12 {
+				return time.Date(year, time.Month(monthNum), 1, 0, 0, 0, 0, time.UTC), nil
+			}
+		}
+	}
+	// Fall back to "Month YYYY" text format
 	parts := strings.Fields(period)
 	if len(parts) != 2 {
-		return time.Time{}, fmt.Errorf("invalid period: %q", period)
+		return time.Time{}, fmt.Errorf("invalid period %q: use 'October 2025' or '10-2025'", period)
 	}
 	year, err := strconv.Atoi(parts[1])
 	if err != nil {
@@ -907,12 +935,6 @@ func (s *svc) GetPRLWithAllocation(ctx context.Context, prlID string, budgetType
 //
 //	existing_allocated + SUM(new suppliers for this item) ≤ item.Quantity
 func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req models.BulkFromPRLRequest, createdBy string) (*models.BulkFromPRLResult, error) {
-	// Resolve PO split percentages once for all items
-	po1Pct, po2Pct, err := s.resolveSplit(ctx, budgetType, req.Po1Pct, req.Po2Pct)
-	if err != nil {
-		return nil, err
-	}
-
 	periodDate, err := parsePeriod(req.Period)
 	if err != nil {
 		return nil, apperror.BadRequest("invalid period format, use 'Month YYYY', e.g. 'October 2025'")
@@ -988,6 +1010,12 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 			partNumber = item.PartNumber
 		}
 
+		// Resolve PO split per item (falls back to po_split_settings)
+		po1Pct, po2Pct, err := s.resolveSplit(ctx, budgetType, item.Po1Pct, item.Po2Pct)
+		if err != nil {
+			return nil, err
+		}
+
 		// Validate: sum of new supplier quantities for this item
 		var newTotal float64
 		for _, sup := range item.Suppliers {
@@ -1003,28 +1031,17 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 			continue
 		}
 
-		// Validate: sum of suppliers for this item in the request itself ≤ budget_qty
-		if newTotal > budgetQty {
-			result.Errors = append(result.Errors,
-				fmt.Sprintf("uniq %s: supplier total (%.2f) exceeds budget qty (%.2f)",
-					uniqCode, newTotal, budgetQty),
-			)
-			continue
-		}
-
 		// Create one entry per supplier
 		for _, sup := range item.Suppliers {
 			cb := createdBy
 			prlRowID := item.PrlItemID
-			bq := budgetQty
 
 			entries = append(entries, models.POBudgetEntry{
-				BudgetType:   budgetType,
-				CustomerID:   nil,
-				CustomerName: prl.CustomerName,
-				UniqCode:     uniqCode,
-				ProductModel: productModel,
-				// UI currently doesn't provide material_type for PRL-based flow.
+				BudgetType:      budgetType,
+				CustomerID:      nil,
+				CustomerName:    prl.CustomerName,
+				UniqCode:        uniqCode,
+				ProductModel:    productModel,
 				MaterialType:    nil,
 				PartName:        partName,
 				PartNumber:      partNumber,
@@ -1042,7 +1059,6 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 				Prl:             budgetQty,
 				PrlRef:          &prlRef,
 				PrlRowID:        &prlRowID,
-				BudgetQty:       &bq,
 				BudgetSubtype:   &subtype,
 				Status:          "Pending",
 				CreatedBy:       &cb,
@@ -1053,6 +1069,18 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 	if len(entries) > 0 {
 		if err := s.repo.BulkCreateEntries(ctx, entries); err != nil {
 			return nil, apperror.InternalWrap("database error", err)
+		}
+		// Create one approval instance per entry (MinLevels=1).
+		for _, e := range entries {
+			if _, err := approval.CreateInstance(ctx, s.db, approval.CreateInstanceParams{
+				ActionName:     "po-budget",
+				ReferenceTable: "po_budget_entries",
+				ReferenceID:    e.ID,
+				SubmittedBy:    createdBy,
+				MinLevels:      1,
+			}); err != nil {
+				return nil, err
+			}
 		}
 	}
 

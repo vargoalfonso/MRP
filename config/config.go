@@ -29,6 +29,7 @@ type Config struct {
 	HTTPIdleTimeout     time.Duration
 	HTTPShutdownTimeout time.Duration
 	MaxBodyBytes        int64
+	MaxChunkBytes       int64
 
 	// CORS
 	CORSAllowedOrigins []string
@@ -99,7 +100,8 @@ func InitAppConfig() *Config {
 		HTTPWriteTimeout:    getEnvDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
 		HTTPIdleTimeout:     getEnvDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
 		HTTPShutdownTimeout: getEnvDuration("HTTP_SHUTDOWN_TIMEOUT", 10*time.Second),
-		MaxBodyBytes:        getEnvInt64("MAX_BODY_BYTES", 4<<20), // 4 MB
+		MaxBodyBytes:        getEnvInt64("MAX_BODY_BYTES", 4<<20),   // 4 MB
+		MaxChunkBytes:       getEnvInt64("MAX_CHUNK_BYTES", 50<<20), // 50 MB
 
 		CORSAllowedOrigins: getEnvStringSlice("CORS_ALLOWED_ORIGINS", nil),
 

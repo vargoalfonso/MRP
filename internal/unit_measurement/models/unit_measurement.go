@@ -4,11 +4,14 @@ import (
 	"time"
 )
 
-type UnitMeasurement struct {
-	ID        int64     `gorm:"primaryKey" json:"id"`
-	Name      string    `json:"name"`
-	Category  string    `json:"category"`
-	Status    string    `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+type UomParameter struct {
+	ID        int64 `gorm:"primaryKey;autoIncrement"`
+	Code      string
+	Name      string
+	Category  string
+	Status    string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
+
+func (UomParameter) TableName() string { return "uom_parameters" }

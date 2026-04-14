@@ -415,12 +415,12 @@ func (h *HTTPHandler) ListIncomingIndirect(ctx *app.Context) *app.CostumeRespons
 }
 
 // ---------------------------------------------------------------------------
-// Subcon Inventory — GET /api/v1/inventory/subcon
+// Subcon Inventory — GET /api/v1/inventory/subcon-materials
 // ---------------------------------------------------------------------------
 
 // ListSubconInventory returns the stock in vendor list.
 //
-//	GET /api/v1/inventory/subcon?search=EMA&po_number=PO-2026-001&period=2026-04&limit=20&page=1
+//	GET /api/v1/inventory/subcon-materials?search=EMA&po_number=PO-2026-001&period=2026-04&limit=20&page=1
 func (h *HTTPHandler) ListSubconInventory(ctx *app.Context) *app.CostumeResponse {
 	p := pagination.InventorySubconPagination(ctx)
 	data, err := h.svc.ListSubconInventory(ctx.Request.Context(), p)
@@ -437,7 +437,7 @@ func (h *HTTPHandler) ListSubconInventory(ctx *app.Context) *app.CostumeResponse
 
 // CreateSubconInventory creates a new subcon inventory record.
 //
-//	POST /api/v1/inventory/subcon
+//	POST /api/v1/inventory/subcon-materials
 func (h *HTTPHandler) CreateSubconInventory(ctx *app.Context) *app.CostumeResponse {
 	var req invModels.CreateSubconInventoryRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -470,7 +470,7 @@ func (h *HTTPHandler) CreateSubconInventory(ctx *app.Context) *app.CostumeRespon
 
 // GetSubconByID returns a single subcon inventory record.
 //
-//	GET /api/v1/inventory/subcon/:id
+//	GET /api/v1/inventory/subcon-materials/:id
 func (h *HTTPHandler) GetSubconByID(ctx *app.Context) *app.CostumeResponse {
 	id, ok := parseID(ctx)
 	if !ok {
@@ -490,7 +490,7 @@ func (h *HTTPHandler) GetSubconByID(ctx *app.Context) *app.CostumeResponse {
 
 // UpdateSubconInventory updates a subcon inventory record.
 //
-//	PUT /api/v1/inventory/subcon/:id
+//	PUT /api/v1/inventory/subcon-materials/:id
 func (h *HTTPHandler) UpdateSubconInventory(ctx *app.Context) *app.CostumeResponse {
 	id, ok := parseID(ctx)
 	if !ok {
@@ -519,7 +519,7 @@ func (h *HTTPHandler) UpdateSubconInventory(ctx *app.Context) *app.CostumeRespon
 
 // DeleteSubconInventory soft-deletes a subcon inventory record.
 //
-//	DELETE /api/v1/inventory/subcon/:id
+//	DELETE /api/v1/inventory/subcon-materials/:id
 func (h *HTTPHandler) DeleteSubconInventory(ctx *app.Context) *app.CostumeResponse {
 	id, ok := parseID(ctx)
 	if !ok {
@@ -538,7 +538,7 @@ func (h *HTTPHandler) DeleteSubconInventory(ctx *app.Context) *app.CostumeRespon
 
 // GetSubconHistory returns movement log for a subcon inventory record.
 //
-//	GET /api/v1/inventory/subcon/:id/history?limit=20&page=1
+//	GET /api/v1/inventory/subcon-materials/:id/history?limit=20&page=1
 func (h *HTTPHandler) GetSubconHistory(ctx *app.Context) *app.CostumeResponse {
 	id, ok := parseID(ctx)
 	if !ok {
@@ -559,10 +559,35 @@ func (h *HTTPHandler) GetSubconHistory(ctx *app.Context) *app.CostumeResponse {
 
 // ListSubconReceived returns stock received from vendor (movement type: incoming on subcon).
 //
-//	GET /api/v1/inventory/subcon/received?po_number=PO-2026-001&limit=20&page=1
+//	GET /api/v1/inventory/subcon-materials/received?po_number=PO-2026-001&limit=20&page=1
 func (h *HTTPHandler) ListSubconReceived(ctx *app.Context) *app.CostumeResponse {
 	p := pagination.InventoryIncomingPagination(ctx)
 	data, err := h.svc.ListIncoming(ctx.Request.Context(), "SUBCON", p)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
+// GetKanbanSummary returns kanban totals and incomplete stock for a given item_uniq_code.
+// Frontend calls this asynchronously per row in the DN list to show kanban progress.
+//
+//	GET /api/v1/inventory/kanban-summary?uniq_code=EMA-LV7-001
+func (h *HTTPHandler) GetKanbanSummary(ctx *app.Context) *app.CostumeResponse {
+	uniqCode := ctx.Query("uniq_code")
+	if uniqCode == "" {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "uniq_code is required",
+		}
+	}
+	data, err := h.svc.GetKanbanSummary(ctx.Request.Context(), uniqCode)
 	if err != nil {
 		return app.NewError(ctx, err)
 	}

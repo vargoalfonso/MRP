@@ -128,22 +128,14 @@ func New(db *gorm.DB) IRepository {
 func (r *repo) GetSummary(ctx context.Context, poType, period string) (models.POSummaryRow, error) {
 	var row models.POSummaryRow
 
-	// Late definition: expected_delivery_date < today AND qty_delivered < total ordered (via items).
-	// Simplified: we count POs where status = 'draft' or 'open' and expected_delivery_date < today.
-	today := time.Now().Format("2006-01-02")
-
 	query := r.db.WithContext(ctx).
 		Table("purchase_orders po").
 		Select(`
 			COUNT(DISTINCT po.po_id)                          AS total_pos,
 			COUNT(DISTINCT po.supplier_id)                    AS active_suppliers,
 			COALESCE(SUM(po.total_amount), 0)                 AS total_po_value,
-			COUNT(DISTINCT CASE
-				WHEN po.expected_delivery_date IS NOT NULL
-				 AND po.expected_delivery_date < ?
-				 AND po.status NOT IN ('closed','cancelled')
-				THEN po.po_id END)                            AS late_deliveries
-		`, today)
+			0                                                 AS late_deliveries
+		`)
 
 	if poType != "" {
 		query = query.Where("po.po_type = ?", poType)
@@ -203,10 +195,7 @@ func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoa
 	if f.Status != "" {
 		base = base.Where("po.status = ?", f.Status)
 	}
-	if f.LateOnly {
-		today := time.Now().Format("2006-01-02")
-		base = base.Where("po.expected_delivery_date IS NOT NULL AND po.expected_delivery_date < ? AND po.status NOT IN ('closed','cancelled')", today)
-	}
+
 	if f.Search != "" {
 		like := "%" + f.Search + "%"
 		base = base.Where("po.po_number ILIKE ? OR s.supplier_name ILIKE ?", like, like)
@@ -239,6 +228,7 @@ func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoa
 	}
 
 	today := time.Now().Format("2006-01-02")
+	_ = today // kept for future use
 	dnQtySelect := "COALESCE(dn_agg.qty_delivered, 0)                AS qty_delivered"
 	dnUniqSelect := "dn_agg.uniq_code"
 	if !hasDNTables {
@@ -261,10 +251,8 @@ func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoa
 			s.supplier_name,
 			po.status,
 			po.total_amount,
-			(po.expected_delivery_date IS NOT NULL
-			  AND po.expected_delivery_date < ?
-			  AND po.status NOT IN ('closed','cancelled'))   AS is_late
-		`, dnQtySelect, dnUniqSelect), today).
+			false                                            AS is_late
+		`, dnQtySelect, dnUniqSelect)).
 		Order(fmt.Sprintf("%s %s", orderBy, dir)).
 		Limit(limit).
 		Offset(offset).
@@ -412,7 +400,6 @@ func (r *repo) ListLegacySuppliersForBudget(ctx context.Context, budgetType, per
 	}
 	return suppliers, nil
 }
-
 
 // ---------------------------------------------------------------------------
 // Budget entries (read-only)

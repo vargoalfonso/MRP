@@ -51,6 +51,7 @@ func NewHTTPModule(
 //	DELETE /api/v1/products/bom/:id                     delete parent BOM + all lines
 //	DELETE /api/v1/products/bom/:id/children/:child_id  delete selected child subtree only
 //	DELETE /api/v1/products/bom/:id/lines/:line_id      delete selected node subtree by line id
+//	POST   /api/v1/products/bom/:id/approval            approve or reject (level-based)
 func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	g := r.Group("/api/v1/products/bom")
 	g.Use(authMiddleware.JWTMiddleware(m.authenticator))
@@ -63,5 +64,6 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		g.DELETE("/:id", roleMiddleware.RequirePermission(m.roleService, "bom", "delete"), m.base.RunAction(m.handler.DeleteBom))
 		g.DELETE("/:id/children/:child_id", roleMiddleware.RequirePermission(m.roleService, "bom", "delete"), m.base.RunAction(m.handler.DeleteBomChild))
 		g.DELETE("/:id/lines/:line_id", roleMiddleware.RequirePermission(m.roleService, "bom", "delete"), m.base.RunAction(m.handler.DeleteBomLine))
+		// g.POST("/:id/approval", roleMiddleware.RequirePermission(m.roleService, "bom", "update"), m.base.RunAction(m.handler.ApproveBom))
 	}
 }

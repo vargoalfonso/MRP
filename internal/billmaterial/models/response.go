@@ -13,6 +13,7 @@ import "github.com/ganasa18/go-template/pkg/pagination"
 //	cad_viewable: true only for "3d-model" assets
 //	label       : "3D Available" | "2D Available" | "-"
 type AssetInfo struct {
+	ID          *int64  `json:"id"`           // nil if no asset; use this as asset_id when replacing via upload
 	URL         *string `json:"url"`          // nil if no asset
 	AssetType   string  `json:"asset_type"`   // raw type from DB
 	Label       string  `json:"label"`        // display label for the Drawing column
@@ -25,6 +26,7 @@ type AssetInfo struct {
 
 type BomTreeRow struct {
 	ID         int64        `json:"id"`
+	BomID      *int64       `json:"bom_id,omitempty"` // bom_item.id — hanya ada di parent row; gunakan untuk GET /products/bom/:bom_id
 	LineID     *int64       `json:"line_id,omitempty"`
 	UniqCode   string       `json:"uniq_code"`
 	PartName   string       `json:"part_name"`
@@ -82,6 +84,7 @@ type BomDetailChild struct {
 	UniqCode      string               `json:"uniq_code"`
 	PartName      string               `json:"part_name"`
 	PartNumber    *string              `json:"part_number"`
+	Model         *string              `json:"model"`
 	Level         int16                `json:"level"`
 	QPU           float64              `json:"qty_per_uniq"`
 	Version       *string              `json:"version"`
@@ -100,6 +103,7 @@ type BomDetailResponse struct {
 	UniqCode      string               `json:"uniq_code"`
 	PartName      string               `json:"part_name"`
 	PartNumber    *string              `json:"part_number"`
+	Model         *string              `json:"model"`
 	Version       *string              `json:"version"`
 	Asset         AssetInfo            `json:"asset"`
 	Status        string               `json:"status"`

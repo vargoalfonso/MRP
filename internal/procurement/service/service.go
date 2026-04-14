@@ -633,6 +633,7 @@ func (s *svc) buildStagePO(ctx context.Context, legacySupID int64, entries []mod
 		PoStage:          &stage,
 		Period:           req.Period,
 		PoNumber:         poNumber,
+		PoBudgetID:       firstEntryID,
 		PoBudgetEntryID:  firstEntryID,
 		SupplierID:       &legacySupID,
 		Status:           "pending",

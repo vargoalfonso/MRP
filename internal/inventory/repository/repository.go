@@ -10,6 +10,7 @@ import (
 	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ---------------------------------------------------------------------------
@@ -161,6 +162,12 @@ type RMStats struct {
 	LowStockItems      int64 `gorm:"column:low_stock_items"`
 }
 
+// SafetyStockRow is a minimal projection from safety_stock_parameters.
+type SafetyStockRow struct {
+	CalculationType string  `gorm:"column:calculation_type"`
+	Constanta       float64 `gorm:"column:constanta"`
+}
+
 // ---------------------------------------------------------------------------
 // Interface
 // ---------------------------------------------------------------------------
@@ -194,6 +201,37 @@ type IRepository interface {
 
 	// Incoming scans (cross-type tab view)
 	ListIncoming(ctx context.Context, f IncomingListFilter) ([]IncomingRow, int64, error)
+
+	// Stock deduction (atomic subtract, floors at 0, triggers recalculate)
+	DeductRawMaterialByUniqCode(ctx context.Context, uniqCode string, qty float64, updatedBy string) (entityID int64, err error)
+	DeductIndirectMaterialByUniqCode(ctx context.Context, uniqCode string, qty float64, updatedBy string) (entityID int64, err error)
+
+	// Movement log
+	CreateMovementLog(ctx context.Context, log *invModels.InventoryMovementLog) error
+
+	// Items lookup (used to auto-fill part fields on manual inventory create)
+	FindItemByUniqCode(ctx context.Context, uniqCode string) (*ItemLookupRow, error)
+
+	// Kanban summary helpers — each returns one piece of data used to compute KanbanSummary.
+	GetRawMaterialByUniqCode(ctx context.Context, uniqCode string) (*RawMaterialRow, error)
+	GetSafetyStockParam(ctx context.Context, uniqCode string) (*SafetyStockRow, error)
+	GetActiveWorkingDays(ctx context.Context) (int, error)
+	GetPRLQtyByUniqCode(ctx context.Context, uniqCode string) (float64, error)
+	GetActivePOQtyByUniqCode(ctx context.Context, uniqCode string) (float64, error)
+	// GetForecastDailyUsage returns the latest forecasted daily usage from forecast_results.
+	// Used as fallback daily_usage when no safety_stock_parameter is active for the item.
+	GetForecastDailyUsage(ctx context.Context, uniqCode string) (float64, error)
+	// GetKanbanPkgQty returns pcs_per_kanban from supplier_item for the given uniq_code.
+	// Returns 0 when no active supplier_item record exists (caller must apply default).
+	GetKanbanPkgQty(ctx context.Context, uniqCode string) (int, error)
+}
+
+type ItemLookupRow struct {
+	ID         int64   `gorm:"column:id"`
+	UniqCode   string  `gorm:"column:uniq_code"`
+	PartNumber *string `gorm:"column:part_number"`
+	PartName   *string `gorm:"column:part_name"`
+	UOM        *string `gorm:"column:uom"`
 }
 
 // ---------------------------------------------------------------------------
@@ -262,11 +300,43 @@ func (r *repo) GetRawMaterialByID(ctx context.Context, id int64) (*invModels.Raw
 }
 
 func (r *repo) CreateRawMaterial(ctx context.Context, rm *invModels.RawMaterial) error {
-	return r.db.WithContext(ctx).Create(rm).Error
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_qty":          gorm.Expr("raw_materials.stock_qty + EXCLUDED.stock_qty"),
+				"stock_weight_kg":    gorm.Expr("COALESCE(raw_materials.stock_weight_kg, 0) + COALESCE(EXCLUDED.stock_weight_kg, 0)"),
+				"warehouse_location": gorm.Expr("COALESCE(EXCLUDED.warehouse_location, raw_materials.warehouse_location)"),
+				"uom":                gorm.Expr("COALESCE(EXCLUDED.uom, raw_materials.uom)"),
+				"raw_material_type":  gorm.Expr("COALESCE(EXCLUDED.raw_material_type, raw_materials.raw_material_type)"),
+				"rm_source":          gorm.Expr("COALESCE(EXCLUDED.rm_source, raw_materials.rm_source)"),
+				"part_name":          gorm.Expr("COALESCE(EXCLUDED.part_name, raw_materials.part_name)"),
+				"part_number":        gorm.Expr("COALESCE(EXCLUDED.part_number, raw_materials.part_number)"),
+				"deleted_at":         nil,
+				"updated_at":         gorm.Expr("now()"),
+			}),
+		}).
+		Create(rm).Error
 }
 
 func (r *repo) BulkCreateRawMaterials(ctx context.Context, items []invModels.RawMaterial) error {
-	return r.db.WithContext(ctx).CreateInBatches(items, 100).Error
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_qty":          gorm.Expr("raw_materials.stock_qty + EXCLUDED.stock_qty"),
+				"stock_weight_kg":    gorm.Expr("COALESCE(raw_materials.stock_weight_kg, 0) + COALESCE(EXCLUDED.stock_weight_kg, 0)"),
+				"warehouse_location": gorm.Expr("COALESCE(EXCLUDED.warehouse_location, raw_materials.warehouse_location)"),
+				"uom":                gorm.Expr("COALESCE(EXCLUDED.uom, raw_materials.uom)"),
+				"raw_material_type":  gorm.Expr("COALESCE(EXCLUDED.raw_material_type, raw_materials.raw_material_type)"),
+				"rm_source":          gorm.Expr("COALESCE(EXCLUDED.rm_source, raw_materials.rm_source)"),
+				"part_name":          gorm.Expr("COALESCE(EXCLUDED.part_name, raw_materials.part_name)"),
+				"part_number":        gorm.Expr("COALESCE(EXCLUDED.part_number, raw_materials.part_number)"),
+				"deleted_at":         nil,
+				"updated_at":         gorm.Expr("now()"),
+			}),
+		}).
+		CreateInBatches(items, 100).Error
 }
 
 func (r *repo) UpdateRawMaterial(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.RawMaterial, error) {
@@ -376,11 +446,39 @@ func (r *repo) GetIndirectByID(ctx context.Context, id int64) (*invModels.Indire
 }
 
 func (r *repo) CreateIndirectMaterial(ctx context.Context, irm *invModels.IndirectRawMaterial) error {
-	return r.db.WithContext(ctx).Create(irm).Error
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_qty":          gorm.Expr("indirect_raw_materials.stock_qty + EXCLUDED.stock_qty"),
+				"stock_weight_kg":    gorm.Expr("COALESCE(indirect_raw_materials.stock_weight_kg, 0) + COALESCE(EXCLUDED.stock_weight_kg, 0)"),
+				"warehouse_location": gorm.Expr("COALESCE(EXCLUDED.warehouse_location, indirect_raw_materials.warehouse_location)"),
+				"uom":                gorm.Expr("COALESCE(EXCLUDED.uom, indirect_raw_materials.uom)"),
+				"part_name":          gorm.Expr("COALESCE(EXCLUDED.part_name, indirect_raw_materials.part_name)"),
+				"part_number":        gorm.Expr("COALESCE(EXCLUDED.part_number, indirect_raw_materials.part_number)"),
+				"deleted_at":         nil,
+				"updated_at":         gorm.Expr("now()"),
+			}),
+		}).
+		Create(irm).Error
 }
 
 func (r *repo) BulkCreateIndirectMaterials(ctx context.Context, items []invModels.IndirectRawMaterial) error {
-	return r.db.WithContext(ctx).CreateInBatches(items, 100).Error
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_qty":          gorm.Expr("indirect_raw_materials.stock_qty + EXCLUDED.stock_qty"),
+				"stock_weight_kg":    gorm.Expr("COALESCE(indirect_raw_materials.stock_weight_kg, 0) + COALESCE(EXCLUDED.stock_weight_kg, 0)"),
+				"warehouse_location": gorm.Expr("COALESCE(EXCLUDED.warehouse_location, indirect_raw_materials.warehouse_location)"),
+				"uom":                gorm.Expr("COALESCE(EXCLUDED.uom, indirect_raw_materials.uom)"),
+				"part_name":          gorm.Expr("COALESCE(EXCLUDED.part_name, indirect_raw_materials.part_name)"),
+				"part_number":        gorm.Expr("COALESCE(EXCLUDED.part_number, indirect_raw_materials.part_number)"),
+				"deleted_at":         nil,
+				"updated_at":         gorm.Expr("now()"),
+			}),
+		}).
+		CreateInBatches(items, 100).Error
 }
 
 func (r *repo) UpdateIndirectMaterial(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.IndirectRawMaterial, error) {
@@ -485,7 +583,20 @@ func (r *repo) GetSubconByID(ctx context.Context, id int64) (*invModels.SubconIn
 }
 
 func (r *repo) CreateSubconInventory(ctx context.Context, si *invModels.SubconInventory) error {
-	return r.db.WithContext(ctx).Create(si).Error
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_at_vendor_qty": gorm.Expr("subcon_inventories.stock_at_vendor_qty + EXCLUDED.stock_at_vendor_qty"),
+				"part_name":           gorm.Expr("COALESCE(EXCLUDED.part_name, subcon_inventories.part_name)"),
+				"part_number":         gorm.Expr("COALESCE(EXCLUDED.part_number, subcon_inventories.part_number)"),
+				"subcon_vendor_id":    gorm.Expr("COALESCE(EXCLUDED.subcon_vendor_id, subcon_inventories.subcon_vendor_id)"),
+				"subcon_vendor_name":  gorm.Expr("COALESCE(EXCLUDED.subcon_vendor_name, subcon_inventories.subcon_vendor_name)"),
+				"deleted_at":          nil,
+				"updated_at":          gorm.Expr("now()"),
+			}),
+		}).
+		Create(si).Error
 }
 
 func (r *repo) UpdateSubconInventory(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.SubconInventory, error) {
@@ -557,8 +668,7 @@ func (r *repo) ListIncoming(ctx context.Context, f IncomingListFilter) ([]Incomi
 			SELECT id, status FROM qc_tasks
 			WHERE task_type = 'incoming_qc' AND incoming_dn_item_id = dni.id
 			ORDER BY id DESC LIMIT 1
-		) qt ON TRUE`).
-		Joins("LEFT JOIN raw_materials rm ON rm.uniq_code = dni.item_uniq_code AND rm.deleted_at IS NULL")
+		) qt ON TRUE`)
 
 	if f.DNType != "" {
 		q = q.Where("UPPER(TRIM(dn.type)) IN ?", dnTypeVariants(f.DNType))
@@ -589,7 +699,7 @@ func (r *repo) ListIncoming(ctx context.Context, f IncomingListFilter) ([]Incomi
 		irs.id                                    AS scan_id,
 		dni.item_uniq_code,
 		irs.qty                                   AS incoming_qty,
-		rm.warehouse_location                     AS warehouse,
+		irs.warehouse_location                    AS warehouse,
 		irs.scanned_at                            AS scan_date,
 		s.supplier_name,
 		dn.po_number,
@@ -715,3 +825,230 @@ func dnTypeVariants(t string) []string {
 }
 
 func strPtr(s string) *string { return &s }
+
+// ---------------------------------------------------------------------------
+// Stock Deduction
+// ---------------------------------------------------------------------------
+
+func (r *repo) DeductRawMaterialByUniqCode(ctx context.Context, uniqCode string, qty float64, updatedBy string) (int64, error) {
+	tx := r.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+		}
+	}()
+
+	type result struct {
+		ID int64 `gorm:"column:id"`
+	}
+	var row result
+	if err := tx.Raw(
+		`UPDATE raw_materials SET stock_qty = GREATEST(0, stock_qty - ?), updated_by = ?, updated_at = now()
+		 WHERE uniq_code = ? AND deleted_at IS NULL RETURNING id`,
+		qty, updatedBy, uniqCode,
+	).Scan(&row).Error; err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if row.ID == 0 {
+		tx.Rollback()
+		return 0, nil // not found in this table — caller tries next
+	}
+	if err := recalculateRMStatus(tx, row.ID); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	return row.ID, tx.Commit().Error
+}
+
+func (r *repo) DeductIndirectMaterialByUniqCode(ctx context.Context, uniqCode string, qty float64, updatedBy string) (int64, error) {
+	tx := r.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+		}
+	}()
+
+	type result struct {
+		ID int64 `gorm:"column:id"`
+	}
+	var row result
+	if err := tx.Raw(
+		`UPDATE indirect_raw_materials SET stock_qty = GREATEST(0, stock_qty - ?), updated_by = ?, updated_at = now()
+		 WHERE uniq_code = ? AND deleted_at IS NULL RETURNING id`,
+		qty, updatedBy, uniqCode,
+	).Scan(&row).Error; err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if row.ID == 0 {
+		tx.Rollback()
+		return 0, nil // not found
+	}
+	if err := recalculateIndirectStatus(tx, row.ID); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	return row.ID, tx.Commit().Error
+}
+
+// Movement Log
+// ---------------------------------------------------------------------------
+
+func (r *repo) CreateMovementLog(ctx context.Context, log *invModels.InventoryMovementLog) error {
+	if log.LoggedAt.IsZero() {
+		log.LoggedAt = time.Now()
+	}
+	return r.db.WithContext(ctx).Create(log).Error
+}
+
+func (r *repo) FindItemByUniqCode(ctx context.Context, uniqCode string) (*ItemLookupRow, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return nil, nil
+	}
+	var row ItemLookupRow
+	err := r.db.WithContext(ctx).
+		Table("items").
+		Select("id, uniq_code, part_number, part_name, uom").
+		Where("uniq_code = ? AND deleted_at IS NULL", uniqCode).
+		Take(&row).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, apperror.InternalWrap("FindItemByUniqCode", err)
+	}
+	return &row, nil
+}
+
+// ---------------------------------------------------------------------------
+// Kanban Summary helpers
+// ---------------------------------------------------------------------------
+
+func (r *repo) GetRawMaterialByUniqCode(ctx context.Context, uniqCode string) (*RawMaterialRow, error) {
+	var row RawMaterialRow
+	// Only select the columns that will remain after derived fields are dropped:
+	// stock_qty is the only truly persistent field needed for kanban computation.
+	// raw_material_type is kept to detect SSP (buy/not-buy = n/a).
+	err := r.db.WithContext(ctx).
+		Table("raw_materials").
+		Select("id, uniq_code, stock_qty, raw_material_type").
+		Where("uniq_code = ? AND deleted_at IS NULL", uniqCode).
+		First(&row).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("GetRawMaterialByUniqCode", err)
+	}
+	return &row, nil
+}
+
+func (r *repo) GetSafetyStockParam(ctx context.Context, uniqCode string) (*SafetyStockRow, error) {
+	var row SafetyStockRow
+	err := r.db.WithContext(ctx).
+		Table("safety_stock_parameters").
+		Select("calculation_type, constanta").
+		Where("item_uniq_code = ?", uniqCode).
+		First(&row).Error
+	if err != nil {
+		return nil, err // caller treats not-found as "no param"
+	}
+	return &row, nil
+}
+
+func (r *repo) GetActiveWorkingDays(ctx context.Context) (int, error) {
+	var result struct {
+		WorkingDays int `gorm:"column:working_days"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("global_parameters").
+		Select("working_days").
+		Where("status = 'active'").
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.WorkingDays, nil
+}
+
+// GetPRLQtyByUniqCode returns the total PRL quantity from active PRL forecasts for the given item.
+func (r *repo) GetPRLQtyByUniqCode(ctx context.Context, uniqCode string) (float64, error) {
+	var result struct {
+		Total float64 `gorm:"column:total"`
+	}
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(fi.quantity), 0) AS total
+		FROM prl_forecast_items fi
+		JOIN prl_forecasts f ON f.id = fi.prl_id
+		WHERE fi.uniq_code = ?
+		  AND f.status = 'Active'
+	`, uniqCode).Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.Total, nil
+}
+
+// GetActivePOQtyByUniqCode returns the total open PO quantity for the given item.
+func (r *repo) GetActivePOQtyByUniqCode(ctx context.Context, uniqCode string) (float64, error) {
+	var result struct {
+		Total float64 `gorm:"column:total"`
+	}
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(poi.ordered_qty), 0) AS total
+		FROM purchase_order_items poi
+		JOIN purchase_orders po ON po.po_id = poi.po_id
+		WHERE poi.item_uniq_code = ?
+		  AND poi.status = 'open'
+		  AND po.status NOT IN ('cancelled', 'closed')
+	`, uniqCode).Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.Total, nil
+}
+
+// GetForecastDailyUsage returns the latest forecasted daily usage from forecast_results.
+// Used as fallback when no safety_stock_parameter is active for the item.
+func (r *repo) GetForecastDailyUsage(ctx context.Context, uniqCode string) (float64, error) {
+	var result struct {
+		ForecastQty float64 `gorm:"column:forecast_qty"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("forecast_results").
+		Select("forecast_qty").
+		Where("item_code = ?", uniqCode).
+		Order("created_at DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.ForecastQty, nil
+}
+
+// GetKanbanPkgQty returns pcs_per_kanban from supplier_item for the given uniq_code.
+// Returns 0 if no active record found — caller applies the default (50).
+func (r *repo) GetKanbanPkgQty(ctx context.Context, uniqCode string) (int, error) {
+	var result struct {
+		PcsPerKanban int `gorm:"column:pcs_per_kanban"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("supplier_item").
+		Select("pcs_per_kanban").
+		Where("uniq_code = ? AND status = 'active' AND deleted_at IS NULL", uniqCode).
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.PcsPerKanban, nil
+}
