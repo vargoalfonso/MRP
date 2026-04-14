@@ -1,0 +1,266 @@
+{
+  "info": {
+    "_postman_id": "f847b9cb-d3b9-4d7c-9b76-ae8296070c07",
+    "name": "PRL Management API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Postman collection for PRL management, including customer lookup, UNIQ BOM lookup, bulk create, approve/reject, qty/period edit, Excel import, and export."
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register User",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const seed = Date.now();",
+                  "pm.environment.set('auth_username', `prl_user_${seed}`);",
+                  "pm.environment.set('auth_email', `prl_user_${seed}@example.com`);",
+                  "if (!pm.environment.get('auth_password')) { pm.environment.set('auth_password', 'secret123'); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"{{auth_username}}\",\n  \"email\": \"{{auth_email}}\",\n  \"password\": \"{{auth_password}}\"\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/auth/register", "host": ["{{base_url}}"], "path": ["api", "v1", "auth", "register"] }
+          }
+        },
+        {
+          "name": "Login",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "pm.test('login ok', function () { pm.response.to.have.status(200); });",
+              "const json = pm.response.json();",
+              "pm.environment.set('access_token', json.data.access_token);"
+            ] }
+          }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{auth_email}}\",\n  \"password\": \"{{auth_password}}\"\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/auth/login", "host": ["{{base_url}}"], "path": ["api", "v1", "auth", "login"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Prerequisites",
+      "item": [
+        {
+          "name": "Create Customer",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "pm.test('customer created', function () { pm.response.to.have.status(201); });",
+              "const json = pm.response.json();",
+              "pm.environment.set('customer_uuid', json.data.id);",
+              "pm.environment.set('customer_code', json.data.customer_id);"
+            ] }
+          }],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"customer_name\": \"PT PRL Customer\",\n  \"phone_number\": \"+62-21-7778889\",\n  \"shipping_address\": \"Jl. PRL Customer No. 1, Jakarta\",\n  \"billing_address\": \"\",\n  \"billing_same_as_shipping\": true,\n  \"bank_account\": \"BCA\",\n  \"bank_account_number\": \"11223344\"\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/customers", "host": ["{{base_url}}"], "path": ["api", "v1", "customers"] }
+          }
+        },
+        {
+          "name": "Create UNIQ BOM",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": { "type": "text/javascript", "exec": [
+                "pm.environment.set('uniq_code', `PRL-UNIQ-${Date.now()}`);"
+              ] }
+            },
+            {
+              "listen": "test",
+              "script": { "type": "text/javascript", "exec": [
+                "pm.test('uniq bom created', function () { pm.response.to.have.status(201); });",
+                "const json = pm.response.json();",
+                "pm.environment.set('uniq_bom_uuid', json.data.id);",
+                "pm.environment.set('uniq_code', json.data.uniq_code);"
+              ] }
+            }
+          ],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"uniq_code\": \"{{uniq_code}}\",\n  \"product_model\": \"Camry 2026\",\n  \"part_name\": \"Engine Mount Bracket\",\n  \"part_number\": \"EM-PRL-001\"\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/uniq-boms", "host": ["{{base_url}}"], "path": ["api", "v1", "uniq-boms"] }
+          }
+        },
+        {
+          "name": "Lookup Customers",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/prls/lookups/customers", "host": ["{{base_url}}"], "path": ["api", "v1", "prls", "lookups", "customers"] }
+          }
+        },
+        {
+          "name": "Lookup UNIQ BOMs",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/prls/lookups/uniq-boms?page=1&limit=10", "host": ["{{base_url}}"], "path": ["api", "v1", "prls", "lookups", "uniq-boms"], "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "10" }] }
+          }
+        },
+        {
+          "name": "Lookup Forecast Periods",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/prls/lookups/forecast-periods?year=2026", "host": ["{{base_url}}"], "path": ["api", "v1", "prls", "lookups", "forecast-periods"], "query": [{ "key": "year", "value": "2026" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "PRL CRUD",
+      "item": [
+        {
+          "name": "Bulk Create PRL",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "pm.test('bulk create prl returns 201', function () { pm.response.to.have.status(201); });",
+              "const json = pm.response.json();",
+              "pm.environment.set('prl_uuid', json.data.items[0].id);",
+              "pm.environment.set('prl_code', json.data.items[0].prl_id);",
+              "pm.environment.set('prl_ids_json', JSON.stringify(json.data.items.map(item => item.id)));"
+            ] }
+          }],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"entries\": [\n    {\n      \"customer_uuid\": \"{{customer_uuid}}\",\n      \"uniq_code\": \"{{uniq_code}}\",\n      \"forecast_period\": \"2026-Q1\",\n      \"quantity\": 2500\n    },\n    {\n      \"customer_uuid\": \"{{customer_uuid}}\",\n      \"uniq_code\": \"{{uniq_code}}\",\n      \"forecast_period\": \"2026-Q2\",\n      \"quantity\": 3000\n    }\n  ]\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/prls/bulk", "host": ["{{base_url}}"], "path": ["api", "v1", "prls", "bulk"] }
+          }
+        },
+        {
+          "name": "List PRLs",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/prls?page=1&limit=10", "host": ["{{base_url}}"], "path": ["api", "v1", "prls"], "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "10" }] }
+          }
+        },
+        {
+          "name": "Get PRL Detail",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/prls/{{prl_uuid}}", "host": ["{{base_url}}"], "path": ["api", "v1", "prls", "{{prl_uuid}}"] }
+          }
+        },
+        {
+          "name": "Edit PRL Qty and Period",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "pm.test('update prl returns 200', function () { pm.response.to.have.status(200); });"
+            ] }
+          }],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"forecast_period\": \"2026-Q3\",\n  \"quantity\": 4200\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/prls/{{prl_uuid}}", "host": ["{{base_url}}"], "path": ["api", "v1", "prls", "{{prl_uuid}}"] }
+          }
+        },
+        {
+          "name": "Bulk Approve PRLs",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ids\": {{prl_ids_json}}\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/prls/actions/approve", "host": ["{{base_url}}"], "path": ["api", "v1", "prls", "actions", "approve"] }
+          }
+        },
+        {
+          "name": "Bulk Create PRL Reject Candidate",
+          "event": [{
+            "listen": "test",
+            "script": { "type": "text/javascript", "exec": [
+              "pm.test('create reject candidate returns 201', function () { pm.response.to.have.status(201); });",
+              "const json = pm.response.json();",
+              "pm.environment.set('reject_prl_uuid', json.data.items[0].id);",
+              "pm.environment.set('reject_prl_ids_json', JSON.stringify(json.data.items.map(item => item.id)));"
+            ] }
+          }],
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"entries\": [\n    {\n      \"customer_uuid\": \"{{customer_uuid}}\",\n      \"uniq_code\": \"{{uniq_code}}\",\n      \"forecast_period\": \"2026-Q4\",\n      \"quantity\": 1800\n    }\n  ]\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/prls/bulk", "host": ["{{base_url}}"], "path": ["api", "v1", "prls", "bulk"] }
+          }
+        },
+        {
+          "name": "Bulk Reject PRLs",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"ids\": {{reject_prl_ids_json}}\n}" },
+            "url": { "raw": "{{base_url}}/api/v1/prls/actions/reject", "host": ["{{base_url}}"], "path": ["api", "v1", "prls", "actions", "reject"] }
+          }
+        },
+        {
+          "name": "Export PRLs Excel",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/prls/export", "host": ["{{base_url}}"], "path": ["api", "v1", "prls", "export"] }
+          }
+        },
+        {
+          "name": "Import PRLs Excel",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "POST",
+            "header": [],
+            "body": { "mode": "formdata", "formdata": [{ "key": "file", "type": "file", "src": "{{prl_import_file}}" }] },
+            "url": { "raw": "{{base_url}}/api/v1/prls/import", "host": ["{{base_url}}"], "path": ["api", "v1", "prls", "import"] }
+          }
+        },
+        {
+          "name": "Delete PRL",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{access_token}}", "type": "string" }] },
+            "method": "DELETE",
+            "url": { "raw": "{{base_url}}/api/v1/prls/{{reject_prl_uuid}}", "host": ["{{base_url}}"], "path": ["api", "v1", "prls", "{{reject_prl_uuid}}"] }
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "if (!pm.environment.get('base_url')) { pm.environment.set('base_url', 'http://localhost:8899'); }",
+          "if (!pm.environment.get('prl_ids_json')) { pm.environment.set('prl_ids_json', '[]'); }",
+          "if (!pm.environment.get('reject_prl_ids_json')) { pm.environment.set('reject_prl_ids_json', '[]'); }"
+        ]
+      }
+    }
+  ],
+  "variable": []
+}

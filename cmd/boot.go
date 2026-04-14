@@ -28,6 +28,10 @@ import (
 	bomHandler "github.com/ganasa18/go-template/internal/billmaterial/handler"
 	bomRepository "github.com/ganasa18/go-template/internal/billmaterial/repository"
 	bomService "github.com/ganasa18/go-template/internal/billmaterial/service"
+	customerModule "github.com/ganasa18/go-template/internal/customer"
+	customerHandler "github.com/ganasa18/go-template/internal/customer/handler"
+	customerRepository "github.com/ganasa18/go-template/internal/customer/repository"
+	customerService "github.com/ganasa18/go-template/internal/customer/service"
 	deliveryNoteModule "github.com/ganasa18/go-template/internal/delivery_note"
 	deliveryNoteHandler "github.com/ganasa18/go-template/internal/delivery_note/handler"
 	deliveryNoteRepository "github.com/ganasa18/go-template/internal/delivery_note/repository"
@@ -61,6 +65,10 @@ import (
 	poSplitSettingHandler "github.com/ganasa18/go-template/internal/po_split_setting/handler"
 	poSplitSettingRepository "github.com/ganasa18/go-template/internal/po_split_setting/repository"
 	poSplitSettingService "github.com/ganasa18/go-template/internal/po_split_setting/service"
+	prlModule "github.com/ganasa18/go-template/internal/prl"
+	prlHandler "github.com/ganasa18/go-template/internal/prl/handler"
+	prlRepository "github.com/ganasa18/go-template/internal/prl/repository"
+	prlService "github.com/ganasa18/go-template/internal/prl/service"
 	processParameterModule "github.com/ganasa18/go-template/internal/process_parameter"
 	processParameterHandler "github.com/ganasa18/go-template/internal/process_parameter/handler"
 	processParameterRepository "github.com/ganasa18/go-template/internal/process_parameter/repository"
@@ -81,6 +89,10 @@ import (
 	safetyStockHandler "github.com/ganasa18/go-template/internal/safety_stock_parameter/handler"
 	safetyStockRepo "github.com/ganasa18/go-template/internal/safety_stock_parameter/repository"
 	safetyStockService "github.com/ganasa18/go-template/internal/safety_stock_parameter/service"
+	supplierModule "github.com/ganasa18/go-template/internal/supplier"
+	supplierHandler "github.com/ganasa18/go-template/internal/supplier/handler"
+	supplierRepository "github.com/ganasa18/go-template/internal/supplier/repository"
+	supplierService "github.com/ganasa18/go-template/internal/supplier/service"
 	typeParameterModule "github.com/ganasa18/go-template/internal/type_parameter"
 	typeParameterHandler "github.com/ganasa18/go-template/internal/type_parameter/handler"
 	typeParameterRepository "github.com/ganasa18/go-template/internal/type_parameter/repository"
@@ -133,6 +145,15 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 
 	baseHTTPHandler := baseHandler.NewBaseHTTPHandler(db)
 	authHTTPHandler := authHandler.New(authSvc)
+	customerRepo := customerRepository.New(db)
+	customerSvc := customerService.New(customerRepo)
+	customerHTTPHandler := customerHandler.New(customerSvc)
+	prlRepo := prlRepository.New(db)
+	prlSvc := prlService.New(prlRepo)
+	prlHTTPHandler := prlHandler.New(prlSvc)
+	supplierRepo := supplierRepository.New(db)
+	supplierSvc := supplierService.New(supplierRepo)
+	supplierHTTPHandler := supplierHandler.New(supplierSvc)
 	roleHTTPHandler := roleHandler.New(roleSvc)
 
 	employeeRepo := employeeRepository.New(db)
@@ -222,6 +243,9 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
+		customerModule.NewHTTPModule(cfg, baseHTTPHandler, customerHTTPHandler, authSvc),
+		prlModule.NewHTTPModule(cfg, baseHTTPHandler, prlHTTPHandler, authSvc),
+		supplierModule.NewHTTPModule(cfg, baseHTTPHandler, supplierHTTPHandler, authSvc),
 		bomModule.NewHTTPModule(cfg, baseHTTPHandler, bomHTTPHandler, authSvc, roleSvc, bomSvc),
 		uploadModule.NewHTTPModule(baseHTTPHandler, uploadHTTPHandler, uploadSvc, authSvc, roleSvc),
 		roleModule.NewHTTPModule(cfg, baseHTTPHandler, roleHTTPHandler, authSvc, roleSvc),
