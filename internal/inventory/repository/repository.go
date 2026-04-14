@@ -202,8 +202,15 @@ type IRepository interface {
 	// Incoming scans (cross-type tab view)
 	ListIncoming(ctx context.Context, f IncomingListFilter) ([]IncomingRow, int64, error)
 
+	// Stock deduction (atomic subtract, floors at 0, triggers recalculate)
+	DeductRawMaterialByUniqCode(ctx context.Context, uniqCode string, qty float64, updatedBy string) (entityID int64, err error)
+	DeductIndirectMaterialByUniqCode(ctx context.Context, uniqCode string, qty float64, updatedBy string) (entityID int64, err error)
+
 	// Movement log
 	CreateMovementLog(ctx context.Context, log *invModels.InventoryMovementLog) error
+
+	// Items lookup (used to auto-fill part fields on manual inventory create)
+	FindItemByUniqCode(ctx context.Context, uniqCode string) (*ItemLookupRow, error)
 
 	// Kanban summary helpers — each returns one piece of data used to compute KanbanSummary.
 	GetRawMaterialByUniqCode(ctx context.Context, uniqCode string) (*RawMaterialRow, error)
@@ -217,6 +224,14 @@ type IRepository interface {
 	// GetKanbanPkgQty returns pcs_per_kanban from supplier_item for the given uniq_code.
 	// Returns 0 when no active supplier_item record exists (caller must apply default).
 	GetKanbanPkgQty(ctx context.Context, uniqCode string) (int, error)
+}
+
+type ItemLookupRow struct {
+	ID         int64   `gorm:"column:id"`
+	UniqCode   string  `gorm:"column:uniq_code"`
+	PartNumber *string `gorm:"column:part_number"`
+	PartName   *string `gorm:"column:part_name"`
+	UOM        *string `gorm:"column:uom"`
 }
 
 // ---------------------------------------------------------------------------
@@ -812,6 +827,77 @@ func dnTypeVariants(t string) []string {
 func strPtr(s string) *string { return &s }
 
 // ---------------------------------------------------------------------------
+// Stock Deduction
+// ---------------------------------------------------------------------------
+
+func (r *repo) DeductRawMaterialByUniqCode(ctx context.Context, uniqCode string, qty float64, updatedBy string) (int64, error) {
+	tx := r.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+		}
+	}()
+
+	type result struct {
+		ID int64 `gorm:"column:id"`
+	}
+	var row result
+	if err := tx.Raw(
+		`UPDATE raw_materials SET stock_qty = GREATEST(0, stock_qty - ?), updated_by = ?, updated_at = now()
+		 WHERE uniq_code = ? AND deleted_at IS NULL RETURNING id`,
+		qty, updatedBy, uniqCode,
+	).Scan(&row).Error; err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if row.ID == 0 {
+		tx.Rollback()
+		return 0, nil // not found in this table — caller tries next
+	}
+	if err := recalculateRMStatus(tx, row.ID); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	return row.ID, tx.Commit().Error
+}
+
+func (r *repo) DeductIndirectMaterialByUniqCode(ctx context.Context, uniqCode string, qty float64, updatedBy string) (int64, error) {
+	tx := r.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+		}
+	}()
+
+	type result struct {
+		ID int64 `gorm:"column:id"`
+	}
+	var row result
+	if err := tx.Raw(
+		`UPDATE indirect_raw_materials SET stock_qty = GREATEST(0, stock_qty - ?), updated_by = ?, updated_at = now()
+		 WHERE uniq_code = ? AND deleted_at IS NULL RETURNING id`,
+		qty, updatedBy, uniqCode,
+	).Scan(&row).Error; err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if row.ID == 0 {
+		tx.Rollback()
+		return 0, nil // not found
+	}
+	if err := recalculateIndirectStatus(tx, row.ID); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	return row.ID, tx.Commit().Error
+}
+
 // Movement Log
 // ---------------------------------------------------------------------------
 
@@ -820,6 +906,26 @@ func (r *repo) CreateMovementLog(ctx context.Context, log *invModels.InventoryMo
 		log.LoggedAt = time.Now()
 	}
 	return r.db.WithContext(ctx).Create(log).Error
+}
+
+func (r *repo) FindItemByUniqCode(ctx context.Context, uniqCode string) (*ItemLookupRow, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return nil, nil
+	}
+	var row ItemLookupRow
+	err := r.db.WithContext(ctx).
+		Table("items").
+		Select("id, uniq_code, part_number, part_name, uom").
+		Where("uniq_code = ? AND deleted_at IS NULL", uniqCode).
+		Take(&row).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, apperror.InternalWrap("FindItemByUniqCode", err)
+	}
+	return &row, nil
 }
 
 // ---------------------------------------------------------------------------

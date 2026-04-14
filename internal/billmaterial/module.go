@@ -64,6 +64,6 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		g.DELETE("/:id", roleMiddleware.RequirePermission(m.roleService, "bom", "delete"), m.base.RunAction(m.handler.DeleteBom))
 		g.DELETE("/:id/children/:child_id", roleMiddleware.RequirePermission(m.roleService, "bom", "delete"), m.base.RunAction(m.handler.DeleteBomChild))
 		g.DELETE("/:id/lines/:line_id", roleMiddleware.RequirePermission(m.roleService, "bom", "delete"), m.base.RunAction(m.handler.DeleteBomLine))
-		g.POST("/:id/approval", roleMiddleware.RequirePermission(m.roleService, "bom", "update"), m.base.RunAction(m.handler.ApproveBom))
+		g.POST("/:id/approval", roleMiddleware.RequirePermission(m.roleService, "bom", "approve"), m.base.RunAction(m.handler.ApproveBom))
 	}
 }

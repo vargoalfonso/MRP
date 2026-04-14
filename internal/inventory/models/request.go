@@ -7,7 +7,9 @@ import "time"
 // ---------------------------------------------------------------------------
 
 type CreateRawMaterialRequest struct {
-	UniqCode          string   `json:"uniq_code" validate:"required"`
+	UniqCode string `json:"uniq_code" validate:"required"`
+	// Optional: when raw_materials.uniq_code differs from items.uniq_code, provide this to auto-fill part fields.
+	ItemUniqCode      *string  `json:"item_uniq_code"`
 	RawMaterialType   string   `json:"raw_material_type"` // sheet_plate | wire | ssp | others
 	RMSource          string   `json:"rm_source"`         // process | supplier
 	PartNumber        *string  `json:"part_number"`
@@ -47,6 +49,7 @@ type UpdateRawMaterialRequest struct {
 
 type CreateIndirectMaterialRequest struct {
 	UniqCode          string   `json:"uniq_code" validate:"required"`
+	ItemUniqCode      *string  `json:"item_uniq_code"`
 	PartNumber        *string  `json:"part_number"`
 	PartName          *string  `json:"part_name"`
 	WarehouseLocation *string  `json:"warehouse_location"`
@@ -82,6 +85,7 @@ type UpdateIndirectMaterialRequest struct {
 
 type CreateSubconInventoryRequest struct {
 	UniqCode         string     `json:"uniq_code" validate:"required"`
+	ItemUniqCode     *string    `json:"item_uniq_code"`
 	PartNumber       *string    `json:"part_number"`
 	PartName         *string    `json:"part_name"`
 	PONumber         *string    `json:"po_number"`

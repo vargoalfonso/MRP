@@ -39,33 +39,18 @@
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS approval_instances (
-    id                   BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-
-action_name VARCHAR(100) NOT NULL,
-
-
-reference_table VARCHAR(100) NOT NULL,
-
-
-reference_id     BIGINT       NOT NULL,
-
-approval_workflow_id BIGINT NOT NULL REFERENCES approval_workflows (id) ON DELETE RESTRICT,
-
-current_level INT NOT NULL DEFAULT 1 CHECK (current_level BETWEEN 1 AND 4),
-
-
-max_level INT NOT NULL CHECK (max_level BETWEEN 2 AND 4),
-
-status VARCHAR(20) NOT NULL DEFAULT 'pending',
-
-submitted_by VARCHAR(100) NULL,
-
-
-
-approval_progress    JSONB        NOT NULL DEFAULT '{}',
-
-    created_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    action_name VARCHAR(100) NOT NULL,
+    reference_table VARCHAR(100) NOT NULL,
+    reference_id BIGINT NOT NULL,
+    approval_workflow_id BIGINT NOT NULL REFERENCES approval_workflows (id) ON DELETE RESTRICT,
+    current_level INT NOT NULL DEFAULT 1 CHECK (current_level BETWEEN 1 AND 4),
+    max_level INT NOT NULL CHECK (max_level BETWEEN 2 AND 4),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    submitted_by VARCHAR(100) NULL,
+    approval_progress JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Index untuk query by modul + dokumen
