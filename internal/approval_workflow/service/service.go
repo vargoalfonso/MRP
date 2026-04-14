@@ -230,6 +230,14 @@ func (s *service) Approve(ctx context.Context, instanceID int64, userRoles []str
 		return err
 	}
 
+	if instance.Status == "rejected" {
+		return fmt.Errorf("Data Tersebut sudah ditolak.")
+	}
+
+	if instance.Status == "approved" {
+		return fmt.Errorf("Data Tersebut sudah diterima.")
+	}
+
 	progress := instance.ApprovalProgress
 
 	// ==============================
@@ -316,6 +324,14 @@ func (s *service) Reject(ctx context.Context, instanceID int64, userRoles []stri
 	instance, err := s.repo.FindInstanceByID(ctx, instanceID)
 	if err != nil {
 		return err
+	}
+
+	if instance.Status == "rejected" {
+		return fmt.Errorf("Data Tersebut sudah ditolak.")
+	}
+
+	if instance.Status == "approved" {
+		return fmt.Errorf("Data Tersebut sudah diterima.")
 	}
 
 	progress := instance.ApprovalProgress
