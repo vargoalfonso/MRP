@@ -35,8 +35,8 @@ tmp/
 temp/
 *.log
 
-postman/
-sample/
+/postman
+/sample
 
 tmp_make_prl_import.go
 tmp_prl_excel_test.sh
