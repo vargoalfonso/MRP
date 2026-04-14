@@ -61,6 +61,24 @@ type DateRangePaginationInput struct {
 	EndDate        string        `json:"end_date"`
 }
 
+// WorkOrderPaginationInput extends PaginationInput with WO board filters.
+//
+// Supported query params (in addition to Pagination):
+//
+//	?status=Pending&approval_status=Approved&wo_type=New
+//
+// Compatibility:
+//
+//	?q=WO-2026 (alias for search)
+type WorkOrderPaginationInput struct {
+	PaginationInput
+	Status         string `json:"status"`
+	ApprovalStatus string `json:"approval_status"`
+	WOType         string `json:"wo_type"`
+}
+
+func (p WorkOrderPaginationInput) Offset() int { return p.PaginationInput.Offset() }
+
 // Offset returns the SQL offset value from Page and Limit.
 func (p PaginationInput) Offset() int {
 	if p.Page < 1 {
@@ -155,6 +173,22 @@ func BomPagination(c *app.Context) BomPaginationInput {
 		OrderDirection: base.OrderDirection,
 		UniqCode:       uniqCode,
 		Status:         status,
+	}
+}
+
+// WorkOrderPagination parses WO list pagination params.
+func WorkOrderPagination(c *app.Context) WorkOrderPaginationInput {
+	base := Pagination(c)
+	// FE sometimes uses `q` instead of `search`.
+	if q := c.Query("q"); q != "" {
+		base.Search = q
+	}
+
+	return WorkOrderPaginationInput{
+		PaginationInput: base,
+		Status:          c.Query("status"),
+		ApprovalStatus:  c.Query("approval_status"),
+		WOType:          c.Query("wo_type"),
 	}
 }
 

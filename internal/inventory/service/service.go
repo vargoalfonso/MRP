@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	invModels "github.com/ganasa18/go-template/internal/inventory/models"
@@ -46,6 +47,9 @@ type IService interface {
 
 	// Kanban summary — per item_uniq_code, called async per row by frontend
 	GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error)
+
+	// Work Order consumption — deducts stock and writes outgoing movement logs for each WO item.
+	ConsumeStockForWorkOrder(ctx context.Context, items []ConsumeItem, woNumber string, performedBy string) error
 }
 
 // ---------------------------------------------------------------------------
@@ -117,16 +121,43 @@ func (s *service) GetRawMaterialByID(ctx context.Context, id int64) (*invModels.
 }
 
 func (s *service) CreateRawMaterial(ctx context.Context, req invModels.CreateRawMaterialRequest, createdBy string) (*invModels.RawMaterialItem, error) {
+	// Auto-fill part fields from items table when missing.
+	lookupKey := strings.TrimSpace(req.UniqCode)
+	if req.ItemUniqCode != nil && strings.TrimSpace(*req.ItemUniqCode) != "" {
+		lookupKey = strings.TrimSpace(*req.ItemUniqCode)
+	}
+	itemRow, err := s.repo.FindItemByUniqCode(ctx, lookupKey)
+	if err != nil {
+		return nil, err
+	}
+	partNumber := req.PartNumber
+	partName := req.PartName
+	uom := req.UOM
+	var itemID *int64
+	if itemRow != nil {
+		itemID = &itemRow.ID
+		if partNumber == nil {
+			partNumber = itemRow.PartNumber
+		}
+		if partName == nil {
+			partName = itemRow.PartName
+		}
+		if uom == nil {
+			uom = itemRow.UOM
+		}
+	}
+
 	now := time.Now()
 	rm := invModels.RawMaterial{
 		UUID:              uuid.New(),
 		UniqCode:          req.UniqCode,
 		RawMaterialType:   req.RawMaterialType,
 		RMSource:          req.RMSource,
-		PartNumber:        req.PartNumber,
-		PartName:          req.PartName,
+		PartNumber:        partNumber,
+		PartName:          partName,
 		WarehouseLocation: req.WarehouseLocation,
-		UOM:               req.UOM,
+		UOM:               uom,
+		ItemID:            itemID,
 		StockQty:          req.StockQty,
 		StockWeightKg:     req.StockWeightKg,
 		KanbanCount:       req.KanbanCount,
@@ -161,15 +192,41 @@ func (s *service) BulkCreateRawMaterials(ctx context.Context, req invModels.Bulk
 	now := time.Now()
 	items := make([]invModels.RawMaterial, 0, len(req.Items))
 	for _, r := range req.Items {
+		lookupKey := strings.TrimSpace(r.UniqCode)
+		if r.ItemUniqCode != nil && strings.TrimSpace(*r.ItemUniqCode) != "" {
+			lookupKey = strings.TrimSpace(*r.ItemUniqCode)
+		}
+		itemRow, err := s.repo.FindItemByUniqCode(ctx, lookupKey)
+		if err != nil {
+			return 0, err
+		}
+		partNumber := r.PartNumber
+		partName := r.PartName
+		uom := r.UOM
+		var itemID *int64
+		if itemRow != nil {
+			itemID = &itemRow.ID
+			if partNumber == nil {
+				partNumber = itemRow.PartNumber
+			}
+			if partName == nil {
+				partName = itemRow.PartName
+			}
+			if uom == nil {
+				uom = itemRow.UOM
+			}
+		}
+
 		items = append(items, invModels.RawMaterial{
 			UUID:              uuid.New(),
 			UniqCode:          r.UniqCode,
 			RawMaterialType:   r.RawMaterialType,
 			RMSource:          r.RMSource,
-			PartNumber:        r.PartNumber,
-			PartName:          r.PartName,
+			PartNumber:        partNumber,
+			PartName:          partName,
 			WarehouseLocation: r.WarehouseLocation,
-			UOM:               r.UOM,
+			UOM:               uom,
+			ItemID:            itemID,
 			StockQty:          r.StockQty,
 			StockWeightKg:     r.StockWeightKg,
 			KanbanCount:       r.KanbanCount,
@@ -320,15 +377,41 @@ func (s *service) GetIndirectByID(ctx context.Context, id int64) (*invModels.Ind
 }
 
 func (s *service) CreateIndirectMaterial(ctx context.Context, req invModels.CreateIndirectMaterialRequest, createdBy string) (*invModels.IndirectMaterialItem, error) {
+	lookupKey := strings.TrimSpace(req.UniqCode)
+	if req.ItemUniqCode != nil && strings.TrimSpace(*req.ItemUniqCode) != "" {
+		lookupKey = strings.TrimSpace(*req.ItemUniqCode)
+	}
+	itemRow, err := s.repo.FindItemByUniqCode(ctx, lookupKey)
+	if err != nil {
+		return nil, err
+	}
+	partNumber := req.PartNumber
+	partName := req.PartName
+	uom := req.UOM
+	var itemID *int64
+	if itemRow != nil {
+		itemID = &itemRow.ID
+		if partNumber == nil {
+			partNumber = itemRow.PartNumber
+		}
+		if partName == nil {
+			partName = itemRow.PartName
+		}
+		if uom == nil {
+			uom = itemRow.UOM
+		}
+	}
+
 	now := time.Now()
 	statusPtr := "normal"
 	irm := invModels.IndirectRawMaterial{
 		UUID:              uuid.New(),
 		UniqCode:          req.UniqCode,
-		PartNumber:        req.PartNumber,
-		PartName:          req.PartName,
+		PartNumber:        partNumber,
+		PartName:          partName,
 		WarehouseLocation: req.WarehouseLocation,
-		UOM:               req.UOM,
+		UOM:               uom,
+		ItemID:            itemID,
 		StockQty:          req.StockQty,
 		StockWeightKg:     req.StockWeightKg,
 		KanbanCount:       req.KanbanCount,
@@ -363,14 +446,40 @@ func (s *service) BulkCreateIndirectMaterials(ctx context.Context, req invModels
 	statusPtr := "normal"
 	items := make([]invModels.IndirectRawMaterial, 0, len(req.Items))
 	for _, r := range req.Items {
+		lookupKey := strings.TrimSpace(r.UniqCode)
+		if r.ItemUniqCode != nil && strings.TrimSpace(*r.ItemUniqCode) != "" {
+			lookupKey = strings.TrimSpace(*r.ItemUniqCode)
+		}
+		itemRow, err := s.repo.FindItemByUniqCode(ctx, lookupKey)
+		if err != nil {
+			return 0, err
+		}
+		partNumber := r.PartNumber
+		partName := r.PartName
+		uom := r.UOM
+		var itemID *int64
+		if itemRow != nil {
+			itemID = &itemRow.ID
+			if partNumber == nil {
+				partNumber = itemRow.PartNumber
+			}
+			if partName == nil {
+				partName = itemRow.PartName
+			}
+			if uom == nil {
+				uom = itemRow.UOM
+			}
+		}
+
 		sp := statusPtr
 		items = append(items, invModels.IndirectRawMaterial{
 			UUID:              uuid.New(),
 			UniqCode:          r.UniqCode,
-			PartNumber:        r.PartNumber,
-			PartName:          r.PartName,
+			PartNumber:        partNumber,
+			PartName:          partName,
 			WarehouseLocation: r.WarehouseLocation,
-			UOM:               r.UOM,
+			UOM:               uom,
+			ItemID:            itemID,
 			StockQty:          r.StockQty,
 			StockWeightKg:     r.StockWeightKg,
 			KanbanCount:       r.KanbanCount,
@@ -504,12 +613,31 @@ func (s *service) GetSubconByID(ctx context.Context, id int64) (*invModels.Subco
 }
 
 func (s *service) CreateSubconInventory(ctx context.Context, req invModels.CreateSubconInventoryRequest, createdBy string) (*invModels.SubconInventoryItem, error) {
+	lookupKey := strings.TrimSpace(req.UniqCode)
+	if req.ItemUniqCode != nil && strings.TrimSpace(*req.ItemUniqCode) != "" {
+		lookupKey = strings.TrimSpace(*req.ItemUniqCode)
+	}
+	itemRow, err := s.repo.FindItemByUniqCode(ctx, lookupKey)
+	if err != nil {
+		return nil, err
+	}
+	partNumber := req.PartNumber
+	partName := req.PartName
+	if itemRow != nil {
+		if partNumber == nil {
+			partNumber = itemRow.PartNumber
+		}
+		if partName == nil {
+			partName = itemRow.PartName
+		}
+	}
+
 	now := time.Now()
 	si := invModels.SubconInventory{
 		UUID:             uuid.New(),
 		UniqCode:         req.UniqCode,
-		PartNumber:       req.PartNumber,
-		PartName:         req.PartName,
+		PartNumber:       partNumber,
+		PartName:         partName,
 		PONumber:         req.PONumber,
 		POPeriod:         req.POPeriod,
 		SubconVendorID:   req.SubconVendorID,
@@ -998,6 +1126,62 @@ func qcStatusDisplay(status string) string {
 // ---------------------------------------------------------------------------
 // Movement Log Helper
 // ---------------------------------------------------------------------------
+
+// ConsumeItem represents one work order item line to deduct from inventory.
+type ConsumeItem struct {
+	UniqCode string
+	Qty      float64
+}
+
+// ConsumeStockForWorkOrder atomically deducts stock for each WO item and writes an outgoing
+// movement log entry. Items not found in either raw_materials or indirect_raw_materials are
+// skipped (they may be finished-goods tracked elsewhere).
+func (s *service) ConsumeStockForWorkOrder(ctx context.Context, items []ConsumeItem, woNumber string, performedBy string) error {
+	for _, item := range items {
+		if item.Qty <= 0 {
+			continue
+		}
+
+		// Try raw_material first.
+		rmID, err := s.repo.DeductRawMaterialByUniqCode(ctx, item.UniqCode, item.Qty, performedBy)
+		if err != nil {
+			return err
+		}
+		if rmID > 0 {
+			s.writeMovementLog(ctx, MovementLogInput{
+				Category:     "raw_material",
+				MovementType: "outgoing",
+				UniqCode:     item.UniqCode,
+				EntityID:     &rmID,
+				QtyChange:    -item.Qty,
+				SourceFlag:   "wo_approve",
+				ReferenceID:  &woNumber,
+				LoggedBy:     performedBy,
+			})
+			continue
+		}
+
+		// Try indirect_raw_material.
+		irmID, err := s.repo.DeductIndirectMaterialByUniqCode(ctx, item.UniqCode, item.Qty, performedBy)
+		if err != nil {
+			return err
+		}
+		if irmID > 0 {
+			s.writeMovementLog(ctx, MovementLogInput{
+				Category:     "indirect_raw_material",
+				MovementType: "outgoing",
+				UniqCode:     item.UniqCode,
+				EntityID:     &irmID,
+				QtyChange:    -item.Qty,
+				SourceFlag:   "wo_approve",
+				ReferenceID:  &woNumber,
+				LoggedBy:     performedBy,
+			})
+		}
+		// If neither found, silently skip (item not tracked in these tables).
+	}
+	return nil
+}
 
 // MovementLogInput is the input struct for writeMovementLog.
 // Use this wherever inventory stock changes to keep tracking consistent.

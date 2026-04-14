@@ -93,6 +93,10 @@ import (
 	uploadHandler "github.com/ganasa18/go-template/internal/upload/handler"
 	uploadRepository "github.com/ganasa18/go-template/internal/upload/repository"
 	uploadService "github.com/ganasa18/go-template/internal/upload/service"
+	workOrderModule "github.com/ganasa18/go-template/internal/work_order"
+	workOrderHandler "github.com/ganasa18/go-template/internal/work_order/handler"
+	workOrderRepository "github.com/ganasa18/go-template/internal/work_order/repository"
+	workOrderService "github.com/ganasa18/go-template/internal/work_order/service"
 )
 
 // initHTTP wires every module inside the modular monolith and returns an HTTP server.
@@ -174,6 +178,11 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	invSvc := inventoryService.New(invRepository)
 	invHTTPHandler := inventoryHandler.New(invSvc)
 
+	// Work Order module (Manufacturing)
+	woRepo := workOrderRepository.New(db)
+	woSvc := workOrderService.New(woRepo, db, invSvc)
+	woHTTPHandler := workOrderHandler.New(woSvc)
+
 	safetyStockRepository := safetyStockRepo.New(db)
 	safetyStockService := safetyStockService.New(safetyStockRepository)
 	safetyStockHandler := safetyStockHandler.New(safetyStockService)
@@ -224,6 +233,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		actionUIModule.NewHTTPModule(cfg, baseHTTPHandler, actionHTTPHandler, authSvc, roleSvc),
 		qcModule.NewHTTPModule(cfg, baseHTTPHandler, qcHTTPHandler, authSvc, roleSvc),
 		inventoryModule.NewHTTPModule(cfg, baseHTTPHandler, invHTTPHandler, authSvc, roleSvc, invSvc),
+		workOrderModule.NewHTTPModule(cfg, baseHTTPHandler, woHTTPHandler, authSvc, roleSvc, woSvc),
 		safetyStockModule.NewHTTPModule(cfg, baseHTTPHandler, safetyStockHandler, authSvc, roleSvc, safetyStockService),
 		typeParameterModule.NewHTTPModule(cfg, baseHTTPHandler, typeParameterHTTPHandler, authSvc, roleSvc, typeParameterSvc),
 		UnitMeasureModule.NewHTTPModule(cfg, baseHTTPHandler, unitMeasureHTTPHandler, authSvc, roleSvc, unitMeasureSvc),
