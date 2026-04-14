@@ -6,7 +6,7 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
-func main() {
+func main1() {
 	if len(os.Args) != 3 {
 		panic("usage: go run tmp_make_prl_import.go <customer_code> <output>")
 	}
