@@ -58,5 +58,8 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		approvalWorkflowGroup.GET("/:id", roleMiddleware.RequirePermission(m.roleService, "approval_workflow", "view"), m.base.RunAction(m.handler.GetApprovalWorkflowByID))
 		approvalWorkflowGroup.PUT("/:id", roleMiddleware.RequirePermission(m.roleService, "approval_workflow", "update"), m.base.RunAction(m.handler.UpdateApprovalWorkflow))
 		approvalWorkflowGroup.DELETE("/:id", roleMiddleware.RequirePermission(m.roleService, "approval_workflow", "delete"), m.base.RunAction(m.handler.DeleteApprovalWorkflow))
+
+		approvalWorkflowGroup.POST("/:id/approve", roleMiddleware.RequirePermission(m.roleService, "approval_workflow", "approve"), m.base.RunAction(m.handler.Approve))
+		approvalWorkflowGroup.POST("/:id/reject", roleMiddleware.RequirePermission(m.roleService, "approval_workflow", "approve"), m.base.RunAction(m.handler.Reject))
 	}
 }

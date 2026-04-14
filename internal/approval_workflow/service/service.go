@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/ganasa18/go-template/internal/approval_workflow/models"
 	approvalWorkflowRepo "github.com/ganasa18/go-template/internal/approval_workflow/repository"
@@ -17,6 +18,9 @@ type IApprovalWorkflowService interface {
 	GetByID(ctx context.Context, id int64) (*models.ApprovalWorkflow, error)
 	Update(ctx context.Context, id int64, req models.UpdateApprovalWorkflowRequest) (*models.ApprovalWorkflow, error)
 	Delete(ctx context.Context, id int64) error
+
+	Approve(ctx context.Context, instanceID int64, userRoles []string) error
+	Reject(ctx context.Context, instanceID int64, userRoles []string, note string) error
 }
 
 // implementation
@@ -193,13 +197,6 @@ func ToTableName(input string) string {
 	return snake + "s"
 }
 
-func getOrDefault(new *string, old string) string {
-	if new != nil {
-		return *new
-	}
-	return old
-}
-
 func validateApprovalSequence(roles []string) error {
 	foundEmpty := false
 
@@ -224,4 +221,154 @@ func validateLevel1Required(role string) error {
 		return fmt.Errorf("level 1 role wajib diisi")
 	}
 	return nil
+}
+
+func (s *service) Approve(ctx context.Context, instanceID int64, userRoles []string) error {
+
+	instance, err := s.repo.FindInstanceByID(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+
+	progress := instance.ApprovalProgress
+
+	// ==============================
+	// 🔥 1. CARI CURRENT LEVEL YANG BELUM APPROVED
+	// ==============================
+	var currentIdx int = -1
+
+	for i, lvl := range progress.Levels {
+
+		// skip level kosong
+		if lvl.Status == "skipped" {
+			continue
+		}
+
+		if lvl.Status == "pending" {
+			currentIdx = i
+			break
+		}
+	}
+
+	if currentIdx == -1 {
+		return fmt.Errorf("semua level sudah diproses")
+	}
+
+	level := &progress.Levels[currentIdx]
+
+	// ==============================
+	// 🔥 2. VALIDASI ROLE USER
+	// ==============================
+	isAllowed := false
+	for _, r := range userRoles {
+		if r == level.Role {
+			isAllowed = true
+			break
+		}
+	}
+
+	if !isAllowed {
+		return fmt.Errorf("menunggu approval dari role '%s'", level.Role)
+	}
+
+	// ==============================
+	// 🔥 3. APPROVE
+	// ==============================
+	level.Status = "approved"
+	level.ApprovedAt = time.Now().Format(time.RFC3339)
+	level.ApprovedBy = strings.Join(userRoles, ",")
+
+	// ==============================
+	// 🔥 4. CEK FINAL APPROVAL
+	// ==============================
+	isFinal := true
+
+	for _, lvl := range progress.Levels {
+		if lvl.Status == "pending" {
+			isFinal = false
+			break
+		}
+	}
+
+	if isFinal {
+		instance.Status = "approved"
+
+		// 🔥 UPDATE ENTITY (DN)
+		if err := s.repo.UpdateReferenceStatus(ctx, instance.ReferenceTable, instance.ReferenceID, "active"); err != nil {
+			return err
+		}
+
+	} else {
+		instance.CurrentLevel = currentIdx + 2 // next level
+	}
+
+	// ==============================
+	// 🔥 5. SAVE
+	// ==============================
+	instance.ApprovalProgress = progress
+	instance.UpdatedAt = time.Now()
+
+	return s.repo.UpdateInstance(ctx, instance)
+}
+
+func (s *service) Reject(ctx context.Context, instanceID int64, userRoles []string, note string) error {
+
+	instance, err := s.repo.FindInstanceByID(ctx, instanceID)
+	if err != nil {
+		return err
+	}
+
+	progress := instance.ApprovalProgress
+
+	// 🔥 cari level aktif
+	var currentIdx int = -1
+
+	for i, lvl := range progress.Levels {
+		if lvl.Status == "pending" {
+			currentIdx = i
+			break
+		}
+	}
+
+	if currentIdx == -1 {
+		return fmt.Errorf("tidak ada level yang bisa di reject")
+	}
+
+	level := &progress.Levels[currentIdx]
+
+	// 🔥 cek role
+	isAllowed := false
+	for _, r := range userRoles {
+		if r == level.Role {
+			isAllowed = true
+			break
+		}
+	}
+
+	if !isAllowed {
+		return fmt.Errorf("menunggu approval dari role '%s'", level.Role)
+	}
+
+	// 🔥 reject
+	level.Status = "rejected"
+	level.Note = note
+	level.ApprovedAt = time.Now().Format(time.RFC3339)
+	level.ApprovedBy = strings.Join(userRoles, ",")
+
+	instance.Status = "rejected"
+
+	// 🔥 update DN
+	if err := s.repo.UpdateReferenceStatus(
+		ctx,
+		instance.ReferenceTable,
+		instance.ReferenceID,
+		"rejected",
+	); err != nil {
+		return err
+	}
+
+	instance.ApprovalProgress = progress
+	instance.UpdatedAt = time.Now()
+
+	return s.repo.UpdateInstance(ctx, instance)
 }
