@@ -162,3 +162,45 @@ func (h *HTTPHandler) PreviewDN(appCtx *app.Context) *app.CostumeResponse {
 		Data:      data,
 	}
 }
+
+func (h *HTTPHandler) PreviewItem(appCtx *app.Context) *app.CostumeResponse {
+	var req models.PreviewDNItem
+
+	// bind request
+	if err := appCtx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body",
+		}
+	}
+
+	// validate
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": errs},
+		}
+	}
+
+	// 🔥 2. call service
+	data, err := h.service.PreviewItem(appCtx.Request.Context(), req)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+
+	// 🔥 3. response
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "success",
+		Data:      data,
+	}
+}

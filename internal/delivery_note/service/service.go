@@ -23,6 +23,7 @@ type IDeliveryNoteService interface {
 	GetByID(ctx context.Context, id int64) (*models.DeliveryNote, error)
 	ScanAndUpdate(ctx context.Context, packing string) (string, error)
 	PreviewDN(ctx context.Context, req models.CreateDNRequest) (*models.PreviewDNResponse, error)
+	PreviewItem(ctx context.Context, req models.PreviewDNItem) (*models.PreviewDNItemRespons, error)
 }
 
 // implementation
@@ -100,10 +101,10 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 		// 🔥 CREATE HEADER
 		// ==============================
 		dn = models.DeliveryNote{
-			DNNumber:        dn.DNNumber,
-			PONumber:        po.PoNumber,
-			CustomerID:      req.CustomerID,
-			ContactPerson:   req.ContactPerson,
+			DNNumber: dn.DNNumber,
+			PONumber: po.PoNumber,
+			// CustomerID:      req.CustomerID,
+			// ContactPerson:   req.ContactPerson,
 			Period:          req.Period,
 			Type:            req.Type,
 			Status:          "draft",
@@ -501,6 +502,32 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.CreateDN
 		TotalDNIncoming: int64(totalIncoming),
 		Items:           items,
 	}, nil
+}
+
+func (s *deliveryNoteService) PreviewItem(ctx context.Context, req models.PreviewDNItem) (*models.PreviewDNItemRespons, error) {
+
+	_, err := s.repo.GetPOByPONumber(ctx, req.PONumber)
+	if err != nil {
+		return nil, fmt.Errorf("PO tidak ditemukan")
+	}
+	// 🔥 1. ambil item dari PO
+	poItem, err := s.repo.GetPOItemByItemCode(ctx, req.Items)
+	if err != nil {
+		return nil, fmt.Errorf("item tidak ditemukan")
+	}
+
+	// 🔥 3. build response
+	res := &models.PreviewDNItemRespons{
+		ItemUniqCode: poItem.ItemUniqCode,
+		MaterialInfo: poItem.ItemUniqCode,
+		TotalQty:     int64(poItem.OrderedQty),
+		RemainingQty: int64(poItem.OrderedQty), // bisa dikurangi kalau ada DN sebelumnya
+		UOM:          poItem.UOM,
+		OrderQty:     int64(poItem.OrderedQty),
+		PcsPerKanban: poItem.PcsPerKanban,
+	}
+
+	return res, nil
 }
 
 func BuildApprovalProgress(workflow workflowModels.ApprovalWorkflow) (workflowModels.ApprovalProgress, int) {
