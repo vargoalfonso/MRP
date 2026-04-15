@@ -7,6 +7,7 @@ import (
 
 	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	"github.com/ganasa18/go-template/internal/inventory/repository"
+	"github.com/ganasa18/go-template/pkg/inventoryconst"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/google/uuid"
 )
@@ -1084,26 +1085,30 @@ func buildHistoryResponse(rows []repository.HistoryRow, total int64, p paginatio
 func sourceFlagToReason(sourceFlag *string, movementType string) string {
 	if sourceFlag != nil {
 		switch *sourceFlag {
-		case "qc_approve":
+		case string(inventoryconst.SourceQCApprove):
 			return "Delivery Notes"
-		case "wo_scan":
+		case string(inventoryconst.SourceWOApprove):
+			return "WO Approved"
+		case string(inventoryconst.SourceProductionReject):
+			return "Production Reject"
+		case string(inventoryconst.SourceWOScan):
 			return "WO Scan"
-		case "incoming_scan":
+		case string(inventoryconst.SourceIncomingScan):
 			return "Scan"
-		case "stock_opname":
+		case string(inventoryconst.SourceStockOpname):
 			return "Stock Opname"
-		case "manual":
+		case string(inventoryconst.SourceManual):
 			return "Manual Adjustment"
 		}
 	}
 	switch movementType {
-	case "stock_opname":
+	case string(inventoryconst.MovementStockOpname):
 		return "Stock Opname"
-	case "incoming":
+	case string(inventoryconst.MovementIncoming):
 		return "Incoming"
-	case "outgoing":
+	case string(inventoryconst.MovementOutgoing):
 		return "Outgoing"
-	case "received_from_vendor":
+	case string(inventoryconst.MovementReceivedFromVendor):
 		return "Received from Vendor"
 	}
 	return movementType
@@ -1154,7 +1159,7 @@ func (s *service) ConsumeStockForWorkOrder(ctx context.Context, items []ConsumeI
 				UniqCode:     item.UniqCode,
 				EntityID:     &rmID,
 				QtyChange:    -item.Qty,
-				SourceFlag:   "wo_approve",
+				SourceFlag:   string(inventoryconst.SourceWOApprove),
 				ReferenceID:  &woNumber,
 				LoggedBy:     performedBy,
 			})
@@ -1173,7 +1178,7 @@ func (s *service) ConsumeStockForWorkOrder(ctx context.Context, items []ConsumeI
 				UniqCode:     item.UniqCode,
 				EntityID:     &irmID,
 				QtyChange:    -item.Qty,
-				SourceFlag:   "wo_approve",
+				SourceFlag:   string(inventoryconst.SourceWOApprove),
 				ReferenceID:  &woNumber,
 				LoggedBy:     performedBy,
 			})
@@ -1186,12 +1191,16 @@ func (s *service) ConsumeStockForWorkOrder(ctx context.Context, items []ConsumeI
 // MovementLogInput is the input struct for writeMovementLog.
 // Use this wherever inventory stock changes to keep tracking consistent.
 //
-// source_flag values:
-//   - "manual"       → manual create/adjustment via API
-//   - "qc_approve"   → stock masuk dari QC approve
-//   - "wo_scan"      → stock keluar karena WO scan production
-//   - "stock_opname" → stock opname correction
-//   - "production"   → stock keluar ke production
+// source_flag values (standard, non-exhaustive):
+//   - "manual"            → manual create/adjustment via API
+//   - "incoming_scan"     → scan incoming (pre-QC)
+//   - "qc_approve"        → stock masuk dari QC approve
+//   - "wo_approve"        → stock keluar untuk WO yang di-approve (reserve/issue)
+//   - "production_reject" → stock masuk kembali karena QC/production reject (future)
+//   - "stock_opname"      → stock opname correction
+//
+// Legacy flags kept for backward compatibility:
+//   - "wo_scan" | "production"
 type MovementLogInput struct {
 	// Category: "raw_material" | "indirect_raw_material" | "subcon"
 	Category string
@@ -1201,7 +1210,7 @@ type MovementLogInput struct {
 	EntityID     *int64  // ID baris di raw_materials / indirect_raw_materials / subcon_inventories
 	QtyChange    float64 // positif = masuk, negatif = keluar
 	WeightChange *float64
-	SourceFlag   string  // "manual" | "qc_approve" | "wo_scan" | "stock_opname" | "production"
+	SourceFlag   string  // see list above
 	ReferenceID  *string // PO number, DN number, WO number, dll
 	DNNumber     *string
 	Notes        *string

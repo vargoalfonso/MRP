@@ -21,6 +21,7 @@ import (
 
 type IService interface {
 	Create(ctx context.Context, req woModels.CreateWorkOrderRequest, createdBy string) (*woModels.CreateWorkOrderResponse, error)
+	Preview(ctx context.Context, req woModels.CreateWorkOrderRequest) (*woModels.WorkOrderPreviewResponse, error)
 	List(ctx context.Context, p pagination.WorkOrderPaginationInput) (*woModels.WorkOrderListResponse, error)
 	GetSummary(ctx context.Context) (*woModels.WorkOrderSummaryResponse, error)
 	GetDetail(ctx context.Context, woUUID string) (*woModels.WorkOrderDetailResponse, error)
@@ -72,6 +73,13 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 
 		woNumber := generateWONumber(prefix, last)
 		woUUID := uuid.New()
+		if req.WOID != nil && strings.TrimSpace(*req.WOID) != "" {
+			parsed, err := uuid.Parse(strings.TrimSpace(*req.WOID))
+			if err != nil {
+				return apperror.BadRequest("wo_id must be a valid UUID")
+			}
+			woUUID = parsed
+		}
 		creatorUUID, creatorName, err := s.resolveCreator(ctx, tx, createdBy)
 		if err != nil {
 			return err
@@ -204,6 +212,75 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 		return nil, err
 	}
 	return out, nil
+}
+
+func (s *service) Preview(ctx context.Context, req woModels.CreateWorkOrderRequest) (*woModels.WorkOrderPreviewResponse, error) {
+	year := time.Now().Year()
+	prefix := fmt.Sprintf("WO-%d", year)
+	last, err := s.repo.FindLastWONumber(ctx, nil, prefix)
+	if err != nil {
+		return nil, err
+	}
+
+	woNumber := generateWONumber(prefix, last)
+	// wo_id is returned so FE can reuse it in Create request.
+	// Note: wo_number is still best-effort and may change.
+	woID := uuid.New()
+	perUniqSeq := map[string]int{}
+	outItems := make([]woModels.WorkOrderPreviewItem, 0, 32)
+
+	for _, it := range req.Items {
+		kp, err := s.getKanbanParam(ctx, s.db, it.ItemUniqCode)
+		if err != nil {
+			return nil, err
+		}
+		pcsPerKanban := it.KanbanQty
+		if pcsPerKanban <= 0 {
+			if kp == nil || kp.KanbanQty <= 0 {
+				return nil, apperror.UnprocessableEntity("kanban_qty is required (kanban_parameters not found for item_uniq_code)")
+			}
+			pcsPerKanban = kp.KanbanQty
+		}
+		if kp == nil || strings.TrimSpace(kp.KanbanNumber) == "" {
+			return nil, apperror.UnprocessableEntity("kanban_parameters not found for item_uniq_code")
+		}
+
+		qty := round4(it.Quantity)
+		if qty <= 0 {
+			return nil, apperror.UnprocessableEntity("quantity must be greater than 0")
+		}
+		perKanban := float64(pcsPerKanban)
+		kanbanCount := int(math.Ceil(qty / perKanban))
+		if kanbanCount <= 0 {
+			kanbanCount = 1
+		}
+
+		for i := 0; i < kanbanCount; i++ {
+			perUniqSeq[it.ItemUniqCode]++
+			seq := perUniqSeq[it.ItemUniqCode]
+			kanbanNumber := fmt.Sprintf("%s-%s-%s-%02d", kp.KanbanNumber, it.ItemUniqCode, woNumber, seq)
+			kpNum := kp.KanbanNumber
+			kpSeq := seq
+			outItems = append(outItems, woModels.WorkOrderPreviewItem{
+				ItemUniqCode:      it.ItemUniqCode,
+				UOM:               it.UOM,
+				ProcessName:       it.ProcessName,
+				Quantity:          round4(perKanban),
+				KanbanNumber:      kanbanNumber,
+				KanbanParamNumber: &kpNum,
+				KanbanSeq:         &kpSeq,
+			})
+		}
+	}
+
+	n := "preview only; wo_number and kanban_number may change on save"
+	return &woModels.WorkOrderPreviewResponse{
+		PreviewID: woID.String(),
+		WoID:      woID.String(),
+		WoNumber:  woNumber,
+		Items:     outItems,
+		Notes:     &n,
+	}, nil
 }
 
 type kanbanParamRow struct {

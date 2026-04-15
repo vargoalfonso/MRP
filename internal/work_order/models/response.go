@@ -31,6 +31,24 @@ type ProcessOptionsResponse struct {
 	Items []ProcessOptionItem `json:"items"`
 }
 
+type WorkOrderPreviewResponse struct {
+	PreviewID string                 `json:"preview_id"`
+	WoID      string                 `json:"wo_id"`
+	WoNumber  string                 `json:"wo_number"`
+	Items     []WorkOrderPreviewItem `json:"items"`
+	Notes     *string                `json:"notes"`
+}
+
+type WorkOrderPreviewItem struct {
+	ItemUniqCode      string  `json:"item_uniq_code"`
+	UOM               *string `json:"uom"`
+	ProcessName       *string `json:"process_name"`
+	Quantity          float64 `json:"quantity"`
+	KanbanNumber      string  `json:"kanban_number"`
+	KanbanParamNumber *string `json:"kanban_param_number"`
+	KanbanSeq         *int    `json:"kanban_seq"`
+}
+
 // WorkOrderListItemDetail is a slim item row embedded in the list response.
 type WorkOrderListItemDetail struct {
 	ID           string  `json:"id"` // WO item UUID
