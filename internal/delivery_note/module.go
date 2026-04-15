@@ -49,7 +49,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 
 	deliveryNoteGroup := v1.Group("/delivery-notes")
 
-	deliveryNoteGroup.GET("/scan", m.base.RunAction(m.handler.ScanDeliveryNoteItem))
+	deliveryNoteGroup.POST("/scan", m.base.RunAction(m.handler.ScanDeliveryNoteItem))
 
 	// 🔐 wajib login
 	deliveryNoteGroup.Use(authMiddleware.JWTMiddleware(m.authenticator))

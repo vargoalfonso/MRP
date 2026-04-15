@@ -53,3 +53,7 @@ type PreviewDNItemRespons struct {
 	OrderQty     int64  `json:"order_qty"`
 	PcsPerKanban int64  `json:"pcs_per_kanban"`
 }
+
+type QRPayload struct {
+	Packing string `json:"packing"`
+}
