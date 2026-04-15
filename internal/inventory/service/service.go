@@ -1089,6 +1089,10 @@ func sourceFlagToReason(sourceFlag *string, movementType string) string {
 			return "Delivery Notes"
 		case string(inventoryconst.SourceWOApprove):
 			return "WO Approved"
+		case string(inventoryconst.SourceWOReserve):
+			return "WO Reserved"
+		case string(inventoryconst.SourceWOConsumeActual):
+			return "WO Consume (Actual)"
 		case string(inventoryconst.SourceProductionReject):
 			return "Production Reject"
 		case string(inventoryconst.SourceWOScan):

@@ -32,3 +32,17 @@ type BulkWorkOrderApprovalRequest struct {
 	WONumbers []string `json:"wo_numbers" validate:"required,min=1"`
 	Notes     *string  `json:"notes"`
 }
+
+// CreateRMProcessingWorkOrderRequest is the body for POST /api/v1/working-order/rm-processing/work-orders.
+type CreateRMProcessingWorkOrderRequest struct {
+	SourceMaterialUniq string  `json:"source_material_uniq" validate:"required"`
+	TargetMaterialUniq string  `json:"target_material_uniq" validate:"required"`
+	Model              *string `json:"model"`
+	GradeSize          *string `json:"grade_size"`
+	InputQty           float64 `json:"input_qty" validate:"required,gt=0"`
+	InputUOM           string  `json:"input_uom" validate:"required"`
+	OutputQty          float64 `json:"output_qty" validate:"required,gt=0"`
+	OutputUOM          string  `json:"output_uom" validate:"required"`
+	DateIssued         *string `json:"date_issued"`
+	Remarks            *string `json:"remarks"`
+}

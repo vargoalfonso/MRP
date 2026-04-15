@@ -19,6 +19,55 @@ type HTTPHandler struct {
 
 func New(svc woService.IService) *HTTPHandler { return &HTTPHandler{svc: svc} }
 
+// ListRMProcessingWorkOrders returns paginated RM processing work order list.
+// GET /api/v1/working-order/rm-processing/work-orders
+func (h *HTTPHandler) ListRMProcessingWorkOrders(ctx *app.Context) *app.CostumeResponse {
+	p := pagination.WorkOrderPagination(ctx)
+	data, err := h.svc.ListRMProcessing(ctx.Request.Context(), p)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
+// CreateRMProcessingWorkOrder creates an RM processing work order.
+// POST /api/v1/working-order/rm-processing/work-orders
+func (h *HTTPHandler) CreateRMProcessingWorkOrder(ctx *app.Context) *app.CostumeResponse {
+	var req woModels.CreateRMProcessingWorkOrderRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": errs},
+		}
+	}
+
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	data, err := h.svc.CreateRMProcessing(ctx.Request.Context(), req, userCtx.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusCreated,
+		Message:   "Created",
+		Data:      data,
+	}
+}
+
 // ListWorkOrders returns paginated work order list.
 // GET /api/v1/working-order/work-orders
 func (h *HTTPHandler) ListWorkOrders(ctx *app.Context) *app.CostumeResponse {
@@ -115,11 +164,42 @@ func (h *HTTPHandler) GetWorkOrderSummary(ctx *app.Context) *app.CostumeResponse
 	}
 }
 
+// GetRMProcessingWorkOrderSummary returns RM processing summary counters.
+// GET /api/v1/working-order/rm-processing/work-orders/summary
+func (h *HTTPHandler) GetRMProcessingWorkOrderSummary(ctx *app.Context) *app.CostumeResponse {
+	data, err := h.svc.GetRMProcessingSummary(ctx.Request.Context())
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
 // GetWorkOrderDetail returns WO header + items.
 // GET /api/v1/working-order/work-orders/:id
 func (h *HTTPHandler) GetWorkOrderDetail(ctx *app.Context) *app.CostumeResponse {
 	woUUID := ctx.Param("id")
 	data, err := h.svc.GetDetail(ctx.Request.Context(), woUUID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
+// GetRMProcessingWorkOrderDetail returns RM processing WO header + detail.
+// GET /api/v1/working-order/rm-processing/work-orders/:id
+func (h *HTTPHandler) GetRMProcessingWorkOrderDetail(ctx *app.Context) *app.CostumeResponse {
+	woUUID := ctx.Param("id")
+	data, err := h.svc.GetRMProcessingDetail(ctx.Request.Context(), woUUID)
 	if err != nil {
 		return app.NewError(ctx, err)
 	}
@@ -155,6 +235,41 @@ func (h *HTTPHandler) Approval(ctx *app.Context) *app.CostumeResponse {
 
 	userCtx := userPkg.MustExtractUserContext(ctx)
 	data, err := h.svc.Approval(ctx.Request.Context(), woUUID, req, userCtx.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
+// ApprovalRMProcessing approves or rejects an RM processing work order.
+// POST /api/v1/working-order/rm-processing/work-orders/:id/approval
+func (h *HTTPHandler) ApprovalRMProcessing(ctx *app.Context) *app.CostumeResponse {
+	woUUID := ctx.Param("id")
+
+	var req woModels.WorkOrderApprovalRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": errs},
+		}
+	}
+
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	data, err := h.svc.ApprovalRMProcessing(ctx.Request.Context(), woUUID, req, userCtx.UserID)
 	if err != nil {
 		return app.NewError(ctx, err)
 	}

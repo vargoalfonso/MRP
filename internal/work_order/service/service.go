@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -16,16 +17,22 @@ import (
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/google/uuid"
 	"github.com/skip2/go-qrcode"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
 type IService interface {
 	Create(ctx context.Context, req woModels.CreateWorkOrderRequest, createdBy string) (*woModels.CreateWorkOrderResponse, error)
+	CreateRMProcessing(ctx context.Context, req woModels.CreateRMProcessingWorkOrderRequest, createdBy string) (*woModels.RMProcessingWorkOrderCreateResponse, error)
 	Preview(ctx context.Context, req woModels.CreateWorkOrderRequest) (*woModels.WorkOrderPreviewResponse, error)
 	List(ctx context.Context, p pagination.WorkOrderPaginationInput) (*woModels.WorkOrderListResponse, error)
+	ListRMProcessing(ctx context.Context, p pagination.WorkOrderPaginationInput) (*woModels.RMProcessingWorkOrderListResponse, error)
 	GetSummary(ctx context.Context) (*woModels.WorkOrderSummaryResponse, error)
+	GetRMProcessingSummary(ctx context.Context) (*woModels.WorkOrderSummaryResponse, error)
 	GetDetail(ctx context.Context, woUUID string) (*woModels.WorkOrderDetailResponse, error)
+	GetRMProcessingDetail(ctx context.Context, woUUID string) (*woModels.RMProcessingWorkOrderDetailResponse, error)
 	Approval(ctx context.Context, woUUID string, req woModels.WorkOrderApprovalRequest, performedBy string) (*woModels.WorkOrderApprovalResponse, error)
+	ApprovalRMProcessing(ctx context.Context, woUUID string, req woModels.WorkOrderApprovalRequest, performedBy string) (*woModels.WorkOrderApprovalResponse, error)
 	BulkApproval(ctx context.Context, req woModels.BulkWorkOrderApprovalRequest, performedBy string) (*woModels.BulkWorkOrderApprovalResponse, error)
 	GetWorkOrderQR(ctx context.Context, woUUID string, refresh bool) (*woModels.WorkOrderQRResponse, error)
 	GetWorkOrderItemQR(ctx context.Context, itemUUID string, refresh bool) (*woModels.WorkOrderItemQRResponse, error)
@@ -39,8 +46,104 @@ type service struct {
 	invSvc invService.IService
 }
 
+const (
+	workOrderKindStandard       = "standard"
+	workOrderPrefixStandard     = "WO"
+	workOrderKindRMProcessing   = "rm_processing"
+	workOrderPrefixRMProcessing = "RM-WO"
+	workOrderTypeRMProcessing   = "RM Processing"
+)
+
 func New(repo woRepo.IRepository, db *gorm.DB, invSvc invService.IService) IService {
 	return &service{repo: repo, db: db, invSvc: invSvc}
+}
+
+func (s *service) CreateRMProcessing(ctx context.Context, req woModels.CreateRMProcessingWorkOrderRequest, createdBy string) (*woModels.RMProcessingWorkOrderCreateResponse, error) {
+	if strings.EqualFold(strings.TrimSpace(req.SourceMaterialUniq), strings.TrimSpace(req.TargetMaterialUniq)) {
+		return nil, apperror.BadRequest("source_material_uniq and target_material_uniq must be different")
+	}
+
+	dateIssued := time.Now()
+	if req.DateIssued != nil && strings.TrimSpace(*req.DateIssued) != "" {
+		t, err := time.Parse("2006-01-02", strings.TrimSpace(*req.DateIssued))
+		if err != nil {
+			return nil, apperror.BadRequest("date_issued must be YYYY-MM-DD")
+		}
+		dateIssued = t
+	}
+
+	var out *woModels.RMProcessingWorkOrderCreateResponse
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		year := dateIssued.Year()
+		prefix := fmt.Sprintf("%s-%d", workOrderPrefixRMProcessing, year)
+		last, err := s.repo.FindLastWONumber(ctx, tx, prefix)
+		if err != nil {
+			return err
+		}
+
+		woNumber := generateWONumber(prefix, last)
+		woUUID := uuid.New()
+		creatorUUID, creatorName, err := s.resolveCreator(ctx, tx, createdBy)
+		if err != nil {
+			return err
+		}
+		woQR, err := generateQRDataURL(qrPayloadWO(woNumber))
+		if err != nil {
+			return apperror.InternalWrap("failed to generate WO QR", err)
+		}
+		wo := &woModels.WorkOrder{
+			UUID:               woUUID,
+			WoNumber:           woNumber,
+			WoType:             workOrderTypeRMProcessing,
+			WOKind:             workOrderKindRMProcessing,
+			Status:             "Draft",
+			ApprovalStatus:     "Pending",
+			CreatedDate:        dateIssued,
+			DateIssued:         &dateIssued,
+			CreatedBy:          creatorUUID,
+			CreatedByName:      creatorName,
+			Notes:              req.Remarks,
+			SourceMaterialUniq: strPtr(strings.TrimSpace(req.SourceMaterialUniq)),
+			TargetMaterialUniq: strPtr(strings.TrimSpace(req.TargetMaterialUniq)),
+			Model:              req.Model,
+			GradeSize:          req.GradeSize,
+			InputQty:           floatPtr(round4(req.InputQty)),
+			InputUOM:           strPtr(strings.TrimSpace(req.InputUOM)),
+			OutputQty:          floatPtr(round4(req.OutputQty)),
+			OutputUOM:          strPtr(strings.TrimSpace(req.OutputUOM)),
+			Remarks:            req.Remarks,
+			QRImageBase64:      &woQR,
+		}
+		if err := s.repo.CreateWorkOrder(ctx, tx, wo); err != nil {
+			return err
+		}
+
+		out = &woModels.RMProcessingWorkOrderCreateResponse{
+			ID:                 woUUID.String(),
+			WoID:               woUUID.String(),
+			WoNumber:           woNumber,
+			WoType:             wo.WoType,
+			WOKind:             wo.WOKind,
+			Status:             wo.Status,
+			ApprovalStatus:     wo.ApprovalStatus,
+			SourceMaterialUniq: strings.TrimSpace(req.SourceMaterialUniq),
+			TargetMaterialUniq: strings.TrimSpace(req.TargetMaterialUniq),
+			Model:              req.Model,
+			GradeSize:          req.GradeSize,
+			InputQty:           round4(req.InputQty),
+			InputUOM:           strings.TrimSpace(req.InputUOM),
+			OutputQty:          round4(req.OutputQty),
+			OutputUOM:          strings.TrimSpace(req.OutputUOM),
+			DateIssued:         dateIssued.Format("2006-01-02"),
+			Remarks:            req.Remarks,
+			QRDataURL:          &woQR,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderRequest, createdBy string) (*woModels.CreateWorkOrderResponse, error) {
@@ -65,7 +168,7 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 	var out *woModels.CreateWorkOrderResponse
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		year := time.Now().Year()
-		prefix := fmt.Sprintf("WO-%d", year)
+		prefix := fmt.Sprintf("%s-%d", workOrderPrefixStandard, year)
 		last, err := s.repo.FindLastWONumber(ctx, tx, prefix)
 		if err != nil {
 			return err
@@ -92,6 +195,7 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 			UUID:           woUUID,
 			WoNumber:       woNumber,
 			WoType:         req.WOType,
+			WOKind:         workOrderKindStandard,
 			ReferenceWO:    req.ReferenceWO,
 			Status:         "Draft",
 			ApprovalStatus: "Pending",
@@ -119,6 +223,11 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 			uniqCodes = append(uniqCodes, it.ItemUniqCode)
 		}
 		partMeta, err := s.fetchPartMeta(ctx, tx, uniqCodes)
+		if err != nil {
+			return err
+		}
+		// Pre-fetch process flows (poka-yoke routing snapshot) from BOM.
+		processFlows, err := s.fetchProcessFlows(ctx, tx, uniqCodes)
 		if err != nil {
 			return err
 		}
@@ -177,19 +286,22 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 					ProcessName:       it.ProcessName,
 					Quantity:          q,
 					KanbanNumber:      kanbanNumber,
+					ProcessFlowJSON:   processFlows[it.ItemUniqCode],
+					CurrentStepSeq:    1,
 					KanbanParamNumber: &kpNum,
 					KanbanSeq:         &kpSeq,
 					Status:            "Pending",
 					QRImageBase64:     &itemQR,
 				})
 				respItems = append(respItems, woModels.CreateWorkOrderItemBrief{
-					ID:           itemUUID.String(),
-					WoItemID:     itemUUID.String(),
-					KanbanNumber: kanbanNumber,
-					ItemUniqCode: it.ItemUniqCode,
-					Quantity:     q,
-					ProcessName:  it.ProcessName,
-					QRDataURL:    &itemQR,
+					ID:              itemUUID.String(),
+					WoItemID:        itemUUID.String(),
+					KanbanNumber:    kanbanNumber,
+					ItemUniqCode:    it.ItemUniqCode,
+					Quantity:        q,
+					ProcessName:     it.ProcessName,
+					ProcessFlowJSON: json.RawMessage(processFlows[it.ItemUniqCode]),
+					QRDataURL:       &itemQR,
 				})
 			}
 		}
@@ -216,7 +328,7 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 
 func (s *service) Preview(ctx context.Context, req woModels.CreateWorkOrderRequest) (*woModels.WorkOrderPreviewResponse, error) {
 	year := time.Now().Year()
-	prefix := fmt.Sprintf("WO-%d", year)
+	prefix := fmt.Sprintf("%s-%d", workOrderPrefixStandard, year)
 	last, err := s.repo.FindLastWONumber(ctx, nil, prefix)
 	if err != nil {
 		return nil, err
@@ -536,6 +648,7 @@ func (s *service) List(ctx context.Context, p pagination.WorkOrderPaginationInpu
 		Status:         p.Status,
 		ApprovalStatus: p.ApprovalStatus,
 		WOType:         p.WOType,
+		WOKind:         workOrderKindStandard,
 		Page:           p.Page,
 		Limit:          p.Limit,
 		Offset:         p.Offset(),
@@ -562,14 +675,15 @@ func (s *service) List(ctx context.Context, p pagination.WorkOrderPaginationInpu
 	itemsByWO := make(map[int64][]woModels.WorkOrderListItemDetail, len(rows))
 	for _, it := range itemRows {
 		itemsByWO[it.WoID] = append(itemsByWO[it.WoID], woModels.WorkOrderListItemDetail{
-			ID:           it.UUID.String(),
-			ItemUniqCode: it.ItemUniqCode,
-			PartName:     it.PartName,
-			PartNumber:   it.PartNumber,
-			Model:        it.Model,
-			Quantity:     it.Quantity,
-			UOM:          it.UOM,
-			Status:       it.Status,
+			ID:              it.UUID.String(),
+			ItemUniqCode:    it.ItemUniqCode,
+			PartName:        it.PartName,
+			PartNumber:      it.PartNumber,
+			Model:           it.Model,
+			Quantity:        it.Quantity,
+			UOM:             it.UOM,
+			Status:          it.Status,
+			ProcessFlowJSON: jsonRawOrEmpty(it.ProcessFlowJSON),
 		})
 	}
 
@@ -587,6 +701,7 @@ func (s *service) List(ctx context.Context, p pagination.WorkOrderPaginationInpu
 			ID:             r.UUID,
 			WoNumber:       r.WoNumber,
 			WoType:         r.WoType,
+			WOKind:         r.WOKind,
 			ReferenceWO:    r.ReferenceWO,
 			Status:         r.Status,
 			ApprovalStatus: r.ApprovalStatus,
@@ -608,8 +723,104 @@ func (s *service) List(ctx context.Context, p pagination.WorkOrderPaginationInpu
 	}, nil
 }
 
+func (s *service) ListRMProcessing(ctx context.Context, p pagination.WorkOrderPaginationInput) (*woModels.RMProcessingWorkOrderListResponse, error) {
+	f := woRepo.ListFilter{
+		Search:         p.Search,
+		Status:         p.Status,
+		ApprovalStatus: p.ApprovalStatus,
+		WOKind:         workOrderKindRMProcessing,
+		Page:           p.Page,
+		Limit:          p.Limit,
+		Offset:         p.Offset(),
+		OrderBy:        p.OrderBy,
+		OrderDirection: p.OrderDirection,
+	}
+	rows, total, err := s.repo.ListWorkOrders(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]woModels.RMProcessingWorkOrderListItem, 0, len(rows))
+	for _, r := range rows {
+		var qrDataURL *string
+		if woQR, err := generateQRDataURL(qrPayloadWO(r.WoNumber)); err == nil {
+			qrDataURL = &woQR
+		}
+		source := ""
+		target := ""
+		inputUOM := ""
+		outputUOM := ""
+		inputQty := 0.0
+		outputQty := 0.0
+		if r.SourceMaterialUniq != nil {
+			source = *r.SourceMaterialUniq
+		}
+		if r.TargetMaterialUniq != nil {
+			target = *r.TargetMaterialUniq
+		}
+		if r.InputUOM != nil {
+			inputUOM = *r.InputUOM
+		}
+		if r.OutputUOM != nil {
+			outputUOM = *r.OutputUOM
+		}
+		if r.InputQty != nil {
+			inputQty = *r.InputQty
+		}
+		if r.OutputQty != nil {
+			outputQty = *r.OutputQty
+		}
+		dateIssued := r.CreatedDate
+		if r.DateIssued != nil && strings.TrimSpace(*r.DateIssued) != "" {
+			dateIssued = *r.DateIssued
+		}
+		items = append(items, woModels.RMProcessingWorkOrderListItem{
+			ID:                 r.UUID,
+			WoNumber:           r.WoNumber,
+			WoType:             r.WoType,
+			WOKind:             r.WOKind,
+			Status:             r.Status,
+			ApprovalStatus:     r.ApprovalStatus,
+			CreatedDate:        r.CreatedDate,
+			CreatedByName:      r.CreatedByName,
+			SourceMaterialUniq: source,
+			TargetMaterialUniq: target,
+			Model:              r.Model,
+			GradeSize:          r.GradeSize,
+			InputQty:           inputQty,
+			InputUOM:           inputUOM,
+			OutputQty:          outputQty,
+			OutputUOM:          outputUOM,
+			DateIssued:         dateIssued,
+			DateCompleted:      r.DateCompleted,
+			CycleTimeDays:      r.CycleTimeDays,
+			Remarks:            r.Remarks,
+			AgingDays:          r.AgingDays,
+			QRDataURL:          qrDataURL,
+		})
+	}
+
+	return &woModels.RMProcessingWorkOrderListResponse{
+		Items:      items,
+		Pagination: pagination.NewMeta(total, p.PaginationInput),
+	}, nil
+}
+
 func (s *service) GetSummary(ctx context.Context) (*woModels.WorkOrderSummaryResponse, error) {
-	row, err := s.repo.GetSummary(ctx)
+	row, err := s.repo.GetSummaryByKind(ctx, workOrderKindStandard)
+	if err != nil {
+		return nil, err
+	}
+	return &woModels.WorkOrderSummaryResponse{
+		ActiveWOs:  row.ActiveWOs,
+		Completed:  row.Completed,
+		PendingWOs: row.PendingWOs,
+		TotalUniqs: row.TotalUniqs,
+	}, nil
+}
+
+func (s *service) GetRMProcessingSummary(ctx context.Context) (*woModels.WorkOrderSummaryResponse, error) {
+	row, err := s.repo.GetSummaryByKind(ctx, workOrderKindRMProcessing)
 	if err != nil {
 		return nil, err
 	}
@@ -622,7 +833,7 @@ func (s *service) GetSummary(ctx context.Context) (*woModels.WorkOrderSummaryRes
 }
 
 func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkOrderDetailResponse, error) {
-	wo, err := s.repo.GetWorkOrderByUUID(ctx, woUUID)
+	wo, err := s.repo.GetWorkOrderByUUIDAndKind(ctx, woUUID, workOrderKindStandard)
 	if err != nil {
 		return nil, err
 	}
@@ -642,15 +853,16 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 			}
 		}
 		items = append(items, woModels.WorkOrderDetailItem{
-			ID:           it.UUID.String(),
-			WoItemID:     it.UUID.String(),
-			KanbanNumber: it.KanbanNumber,
-			ItemUniqCode: it.ItemUniqCode,
-			Quantity:     it.Quantity,
-			UOM:          it.UOM,
-			ProcessName:  it.ProcessName,
-			Status:       it.Status,
-			QRDataURL:    itemQR,
+			ID:              it.UUID.String(),
+			WoItemID:        it.UUID.String(),
+			KanbanNumber:    it.KanbanNumber,
+			ItemUniqCode:    it.ItemUniqCode,
+			Quantity:        it.Quantity,
+			UOM:             it.UOM,
+			ProcessName:     it.ProcessName,
+			Status:          it.Status,
+			ProcessFlowJSON: jsonRawOrEmpty(it.ProcessFlowJSON),
+			QRDataURL:       itemQR,
 		})
 	}
 
@@ -686,8 +898,84 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 	}, nil
 }
 
+func (s *service) GetRMProcessingDetail(ctx context.Context, woUUID string) (*woModels.RMProcessingWorkOrderDetailResponse, error) {
+	wo, err := s.repo.GetWorkOrderByUUIDAndKind(ctx, woUUID, workOrderKindRMProcessing)
+	if err != nil {
+		return nil, err
+	}
+
+	createdDate := wo.CreatedDate.Format("2006-01-02")
+	var dateCompleted *string
+	if wo.DateCompleted != nil {
+		s := wo.DateCompleted.Format("2006-01-02")
+		dateCompleted = &s
+	}
+	dateIssued := createdDate
+	if wo.DateIssued != nil {
+		dateIssued = wo.DateIssued.Format("2006-01-02")
+	}
+	source := ""
+	target := ""
+	inputUOM := ""
+	outputUOM := ""
+	inputQty := 0.0
+	outputQty := 0.0
+	if wo.SourceMaterialUniq != nil {
+		source = *wo.SourceMaterialUniq
+	}
+	if wo.TargetMaterialUniq != nil {
+		target = *wo.TargetMaterialUniq
+	}
+	if wo.InputUOM != nil {
+		inputUOM = *wo.InputUOM
+	}
+	if wo.OutputUOM != nil {
+		outputUOM = *wo.OutputUOM
+	}
+	if wo.InputQty != nil {
+		inputQty = *wo.InputQty
+	}
+	if wo.OutputQty != nil {
+		outputQty = *wo.OutputQty
+	}
+
+	var woQR *string
+	if wo.QRImageBase64 != nil && strings.TrimSpace(*wo.QRImageBase64) != "" {
+		woQR = wo.QRImageBase64
+	} else {
+		if qr, err := generateQRDataURL(qrPayloadWO(wo.WoNumber)); err == nil {
+			woQR = &qr
+		}
+	}
+
+	return &woModels.RMProcessingWorkOrderDetailResponse{
+		ID:                 wo.UUID.String(),
+		WoNumber:           wo.WoNumber,
+		WoType:             wo.WoType,
+		WOKind:             wo.WOKind,
+		Status:             wo.Status,
+		ApprovalStatus:     wo.ApprovalStatus,
+		CreatedDate:        createdDate,
+		CreatedByName:      wo.CreatedByName,
+		SourceMaterialUniq: source,
+		TargetMaterialUniq: target,
+		Model:              wo.Model,
+		GradeSize:          wo.GradeSize,
+		InputQty:           inputQty,
+		InputUOM:           inputUOM,
+		OutputQty:          outputQty,
+		OutputUOM:          outputUOM,
+		DateIssued:         dateIssued,
+		DateCompleted:      dateCompleted,
+		CycleTimeDays:      wo.CycleTimeDays,
+		Remarks:            wo.Remarks,
+		Notes:              wo.Notes,
+		QRDataURL:          woQR,
+	}, nil
+}
+
 func (s *service) Approval(ctx context.Context, woUUID string, req woModels.WorkOrderApprovalRequest, performedBy string) (*woModels.WorkOrderApprovalResponse, error) {
-	wo, err := s.repo.GetWorkOrderByUUID(ctx, woUUID)
+	wo, err := s.repo.GetWorkOrderByUUIDAndKind(ctx, woUUID, workOrderKindStandard)
 	if err != nil {
 		return nil, err
 	}
@@ -730,6 +1018,36 @@ func (s *service) Approval(ctx context.Context, woUUID string, req woModels.Work
 	}, nil
 }
 
+func (s *service) ApprovalRMProcessing(ctx context.Context, woUUID string, req woModels.WorkOrderApprovalRequest, performedBy string) (*woModels.WorkOrderApprovalResponse, error) {
+	wo, err := s.repo.GetWorkOrderByUUIDAndKind(ctx, woUUID, workOrderKindRMProcessing)
+	if err != nil {
+		return nil, err
+	}
+
+	newStatus := ""
+	switch req.Decision {
+	case "approve":
+		newStatus = "Approved"
+	case "reject":
+		newStatus = "Rejected"
+	default:
+		return nil, apperror.BadRequest("decision must be approve or reject")
+	}
+
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return s.repo.UpdateWorkOrderApprovalStatus(ctx, tx, wo.ID, newStatus)
+	}); err != nil {
+		return nil, err
+	}
+
+	_ = performedBy
+	return &woModels.WorkOrderApprovalResponse{
+		ID:             wo.UUID.String(),
+		WoNumber:       wo.WoNumber,
+		ApprovalStatus: newStatus,
+	}, nil
+}
+
 func (s *service) BulkApproval(ctx context.Context, req woModels.BulkWorkOrderApprovalRequest, performedBy string) (*woModels.BulkWorkOrderApprovalResponse, error) {
 	newStatus := ""
 	switch req.Decision {
@@ -741,7 +1059,7 @@ func (s *service) BulkApproval(ctx context.Context, req woModels.BulkWorkOrderAp
 		return nil, apperror.BadRequest("decision must be approve or reject")
 	}
 
-	found, err := s.repo.FindWorkOrdersByWONumbers(ctx, req.WONumbers)
+	found, err := s.repo.FindWorkOrdersByWONumbersAndKind(ctx, req.WONumbers, workOrderKindStandard)
 	if err != nil {
 		return nil, err
 	}
@@ -810,7 +1128,29 @@ func round4(v float64) float64 {
 	return math.Round(v*10000) / 10000
 }
 
-func strPtr(s string) *string { return &s }
+func strPtr(v string) *string {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	v = strings.TrimSpace(v)
+	return &v
+}
+
+func floatPtr(v float64) *float64 {
+	v = round4(v)
+	return &v
+}
+
+func jsonRawOrEmpty(v datatypes.JSON) json.RawMessage {
+	if len(v) == 0 {
+		return json.RawMessage("[]")
+	}
+	trimmed := strings.TrimSpace(string(v))
+	if trimmed == "" || strings.EqualFold(trimmed, "null") {
+		return json.RawMessage("[]")
+	}
+	return json.RawMessage(v)
+}
 
 func generateQRDataURL(value string) (string, error) {
 	png, err := qrcode.Encode(value, qrcode.Medium, 256)
@@ -894,6 +1234,87 @@ func (s *service) fetchPartMeta(ctx context.Context, tx *gorm.DB, uniqCodes []st
 			PartNumber: r.PartNumber,
 			Model:      r.Model,
 		}
+	}
+	return out, nil
+}
+
+// processFlowStep is a lightweight snapshot of one routing step written into
+// work_order_items.process_flow_json at WO creation time.
+type processFlowStep struct {
+	OpSeq        int      `json:"op_seq"`
+	ProcessName  string   `json:"process_name"`
+	MachineName  *string  `json:"machine_name"`
+	CycleTimeSec *float64 `json:"cycle_time_sec"`
+	SetupTimeMin *float64 `json:"setup_time_min"`
+}
+
+// fetchProcessFlows returns a map from uniq_code → marshalled JSON array of
+// processFlowStep, sourced from items → routing_headers → routing_operations
+// → process_parameters.  If no routing is found for an item, the value is []byte("[]").
+func (s *service) fetchProcessFlows(ctx context.Context, tx *gorm.DB, uniqCodes []string) (map[string]datatypes.JSON, error) {
+	out := make(map[string]datatypes.JSON, len(uniqCodes))
+	for _, c := range uniqCodes {
+		out[c] = datatypes.JSON([]byte("[]"))
+	}
+	if len(uniqCodes) == 0 {
+		return out, nil
+	}
+
+	type opRow struct {
+		UniqCode     string   `gorm:"column:uniq_code"`
+		OpSeq        int      `gorm:"column:op_seq"`
+		ProcessName  string   `gorm:"column:process_name"`
+		MachineName  *string  `gorm:"column:machine_name"`
+		CycleTimeSec *float64 `gorm:"column:cycle_time_sec"`
+		SetupTimeMin *float64 `gorm:"column:setup_time_min"`
+	}
+
+	rawSQL := `
+		SELECT i.uniq_code,
+		       ro.op_seq,
+		       pp.process_name,
+		       mm.machine_name     AS machine_name,
+		       ro.cycle_time_sec,
+		       ro.setup_time_min
+		FROM   items i
+		JOIN   routing_headers rh ON rh.item_id = i.id
+		JOIN   routing_operations ro ON ro.routing_header_id = rh.id
+		JOIN   process_parameters pp ON pp.id = ro.process_id
+		LEFT   JOIN master_machines mm ON mm.id = ro.machine_id
+		WHERE  i.uniq_code IN ?
+		  AND  i.deleted_at IS NULL
+		  AND  rh.id IN (
+		           SELECT MAX(rh2.id)
+		           FROM   routing_headers rh2
+		           WHERE  rh2.item_id = i.id
+		       )
+		ORDER  BY i.uniq_code, ro.op_seq`
+
+	var opRows []opRow
+	db := s.db.WithContext(ctx)
+	if tx != nil {
+		db = tx.WithContext(ctx)
+	}
+	if err := db.Raw(rawSQL, uniqCodes).Scan(&opRows).Error; err != nil {
+		return nil, apperror.InternalWrap("fetchProcessFlows", err)
+	}
+
+	grouped := make(map[string][]processFlowStep, len(uniqCodes))
+	for _, r := range opRows {
+		grouped[r.UniqCode] = append(grouped[r.UniqCode], processFlowStep{
+			OpSeq:        r.OpSeq,
+			ProcessName:  r.ProcessName,
+			MachineName:  r.MachineName,
+			CycleTimeSec: r.CycleTimeSec,
+			SetupTimeMin: r.SetupTimeMin,
+		})
+	}
+	for uniq, steps := range grouped {
+		b, err := json.Marshal(steps)
+		if err != nil {
+			return nil, apperror.InternalWrap("fetchProcessFlows marshal", err)
+		}
+		out[uniq] = datatypes.JSON(b)
 	}
 	return out, nil
 }

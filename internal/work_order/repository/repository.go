@@ -14,13 +14,16 @@ type IRepository interface {
 	CreateWorkOrder(ctx context.Context, tx *gorm.DB, wo *woModels.WorkOrder) error
 	CreateWorkOrderItems(ctx context.Context, tx *gorm.DB, items []woModels.WorkOrderItem) error
 	GetWorkOrderByUUID(ctx context.Context, woUUID string) (*woModels.WorkOrder, error)
+	GetWorkOrderByUUIDAndKind(ctx context.Context, woUUID string, woKind string) (*woModels.WorkOrder, error)
 	GetWorkOrderItemByUUID(ctx context.Context, itemUUID string) (*woModels.WorkOrderItem, error)
 	GetWorkOrderItemsByWOID(ctx context.Context, woID int64) ([]woModels.WorkOrderItem, error)
 	UpdateWorkOrderApprovalStatus(ctx context.Context, tx *gorm.DB, woID int64, status string) error
 	UpdateWorkOrderQR(ctx context.Context, tx *gorm.DB, woID int64, base64 string) error
 	UpdateWorkOrderItemQR(ctx context.Context, tx *gorm.DB, itemID int64, base64 string) error
 	FindWorkOrdersByWONumbers(ctx context.Context, woNumbers []string) (map[string]*woModels.WorkOrder, error)
+	FindWorkOrdersByWONumbersAndKind(ctx context.Context, woNumbers []string, woKind string) (map[string]*woModels.WorkOrder, error)
 	GetSummary(ctx context.Context) (*SummaryRow, error)
+	GetSummaryByKind(ctx context.Context, woKind string) (*SummaryRow, error)
 	GetItemsByWOIDs(ctx context.Context, woIDs []int64) ([]woModels.WorkOrderItem, error)
 
 	ListWorkOrders(ctx context.Context, f ListFilter) ([]WorkOrderRow, int64, error)
@@ -58,6 +61,13 @@ func (r *repository) FindLastWONumber(ctx context.Context, tx *gorm.DB, prefix s
 
 func (r *repository) CreateWorkOrder(ctx context.Context, tx *gorm.DB, wo *woModels.WorkOrder) error {
 	if err := r.q(ctx, tx).Create(wo).Error; err != nil {
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "column \"wo_kind\"") {
+			return apperror.BadRequest("missing DB column work_orders.wo_kind; run migration scripts/migrations/0041_add_work_orders_kind_up.sql")
+		}
+		if strings.Contains(msg, "column \"source_material_uniq\"") {
+			return apperror.BadRequest("missing RM columns on work_orders; run migration scripts/migrations/0044_add_rm_processing_fields_to_work_orders_up.sql")
+		}
 		// unique constraint violations will bubble up; keep message generic
 		return apperror.InternalWrap("failed to create work order", err)
 	}
@@ -69,6 +79,10 @@ func (r *repository) CreateWorkOrderItems(ctx context.Context, tx *gorm.DB, item
 		return nil
 	}
 	if err := r.q(ctx, tx).Create(&items).Error; err != nil {
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "column \"process_flow_json\"") || strings.Contains(msg, "column \"current_step_seq\"") {
+			return apperror.BadRequest("missing poka-yoke columns on work_order_items; run migration scripts/migrations/0043_create_work_order_poka_yoke_up.sql")
+		}
 		return apperror.InternalWrap("failed to create work order items", err)
 	}
 	return nil
@@ -77,6 +91,20 @@ func (r *repository) CreateWorkOrderItems(ctx context.Context, tx *gorm.DB, item
 func (r *repository) GetWorkOrderByUUID(ctx context.Context, woUUID string) (*woModels.WorkOrder, error) {
 	var wo woModels.WorkOrder
 	err := r.db.WithContext(ctx).Where("uuid = ?", woUUID).Take(&wo).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, apperror.NotFound("work order not found")
+		}
+		return nil, apperror.InternalWrap("failed to load work order", err)
+	}
+	return &wo, nil
+}
+
+func (r *repository) GetWorkOrderByUUIDAndKind(ctx context.Context, woUUID string, woKind string) (*woModels.WorkOrder, error) {
+	var wo woModels.WorkOrder
+	err := r.db.WithContext(ctx).
+		Where("uuid = ? AND wo_kind = ?", woUUID, woKind).
+		Take(&wo).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, apperror.NotFound("work order not found")
@@ -186,6 +214,23 @@ func (r *repository) FindWorkOrdersByWONumbers(ctx context.Context, woNumbers []
 	return out, nil
 }
 
+func (r *repository) FindWorkOrdersByWONumbersAndKind(ctx context.Context, woNumbers []string, woKind string) (map[string]*woModels.WorkOrder, error) {
+	if len(woNumbers) == 0 {
+		return map[string]*woModels.WorkOrder{}, nil
+	}
+	var list []woModels.WorkOrder
+	if err := r.db.WithContext(ctx).
+		Where("wo_number IN ? AND wo_kind = ?", woNumbers, woKind).
+		Find(&list).Error; err != nil {
+		return nil, apperror.InternalWrap("failed to find work orders by wo_numbers", err)
+	}
+	out := make(map[string]*woModels.WorkOrder, len(list))
+	for i := range list {
+		out[list[i].WoNumber] = &list[i]
+	}
+	return out, nil
+}
+
 // ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
@@ -198,8 +243,12 @@ type SummaryRow struct {
 }
 
 func (r *repository) GetSummary(ctx context.Context) (*SummaryRow, error) {
+	return r.GetSummaryByKind(ctx, "")
+}
+
+func (r *repository) GetSummaryByKind(ctx context.Context, woKind string) (*SummaryRow, error) {
 	var row SummaryRow
-	err := r.db.WithContext(ctx).Raw(`
+	query := `
 		SELECT
 			COUNT(*) FILTER (WHERE LOWER(wo.status) = 'in progress') AS active_wos,
 			COUNT(*) FILTER (WHERE LOWER(wo.status) = 'completed')   AS completed,
@@ -209,9 +258,23 @@ func (r *repository) GetSummary(ctx context.Context) (*SummaryRow, error) {
 				FROM work_order_items wi
 				INNER JOIN work_orders woi ON woi.id = wi.wo_id
 				WHERE LOWER(woi.status) NOT IN ('closed', 'cancelled')
+				%s
 			), 0) AS total_uniqs
 		FROM work_orders wo
-	`).Scan(&row).Error
+		%s
+	`
+	innerKindFilter := ""
+	outerKindFilter := ""
+	args := make([]interface{}, 0, 2)
+	if strings.TrimSpace(woKind) != "" {
+		innerKindFilter = " AND woi.wo_kind = ?"
+		outerKindFilter = " WHERE wo.wo_kind = ?"
+		args = append(args, woKind, woKind)
+	}
+	err := r.db.WithContext(ctx).Raw(
+		strings.Replace(strings.Replace(query, "%s", innerKindFilter, 1), "%s", outerKindFilter, 1),
+		args...,
+	).Scan(&row).Error
 	if err != nil {
 		return nil, apperror.InternalWrap("failed to get work order summary", err)
 	}
@@ -227,6 +290,7 @@ type ListFilter struct {
 	Status         string
 	ApprovalStatus string
 	WOType         string
+	WOKind         string
 	Page           int
 	Limit          int
 	Offset         int
@@ -235,20 +299,33 @@ type ListFilter struct {
 }
 
 type WorkOrderRow struct {
-	ID             int64   `gorm:"column:id"`
-	UUID           string  `gorm:"column:uuid"`
-	WoNumber       string  `gorm:"column:wo_number"`
-	WoType         string  `gorm:"column:wo_type"`
-	ReferenceWO    *string `gorm:"column:reference_wo"`
-	Status         string  `gorm:"column:status"`
-	ApprovalStatus string  `gorm:"column:approval_status"`
-	CreatedDate    string  `gorm:"column:created_date"`
-	TargetDate     *string `gorm:"column:target_date"`
-	CreatedByName  *string `gorm:"column:created_by_name"`
-	UniqCount      int     `gorm:"column:uniq_count"`
-	ItemCount      int     `gorm:"column:item_count"`
-	ClosedCount    int     `gorm:"column:closed_count"`
-	AgingDays      int     `gorm:"column:aging_days"`
+	ID                 int64    `gorm:"column:id"`
+	UUID               string   `gorm:"column:uuid"`
+	WoNumber           string   `gorm:"column:wo_number"`
+	WoType             string   `gorm:"column:wo_type"`
+	WOKind             string   `gorm:"column:wo_kind"`
+	ReferenceWO        *string  `gorm:"column:reference_wo"`
+	Status             string   `gorm:"column:status"`
+	ApprovalStatus     string   `gorm:"column:approval_status"`
+	CreatedDate        string   `gorm:"column:created_date"`
+	TargetDate         *string  `gorm:"column:target_date"`
+	CreatedByName      *string  `gorm:"column:created_by_name"`
+	UniqCount          int      `gorm:"column:uniq_count"`
+	ItemCount          int      `gorm:"column:item_count"`
+	ClosedCount        int      `gorm:"column:closed_count"`
+	AgingDays          int      `gorm:"column:aging_days"`
+	SourceMaterialUniq *string  `gorm:"column:source_material_uniq"`
+	TargetMaterialUniq *string  `gorm:"column:target_material_uniq"`
+	Model              *string  `gorm:"column:model"`
+	GradeSize          *string  `gorm:"column:grade_size"`
+	InputQty           *float64 `gorm:"column:input_qty"`
+	InputUOM           *string  `gorm:"column:input_uom"`
+	OutputQty          *float64 `gorm:"column:output_qty"`
+	OutputUOM          *string  `gorm:"column:output_uom"`
+	DateIssued         *string  `gorm:"column:date_issued"`
+	DateCompleted      *string  `gorm:"column:date_completed"`
+	CycleTimeDays      *int     `gorm:"column:cycle_time_days"`
+	Remarks            *string  `gorm:"column:remarks"`
 }
 
 func (r *repository) ListWorkOrders(ctx context.Context, f ListFilter) ([]WorkOrderRow, int64, error) {
@@ -266,6 +343,9 @@ func (r *repository) ListWorkOrders(ctx context.Context, f ListFilter) ([]WorkOr
 	}
 	if f.WOType != "" {
 		base = base.Where("wo_type = ?", f.WOType)
+	}
+	if f.WOKind != "" {
+		base = base.Where("wo_kind = ?", f.WOKind)
 	}
 
 	var total int64
@@ -297,6 +377,9 @@ func (r *repository) ListWorkOrders(ctx context.Context, f ListFilter) ([]WorkOr
 	if f.WOType != "" {
 		dq = dq.Where("wo.wo_type = ?", f.WOType)
 	}
+	if f.WOKind != "" {
+		dq = dq.Where("wo.wo_kind = ?", f.WOKind)
+	}
 
 	var rows []WorkOrderRow
 	err := dq.
@@ -305,10 +388,23 @@ func (r *repository) ListWorkOrders(ctx context.Context, f ListFilter) ([]WorkOr
 			"wo.uuid",
 			"wo.wo_number",
 			"wo.wo_type",
+			"wo.wo_kind",
 			"wo.reference_wo",
 			"wo.status",
 			"wo.approval_status",
 			"wo.created_by_name",
+			"wo.source_material_uniq",
+			"wo.target_material_uniq",
+			"wo.model",
+			"wo.grade_size",
+			"wo.input_qty",
+			"wo.input_uom",
+			"wo.output_qty",
+			"wo.output_uom",
+			"CASE WHEN wo.date_issued IS NULL THEN NULL ELSE to_char(wo.date_issued, 'YYYY-MM-DD') END AS date_issued",
+			"CASE WHEN wo.date_completed IS NULL THEN NULL ELSE to_char(wo.date_completed, 'YYYY-MM-DD') END AS date_completed",
+			"wo.cycle_time_days",
+			"wo.remarks",
 			"to_char(wo.created_date, 'YYYY-MM-DD') AS created_date",
 			"CASE WHEN wo.target_date IS NULL THEN NULL ELSE to_char(wo.target_date, 'YYYY-MM-DD') END AS target_date",
 			"COALESCE(s.uniq_count, 0) AS uniq_count",
