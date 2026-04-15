@@ -1,11 +1,11 @@
 package models
 
 type CreateDNRequest struct {
-	PONumber      string `json:"po_number" validate:"required"`
-	CustomerID    int64  `json:"customer_id"`
-	ContactPerson string `json:"contact_person"`
-	Period        string `json:"period" validate:"required"`
-	Type          string `json:"type" validate:"required"`
+	PONumber string `json:"po_number" validate:"required"`
+	// CustomerID    int64  `json:"customer_id"`
+	// ContactPerson string `json:"contact_person"`
+	Period string `json:"period" validate:"required"`
+	Type   string `json:"type" validate:"required"`
 
 	Items []CreateDNItemRequest `json:"items" validate:"required,dive"`
 }

@@ -5,10 +5,10 @@ import (
 )
 
 type DeliveryNote struct {
-	ID              int64     `json:"id" gorm:"primaryKey"`                                //request
-	DNNumber        string    `json:"dn_number" gorm:"type:varchar(50)"`                   //request
-	CustomerID      int64     `json:"customer_id"`                                         //request
-	ContactPerson   string    `json:"contact_person"`                                      //request
+	ID       int64  `json:"id" gorm:"primaryKey"`              //request
+	DNNumber string `json:"dn_number" gorm:"type:varchar(50)"` //request
+	// CustomerID      int64     `json:"customer_id"`                                         //request
+	// ContactPerson   string    `json:"contact_person"`                                      //request
 	Period          string    `json:"period"`                                              //request
 	PONumber        string    `json:"po_number"`                                           //request diambil dari po_number check po ini ada atau tidak, kalau tidak ada maka error
 	Type            string    `json:"type"`                                                //request

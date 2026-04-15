@@ -101,10 +101,10 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 		// 🔥 CREATE HEADER
 		// ==============================
 		dn = models.DeliveryNote{
-			DNNumber:        dn.DNNumber,
-			PONumber:        po.PoNumber,
-			CustomerID:      req.CustomerID,
-			ContactPerson:   req.ContactPerson,
+			DNNumber: dn.DNNumber,
+			PONumber: po.PoNumber,
+			// CustomerID:      req.CustomerID,
+			// ContactPerson:   req.ContactPerson,
 			Period:          req.Period,
 			Type:            req.Type,
 			Status:          "draft",
