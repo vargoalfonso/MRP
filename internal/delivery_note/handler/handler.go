@@ -105,19 +105,35 @@ func (h *HTTPHandler) GetDeliveryNoteByID(appCtx *app.Context) *app.CostumeRespo
 }
 
 func (h *HTTPHandler) ScanDeliveryNoteItem(appCtx *app.Context) *app.CostumeResponse {
-	packing := appCtx.Query("packing")
+	var req models.QRPayload
 
-	if packing == "" {
+	// bind request
+	if err := appCtx.ShouldBindJSON(&req); err != nil {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusBadRequest,
-			Message:   "invalid qr parameter",
+			Message:   "invalid request body",
 		}
 	}
 
-	response, err := h.service.ScanAndUpdate(appCtx.Request.Context(), packing)
+	// validate
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": errs},
+		}
+	}
+
+	response, err := h.service.ScanAndUpdate(appCtx.Request.Context(), req)
 	if err != nil {
-		return app.NewError(appCtx, err)
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
 	}
 
 	return &app.CostumeResponse{

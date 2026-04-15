@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -21,7 +22,7 @@ type IDeliveryNoteService interface {
 	Create(ctx context.Context, req models.CreateDNRequest) (*models.DeliveryNote, error)
 	GetAll(ctx context.Context) ([]models.DeliveryNote, error)
 	GetByID(ctx context.Context, id int64) (*models.DeliveryNote, error)
-	ScanAndUpdate(ctx context.Context, packing string) (string, error)
+	ScanAndUpdate(ctx context.Context, req models.QRPayload) (string, error)
 	PreviewDN(ctx context.Context, req models.CreateDNRequest) (*models.PreviewDNResponse, error)
 	PreviewItem(ctx context.Context, req models.PreviewDNItem) (*models.PreviewDNItemRespons, error)
 }
@@ -220,10 +221,16 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 
 		for _, item := range items {
 
-			qrValue := fmt.Sprintf(
-				"http://127.0.0.1:8899/api/v1/delivery-notes/scan?packing=%s",
-				item.PackingNumber,
-			)
+			payload := models.QRPayload{
+				Packing: item.PackingNumber,
+			}
+
+			qrBytes, err := json.Marshal(payload)
+			if err != nil {
+				return err
+			}
+
+			qrValue := string(qrBytes)
 
 			qrBase64, err := generateQRBase64(qrValue)
 			if err != nil {
@@ -322,7 +329,7 @@ func generateQRBase64(value string) (string, error) {
 	return "data:image/png;base64," + base64Str, nil
 }
 
-func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string) (string, error) {
+func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, req models.QRPayload) (string, error) {
 	returnStatus := ""
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -330,7 +337,7 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string)
 		var item models.DeliveryNoteItem
 
 		// 🔥 1. cari item
-		err := tx.Where("packing_number = ?", packing).
+		err := tx.Where("packing_number = ?", req.Packing).
 			First(&item).Error
 
 		if err != nil {
@@ -342,11 +349,11 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, packing string)
 
 		var dn models.DeliveryNote
 
-		err = tx.Where("id = ?", item.DNID).
+		err = tx.Where("id = ? AND status = ?", item.DNID, "active").
 			First(&dn).Error
 
 		if err != nil {
-			return err
+			return fmt.Errorf("Delivery Note tidak aktif")
 		}
 
 		if dn.Status == "completed" {
