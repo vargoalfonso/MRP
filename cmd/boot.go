@@ -77,6 +77,10 @@ import (
 	procHandler "github.com/ganasa18/go-template/internal/procurement/handler"
 	procRepository "github.com/ganasa18/go-template/internal/procurement/repository"
 	procService "github.com/ganasa18/go-template/internal/procurement/service"
+	productionModule "github.com/ganasa18/go-template/internal/production"
+	productionHandler "github.com/ganasa18/go-template/internal/production/handler"
+	productionRepository "github.com/ganasa18/go-template/internal/production/repository"
+	productionService "github.com/ganasa18/go-template/internal/production/service"
 	qcModule "github.com/ganasa18/go-template/internal/qc"
 	qcHandler "github.com/ganasa18/go-template/internal/qc/handler"
 	qcRepo "github.com/ganasa18/go-template/internal/qc/repository"
@@ -240,6 +244,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	deliveryNoteSvc := deliveryNoteService.New(deliveryNoteRepo, db, approvalWorkflowRepo)
 	deliveryNoteHTTPHandler := deliveryNoteHandler.New(deliveryNoteSvc)
 
+	productionRepo := productionRepository.New(db)
+	productionSvc := productionService.New(productionRepo)
+	productionHTTPHandler := productionHandler.New(productionSvc)
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -267,6 +275,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		processParameterModule.NewHTTPModule(cfg, baseHTTPHandler, processParameterHTTPHandler, authSvc, roleSvc, processParameterSvc),
 		kanbanModule.NewHTTPModule(cfg, baseHTTPHandler, kanbanHTTPHandler, authSvc, roleSvc, kanbanSvc),
 		deliveryNoteModule.NewHTTPModule(cfg, baseHTTPHandler, deliveryNoteHTTPHandler, authSvc, roleSvc, deliveryNoteSvc),
+		productionModule.NewHTTPModule(cfg, baseHTTPHandler, productionHTTPHandler, authSvc, roleSvc, productionSvc),
 	}
 
 	// --- Server ---

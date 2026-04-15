@@ -28,6 +28,9 @@ type IDeliveryNoteRepository interface {
 	GetDNSummaryByPO(ctx context.Context, poNumber string) (*DNCountSummary, error)
 	GetUsedQtyByItem(ctx context.Context, itemCode string) (int64, error)
 	GetKanbanByItemCode(ctx context.Context, code string) (*models.KanbanParameter, error)
+
+	GetPOItemByItemCode(ctx context.Context, itemCode string) (*models.PurchaseOrderItem, error)
+	CheckItemExistsInDN(ctx context.Context, itemCode string) (bool, error)
 }
 
 type DNCountSummary struct {
@@ -225,4 +228,33 @@ func (r *repository) CountDNByPONumber(ctx context.Context, poNumber string) (in
 	}
 
 	return count, nil
+}
+
+func (r *repository) GetPOItemByItemCode(ctx context.Context, itemCode string) (*models.PurchaseOrderItem, error) {
+	var item models.PurchaseOrderItem
+
+	err := r.db.WithContext(ctx).
+		Where("item_uniq_code = ?", itemCode).
+		First(&item).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &item, nil
+}
+
+func (r *repository) CheckItemExistsInDN(ctx context.Context, itemCode string) (bool, error) {
+	var count int64
+
+	err := r.db.WithContext(ctx).
+		Model(&models.DeliveryNoteItem{}).
+		Where("item_uniq_code = ?", itemCode).
+		Count(&count).Error
+
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
 }

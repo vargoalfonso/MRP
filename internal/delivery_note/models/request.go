@@ -38,3 +38,18 @@ type PreviewDNItemResponse struct {
 	PackingNumber string `json:"packing_number"`
 	DateIncoming  string `json:"date_incoming"`
 }
+
+type PreviewDNItem struct {
+	PONumber string `json:"po_number" validate:"required"`
+	Items    string `json:"items" validate:"required"`
+}
+
+type PreviewDNItemRespons struct {
+	ItemUniqCode string `json:"item_uniq_code"`
+	MaterialInfo string `json:"material_info"`
+	TotalQty     int64  `json:"total_qty"`
+	RemainingQty int64  `json:"remaining_qty"`
+	UOM          string `json:"uom"`
+	OrderQty     int64  `json:"order_qty"`
+	PcsPerKanban int64  `json:"pcs_per_kanban"`
+}
