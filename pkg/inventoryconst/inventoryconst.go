@@ -9,7 +9,9 @@ const (
 	SourceManual           SourceFlag = "manual"
 	SourceIncomingScan     SourceFlag = "incoming_scan"
 	SourceQCApprove        SourceFlag = "qc_approve"
-	SourceWOApprove        SourceFlag = "wo_approve"
+	SourceWOApprove        SourceFlag = "wo_approve"        // current implementation: deduct on WO approve
+	SourceWOReserve        SourceFlag = "wo_reserve"        // future: reserve/issue to floor (optional)
+	SourceWOConsumeActual  SourceFlag = "wo_consume_actual" // future: actual RM used from scan-out
 	SourceProductionReject SourceFlag = "production_reject" // reserved for future use
 	SourceStockOpname      SourceFlag = "stock_opname"
 

@@ -75,6 +75,7 @@ type WorkOrderPaginationInput struct {
 	Status         string `json:"status"`
 	ApprovalStatus string `json:"approval_status"`
 	WOType         string `json:"wo_type"`
+	WOKind         string `json:"wo_kind"`
 }
 
 func (p WorkOrderPaginationInput) Offset() int { return p.PaginationInput.Offset() }
@@ -189,6 +190,7 @@ func WorkOrderPagination(c *app.Context) WorkOrderPaginationInput {
 		Status:          c.Query("status"),
 		ApprovalStatus:  c.Query("approval_status"),
 		WOType:          c.Query("wo_type"),
+		WOKind:          c.Query("wo_kind"),
 	}
 }
 

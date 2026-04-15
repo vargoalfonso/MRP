@@ -1,6 +1,10 @@
 package models
 
-import "github.com/ganasa18/go-template/pkg/pagination"
+import (
+	"encoding/json"
+
+	"github.com/ganasa18/go-template/pkg/pagination"
+)
 
 // CreateWorkOrderResponse is returned by create endpoint.
 type CreateWorkOrderResponse struct {
@@ -13,13 +17,14 @@ type CreateWorkOrderResponse struct {
 }
 
 type CreateWorkOrderItemBrief struct {
-	ID           string  `json:"id"`         // WO item UUID
-	WoItemID     string  `json:"wo_item_id"` // alias of id
-	KanbanNumber string  `json:"kanban_number"`
-	ItemUniqCode string  `json:"item_uniq_code"`
-	Quantity     float64 `json:"quantity"`
-	ProcessName  *string `json:"process_name"`
-	QRDataURL    *string `json:"qr_data_url"`
+	ID              string          `json:"id"`         // WO item UUID
+	WoItemID        string          `json:"wo_item_id"` // alias of id
+	KanbanNumber    string          `json:"kanban_number"`
+	ItemUniqCode    string          `json:"item_uniq_code"`
+	Quantity        float64         `json:"quantity"`
+	ProcessName     *string         `json:"process_name"`
+	ProcessFlowJSON json.RawMessage `json:"process_flow_json"`
+	QRDataURL       *string         `json:"qr_data_url"`
 }
 
 type ProcessOptionItem struct {
@@ -51,14 +56,15 @@ type WorkOrderPreviewItem struct {
 
 // WorkOrderListItemDetail is a slim item row embedded in the list response.
 type WorkOrderListItemDetail struct {
-	ID           string  `json:"id"` // WO item UUID
-	ItemUniqCode string  `json:"item_uniq_code"`
-	PartName     *string `json:"part_name"`
-	PartNumber   *string `json:"part_number"`
-	Model        *string `json:"model"`
-	Quantity     float64 `json:"quantity"`
-	UOM          *string `json:"uom"`
-	Status       string  `json:"status"`
+	ID              string          `json:"id"` // WO item UUID
+	ItemUniqCode    string          `json:"item_uniq_code"`
+	PartName        *string         `json:"part_name"`
+	PartNumber      *string         `json:"part_number"`
+	Model           *string         `json:"model"`
+	Quantity        float64         `json:"quantity"`
+	UOM             *string         `json:"uom"`
+	Status          string          `json:"status"`
+	ProcessFlowJSON json.RawMessage `json:"process_flow_json"`
 }
 
 // WorkOrderListItem is a board row.
@@ -66,6 +72,7 @@ type WorkOrderListItem struct {
 	ID             string  `json:"id"` // WO UUID
 	WoNumber       string  `json:"wo_number"`
 	WoType         string  `json:"wo_type"`
+	WOKind         string  `json:"wo_kind"`
 	ReferenceWO    *string `json:"reference_wo"`
 	Status         string  `json:"status"`
 	ApprovalStatus string  `json:"approval_status"`
@@ -96,15 +103,16 @@ type WorkOrderSummaryResponse struct {
 
 // WorkOrderDetailItem is a single kanban row inside WO detail.
 type WorkOrderDetailItem struct {
-	ID           string  `json:"id"` // WO item UUID
-	WoItemID     string  `json:"wo_item_id"`
-	KanbanNumber string  `json:"kanban_number"`
-	ItemUniqCode string  `json:"item_uniq_code"`
-	Quantity     float64 `json:"quantity"`
-	UOM          *string `json:"uom"`
-	ProcessName  *string `json:"process_name"`
-	Status       string  `json:"status"`
-	QRDataURL    *string `json:"qr_data_url"`
+	ID              string          `json:"id"` // WO item UUID
+	WoItemID        string          `json:"wo_item_id"`
+	KanbanNumber    string          `json:"kanban_number"`
+	ItemUniqCode    string          `json:"item_uniq_code"`
+	Quantity        float64         `json:"quantity"`
+	UOM             *string         `json:"uom"`
+	ProcessName     *string         `json:"process_name"`
+	Status          string          `json:"status"`
+	ProcessFlowJSON json.RawMessage `json:"process_flow_json"`
+	QRDataURL       *string         `json:"qr_data_url"`
 }
 
 // WorkOrderDetailResponse is returned by GET /work-orders/:id.
@@ -172,4 +180,80 @@ type UniqOptionItem struct {
 
 type UniqOptionsResponse struct {
 	Items []UniqOptionItem `json:"items"`
+}
+
+type RMProcessingWorkOrderCreateResponse struct {
+	ID                 string  `json:"id"`
+	WoID               string  `json:"wo_id"`
+	WoNumber           string  `json:"wo_number"`
+	WoType             string  `json:"wo_type"`
+	WOKind             string  `json:"wo_kind"`
+	Status             string  `json:"status"`
+	ApprovalStatus     string  `json:"approval_status"`
+	SourceMaterialUniq string  `json:"source_material_uniq"`
+	TargetMaterialUniq string  `json:"target_material_uniq"`
+	Model              *string `json:"model"`
+	GradeSize          *string `json:"grade_size"`
+	InputQty           float64 `json:"input_qty"`
+	InputUOM           string  `json:"input_uom"`
+	OutputQty          float64 `json:"output_qty"`
+	OutputUOM          string  `json:"output_uom"`
+	DateIssued         string  `json:"date_issued"`
+	Remarks            *string `json:"remarks"`
+	QRDataURL          *string `json:"qr_data_url"`
+}
+
+type RMProcessingWorkOrderListItem struct {
+	ID                 string  `json:"id"`
+	WoNumber           string  `json:"wo_number"`
+	WoType             string  `json:"wo_type"`
+	WOKind             string  `json:"wo_kind"`
+	Status             string  `json:"status"`
+	ApprovalStatus     string  `json:"approval_status"`
+	CreatedDate        string  `json:"created_date"`
+	CreatedByName      *string `json:"created_by_name"`
+	SourceMaterialUniq string  `json:"source_material_uniq"`
+	TargetMaterialUniq string  `json:"target_material_uniq"`
+	Model              *string `json:"model"`
+	GradeSize          *string `json:"grade_size"`
+	InputQty           float64 `json:"input_qty"`
+	InputUOM           string  `json:"input_uom"`
+	OutputQty          float64 `json:"output_qty"`
+	OutputUOM          string  `json:"output_uom"`
+	DateIssued         string  `json:"date_issued"`
+	DateCompleted      *string `json:"date_completed"`
+	CycleTimeDays      *int    `json:"cycle_time_days"`
+	Remarks            *string `json:"remarks"`
+	AgingDays          int     `json:"aging_days"`
+	QRDataURL          *string `json:"qr_data_url"`
+}
+
+type RMProcessingWorkOrderListResponse struct {
+	Items      []RMProcessingWorkOrderListItem `json:"items"`
+	Pagination pagination.Meta                 `json:"pagination"`
+}
+
+type RMProcessingWorkOrderDetailResponse struct {
+	ID                 string  `json:"id"`
+	WoNumber           string  `json:"wo_number"`
+	WoType             string  `json:"wo_type"`
+	WOKind             string  `json:"wo_kind"`
+	Status             string  `json:"status"`
+	ApprovalStatus     string  `json:"approval_status"`
+	CreatedDate        string  `json:"created_date"`
+	CreatedByName      *string `json:"created_by_name"`
+	SourceMaterialUniq string  `json:"source_material_uniq"`
+	TargetMaterialUniq string  `json:"target_material_uniq"`
+	Model              *string `json:"model"`
+	GradeSize          *string `json:"grade_size"`
+	InputQty           float64 `json:"input_qty"`
+	InputUOM           string  `json:"input_uom"`
+	OutputQty          float64 `json:"output_qty"`
+	OutputUOM          string  `json:"output_uom"`
+	DateIssued         string  `json:"date_issued"`
+	DateCompleted      *string `json:"date_completed"`
+	CycleTimeDays      *int    `json:"cycle_time_days"`
+	Remarks            *string `json:"remarks"`
+	Notes              *string `json:"notes"`
+	QRDataURL          *string `json:"qr_data_url"`
 }

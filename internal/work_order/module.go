@@ -66,6 +66,13 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	wo.POST("/:id/approval", perm("work_order", "approve"), m.base.RunAction(m.handler.Approval))
 	wo.GET("/:id/qr", perm("work_order", "view"), m.base.RunAction(m.handler.GetWorkOrderQR))
 
+	rm := g.Group("/rm-processing/work-orders")
+	rm.GET("/summary", perm("work_order", "view"), m.base.RunAction(m.handler.GetRMProcessingWorkOrderSummary))
+	rm.GET("", perm("work_order", "view"), m.base.RunAction(m.handler.ListRMProcessingWorkOrders))
+	rm.POST("", perm("work_order", "create"), m.base.RunAction(m.handler.CreateRMProcessingWorkOrder))
+	rm.GET("/:id", perm("work_order", "view"), m.base.RunAction(m.handler.GetRMProcessingWorkOrderDetail))
+	rm.POST("/:id/approval", perm("work_order", "approve"), m.base.RunAction(m.handler.ApprovalRMProcessing))
+
 	items := g.Group("/work-order-items")
 	items.GET("/:id/qr", perm("work_order", "view"), m.base.RunAction(m.handler.GetWorkOrderItemQR))
 }
