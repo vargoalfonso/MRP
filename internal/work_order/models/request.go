@@ -2,6 +2,8 @@ package models
 
 // CreateWorkOrderRequest is the body for POST /api/v1/working-order/work-orders.
 type CreateWorkOrderRequest struct {
+	// Optional: allow FE to reuse preview wo_id.
+	WOID        *string               `json:"wo_id"`
 	WOType      string                `json:"wo_type" validate:"required,oneof=New Assembly Rework Addendum"`
 	ReferenceWO *string               `json:"reference_wo"`
 	CreatedDate *string               `json:"created_date"` // YYYY-MM-DD (optional)

@@ -155,7 +155,7 @@ type InventoryMovementLog struct {
 	WeightChange *float64 `gorm:"type:numeric(15,4)"`
 
 	// Additional flags/context for quick filtering in one table
-	SourceFlag  *string `gorm:"size:64;index"` // incoming_scan | qc_approve | wo_scan | manual | stock_opname
+	SourceFlag  *string `gorm:"size:64;index"` // manual | incoming_scan | qc_approve | wo_approve | production_reject | stock_opname (plus legacy)
 	DNNumber    *string `gorm:"size:128"`
 	ReferenceID *string `gorm:"size:255"`
 	Notes       *string `gorm:"type:text"`

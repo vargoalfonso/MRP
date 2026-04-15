@@ -68,6 +68,38 @@ func (h *HTTPHandler) CreateWorkOrder(ctx *app.Context) *app.CostumeResponse {
 	}
 }
 
+// PreviewWorkOrder returns computed wo_number + kanban lines without inserting.
+// POST /api/v1/working-order/work-orders/preview
+func (h *HTTPHandler) PreviewWorkOrder(ctx *app.Context) *app.CostumeResponse {
+	var req woModels.CreateWorkOrderRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": errs},
+		}
+	}
+
+	data, err := h.svc.Preview(ctx.Request.Context(), req)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
 // GetWorkOrderSummary returns board summary counters.
 // GET /api/v1/working-order/work-orders/summary
 func (h *HTTPHandler) GetWorkOrderSummary(ctx *app.Context) *app.CostumeResponse {

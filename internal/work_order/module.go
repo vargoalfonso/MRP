@@ -59,6 +59,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	wo.GET("/form-options/processes", perm("work_order", "view"), m.base.RunAction(m.handler.ProcessFormOptions))
 	wo.GET("/summary", perm("work_order", "view"), m.base.RunAction(m.handler.GetWorkOrderSummary))
 	wo.GET("", perm("work_order", "view"), m.base.RunAction(m.handler.ListWorkOrders))
+	wo.POST("/preview", perm("work_order", "create"), m.base.RunAction(m.handler.PreviewWorkOrder))
 	wo.POST("", perm("work_order", "create"), m.base.RunAction(m.handler.CreateWorkOrder))
 	wo.POST("/bulk-approval", perm("work_order", "approve"), m.base.RunAction(m.handler.BulkApproval))
 	wo.GET("/:id", perm("work_order", "view"), m.base.RunAction(m.handler.GetWorkOrderDetail))
