@@ -185,7 +185,7 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 
 			kanban, err := s.repo.GetKanbanByItemCode(ctx, it.ItemUniqCode)
 			if err != nil {
-				return err
+				return fmt.Errorf("Uniq tersebut belum terdaftar pada kanban.")
 			}
 
 			date, err := time.Parse("02/01/2006", it.IncomingDate)
@@ -352,15 +352,11 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, req models.QRPa
 		err = tx.Where("id = ? AND status = ?", item.DNID, "active").
 			First(&dn).Error
 
-		if err != nil {
-			return fmt.Errorf("Delivery Note tidak aktif")
-		}
-
 		if dn.Status == "completed" {
 			return fmt.Errorf("delivery note sudah completed, tidak bisa scan")
 		}
 
-		if dn.Status != "draft" && dn.Status != "incoming" && dn.Status != "waiting" {
+		if dn.Status != "active" {
 			return fmt.Errorf("delivery note tidak aktif")
 		}
 
@@ -513,27 +509,36 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.CreateDN
 
 func (s *deliveryNoteService) PreviewItem(ctx context.Context, req models.PreviewDNItem) (*models.PreviewDNItemRespons, error) {
 
-	_, err := s.repo.GetPOByPONumber(ctx, req.PONumber)
-	if err != nil {
-		return nil, fmt.Errorf("PO tidak ditemukan")
-	}
 	// 🔥 1. ambil item dari PO
-	poItem, err := s.repo.GetPOItemByItemCode(ctx, req.Items)
+	poItem, err := s.repo.GetPOItemByPackingNumber(ctx, req.Packing)
 	if err != nil {
 		return nil, fmt.Errorf("item tidak ditemukan")
 	}
 
-	// 🔥 3. build response
-	res := &models.PreviewDNItemRespons{
-		ItemUniqCode: poItem.ItemUniqCode,
-		MaterialInfo: poItem.ItemUniqCode,
-		TotalQty:     int64(poItem.OrderedQty),
-		RemainingQty: int64(poItem.OrderedQty), // bisa dikurangi kalau ada DN sebelumnya
-		UOM:          poItem.UOM,
-		OrderQty:     int64(poItem.OrderedQty),
-		PcsPerKanban: poItem.PcsPerKanban,
+	dn, err := s.repo.GetDNByID(ctx, poItem.DNID)
+	if err != nil {
+		return nil, fmt.Errorf("dn tidak ditemukan")
 	}
 
+	supplier, err := s.repo.GetSupplierByID(ctx, dn.SupplierID)
+	if err != nil {
+		return nil, fmt.Errorf("supplier tidak ditemukan")
+	}
+	// 🔥 3. build response
+	res := &models.PreviewDNItemRespons{
+		DNNumber:      dn.DNNumber,
+		PackingNumber: poItem.PackingNumber,
+		PONumber:      dn.PONumber,
+		Supplier:      supplier.SupplierName,
+		ItemUniqCode:  poItem.ItemUniqCode,
+		MaterialInfo:  poItem.ItemUniqCode,
+		Weight:        poItem.Weight,
+		TotalQty:      int64(poItem.Quantity),
+		RemainingQty:  int64(poItem.QtyReceived),
+		UOM:           poItem.UOM,
+		OrderQty:      int64(poItem.QtyReceived),
+		PcsPerKanban:  poItem.PcsPerKanban,
+	}
 	return res, nil
 }
 

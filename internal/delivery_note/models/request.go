@@ -40,18 +40,22 @@ type PreviewDNItemResponse struct {
 }
 
 type PreviewDNItem struct {
-	PONumber string `json:"po_number" validate:"required"`
-	Items    string `json:"items" validate:"required"`
+	Packing string `json:"packing" validate:"required"`
 }
 
 type PreviewDNItemRespons struct {
-	ItemUniqCode string `json:"item_uniq_code"`
-	MaterialInfo string `json:"material_info"`
-	TotalQty     int64  `json:"total_qty"`
-	RemainingQty int64  `json:"remaining_qty"`
-	UOM          string `json:"uom"`
-	OrderQty     int64  `json:"order_qty"`
-	PcsPerKanban int64  `json:"pcs_per_kanban"`
+	DNNumber      string `json:"dn_number"`
+	PackingNumber string `json:"packing_number"`
+	PONumber      string `json:"po_number"`
+	Supplier      string `json:"supplier"`
+	ItemUniqCode  string `json:"item_uniq_code"`
+	MaterialInfo  string `json:"material_info"`
+	Weight        int64  `json:"weight"`
+	TotalQty      int64  `json:"total_qty"`
+	RemainingQty  int64  `json:"remaining_qty"`
+	UOM           string `json:"uom"`
+	OrderQty      int64  `json:"order_qty"`
+	PcsPerKanban  int64  `json:"pcs_per_kanban"`
 }
 
 type QRPayload struct {

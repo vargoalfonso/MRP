@@ -76,7 +76,12 @@ func (h *HTTPHandler) ScanIn(appCtx *app.Context) *app.CostumeResponse {
 
 	err := h.service.ScanIn(appCtx.Request.Context(), req)
 	if err != nil {
-		return app.NewError(appCtx, err)
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
 	}
 
 	return &app.CostumeResponse{
@@ -108,7 +113,12 @@ func (h *HTTPHandler) ScanOut(appCtx *app.Context) *app.CostumeResponse {
 
 	err := h.service.ScanOut(appCtx.Request.Context(), req)
 	if err != nil {
-		return app.NewError(appCtx, err)
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
 	}
 
 	return &app.CostumeResponse{
