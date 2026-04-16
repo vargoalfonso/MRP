@@ -47,18 +47,19 @@ func NewHTTPModule(
 func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	v1 := r.Group("/api/v1")
 
-	deliveryNoteGroup := v1.Group("/delivery-notes")
+	// 🔓 PUBLIC (NO JWT)
+	deliveryNotePublic := v1.Group("/delivery-notes")
+	deliveryNotePublic.POST("/scan", m.base.RunAction(m.handler.ScanDeliveryNoteItem))
+	deliveryNotePublic.POST("/preview-item", m.base.RunAction(m.handler.PreviewItem))
 
-	deliveryNoteGroup.POST("/scan", m.base.RunAction(m.handler.ScanDeliveryNoteItem))
-
-	// 🔐 wajib login
-	deliveryNoteGroup.Use(authMiddleware.JWTMiddleware(m.authenticator))
+	// 🔐 PRIVATE (JWT)
+	deliveryNotePrivate := v1.Group("/delivery-notes")
+	deliveryNotePrivate.Use(authMiddleware.JWTMiddleware(m.authenticator))
 
 	{
-		deliveryNoteGroup.GET("", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.GetDeliveryNotes))
-		deliveryNoteGroup.POST("/preview", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.PreviewDN))
-		deliveryNoteGroup.POST("", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "create"), m.base.RunAction(m.handler.CreateDeliveryNote))
-		deliveryNoteGroup.GET("/:id", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.GetDeliveryNoteByID))
-		deliveryNoteGroup.POST("/preview-item", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.PreviewItem))
+		deliveryNotePrivate.GET("", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.GetDeliveryNotes))
+		deliveryNotePrivate.POST("/preview", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.PreviewDN))
+		deliveryNotePrivate.POST("", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "create"), m.base.RunAction(m.handler.CreateDeliveryNote))
+		deliveryNotePrivate.GET("/:id", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.GetDeliveryNoteByID))
 	}
 }
