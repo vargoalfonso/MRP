@@ -29,8 +29,9 @@ type IDeliveryNoteRepository interface {
 	GetUsedQtyByItem(ctx context.Context, itemCode string) (int64, error)
 	GetKanbanByItemCode(ctx context.Context, code string) (*models.KanbanParameter, error)
 
-	GetPOItemByItemCode(ctx context.Context, itemCode string) (*models.PurchaseOrderItem, error)
+	GetPOItemByPackingNumber(ctx context.Context, packing string) (*models.DeliveryNoteItem, error)
 	CheckItemExistsInDN(ctx context.Context, itemCode string) (bool, error)
+	GetDNByID(ctx context.Context, id int64) (*models.DeliveryNote, error)
 }
 
 type DNCountSummary struct {
@@ -230,11 +231,11 @@ func (r *repository) CountDNByPONumber(ctx context.Context, poNumber string) (in
 	return count, nil
 }
 
-func (r *repository) GetPOItemByItemCode(ctx context.Context, itemCode string) (*models.PurchaseOrderItem, error) {
-	var item models.PurchaseOrderItem
+func (r *repository) GetPOItemByPackingNumber(ctx context.Context, packing string) (*models.DeliveryNoteItem, error) {
+	var item models.DeliveryNoteItem
 
 	err := r.db.WithContext(ctx).
-		Where("item_uniq_code = ?", itemCode).
+		Where("packing_number = ?", packing).
 		First(&item).Error
 
 	if err != nil {
@@ -257,4 +258,18 @@ func (r *repository) CheckItemExistsInDN(ctx context.Context, itemCode string) (
 	}
 
 	return count > 0, nil
+}
+
+func (r *repository) GetDNByID(ctx context.Context, id int64) (*models.DeliveryNote, error) {
+	var dn models.DeliveryNote
+
+	err := r.db.WithContext(ctx).
+		Where("id = ?", id).
+		First(&dn).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &dn, nil
 }
