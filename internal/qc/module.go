@@ -36,7 +36,7 @@ func NewHTTPModule(
 // Base: /api/v1/qc
 func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	auth := authMiddleware.JWTMiddleware(m.authenticator)
-	g := r.Group("/api/v1/qc")
+	g := r.Group("/api/v1/action-ui/qc")
 	g.Use(auth)
 
 	tasks := g.Group("/tasks")
