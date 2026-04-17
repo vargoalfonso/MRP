@@ -77,7 +77,7 @@ func (PurchaseOrderLog) TableName() string { return "purchase_order_logs" }
 
 // LegacySupplier maps to the legacy `supplier` table (bigint PK).
 type LegacySupplier struct {
-	SupplierID   int64  `gorm:"column:supplier_id;primaryKey"`
+	SupplierID   int64  `gorm:"column:id;primaryKey"`
 	SupplierName string `gorm:"column:supplier_name;size:128"`
 }
 
