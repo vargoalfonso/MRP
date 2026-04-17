@@ -168,6 +168,12 @@ type SafetyStockRow struct {
 	Constanta       float64 `gorm:"column:constanta"`
 }
 
+// StockdaysRow is a minimal projection from stockdays_parameters.
+type StockdaysRow struct {
+	CalculationType string  `gorm:"column:calculation_type"`
+	Constanta       float64 `gorm:"column:constanta"`
+}
+
 // ---------------------------------------------------------------------------
 // Interface
 // ---------------------------------------------------------------------------
@@ -224,6 +230,15 @@ type IRepository interface {
 	// GetKanbanPkgQty returns pcs_per_kanban from supplier_item for the given uniq_code.
 	// Returns 0 when no active supplier_item record exists (caller must apply default).
 	GetKanbanPkgQty(ctx context.Context, uniqCode string) (int, error)
+
+	// BRD-aligned kanban summary helpers.
+	GetSafetyStockParamByType(ctx context.Context, inventoryType, uniqCode string) (*SafetyStockRow, error)
+	GetStockdaysParam(ctx context.Context, inventoryType, uniqCode string) (*StockdaysRow, error)
+	GetLatestApprovedPRLPeriodByCode(ctx context.Context, uniqCode string) (string, error)
+	GetWorkingDaysByPeriod(ctx context.Context, forecastPeriod string) (int, error)
+	// GetPRLTotalFromCache reads from prl_item_period_summaries; returns (qty, found, err).
+	GetPRLTotalFromCache(ctx context.Context, forecastPeriod, uniqCode string) (float64, bool, error)
+	GetPRLTotalByPeriodAndCode(ctx context.Context, forecastPeriod, uniqCode string) (float64, error)
 }
 
 type ItemLookupRow struct {
@@ -1052,4 +1067,109 @@ func (r *repo) GetKanbanPkgQty(ctx context.Context, uniqCode string) (int, error
 		return 0, err
 	}
 	return result.PcsPerKanban, nil
+}
+
+// ---------------------------------------------------------------------------
+// BRD-aligned kanban summary helpers
+// ---------------------------------------------------------------------------
+
+func (r *repo) GetSafetyStockParamByType(ctx context.Context, inventoryType, uniqCode string) (*SafetyStockRow, error) {
+	var row SafetyStockRow
+	err := r.db.WithContext(ctx).
+		Table("safety_stock_parameters").
+		Select("calculation_type, constanta").
+		Where("inventory_type = ? AND item_uniq_code = ?", inventoryType, uniqCode).
+		First(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (r *repo) GetStockdaysParam(ctx context.Context, inventoryType, uniqCode string) (*StockdaysRow, error) {
+	var row StockdaysRow
+	err := r.db.WithContext(ctx).
+		Table("stockdays_parameters").
+		Select("calculation_type, constanta").
+		Where("inventory_type = ? AND item_uniq_code = ?", inventoryType, uniqCode).
+		First(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// GetLatestApprovedPRLPeriodByCode returns the most recently approved forecast_period for the item.
+func (r *repo) GetLatestApprovedPRLPeriodByCode(ctx context.Context, uniqCode string) (string, error) {
+	var result struct {
+		ForecastPeriod string `gorm:"column:forecast_period"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("prls").
+		Select("forecast_period").
+		Where("uniq_code = ? AND status = 'approved' AND deleted_at IS NULL", uniqCode).
+		Order("COALESCE(approved_at, updated_at) DESC").
+		Limit(1).
+		Scan(&result).Error
+	return result.ForecastPeriod, err
+}
+
+// GetWorkingDaysByPeriod returns working_days from global_parameters for the matching period.
+func (r *repo) GetWorkingDaysByPeriod(ctx context.Context, forecastPeriod string) (int, error) {
+	var result struct {
+		WorkingDays int `gorm:"column:working_days"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("global_parameters").
+		Select("working_days").
+		Where("parameter_group = 'working_days' AND period = ? AND status = 'active'", forecastPeriod).
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	return result.WorkingDays, err
+}
+
+// GetPRLTotalFromCache reads the pre-computed total from prl_item_period_summaries.
+// Returns (qty, true, nil) on cache hit; (0, false, nil) when no row exists.
+func (r *repo) GetPRLTotalFromCache(ctx context.Context, forecastPeriod, uniqCode string) (float64, bool, error) {
+	var result struct {
+		PRLTotalQty float64 `gorm:"column:prl_total_qty"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("prl_item_period_summaries").
+		Select("prl_total_qty").
+		Where("forecast_period = ? AND item_uniq_code = ?", forecastPeriod, uniqCode).
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, false, err
+	}
+	if result.PRLTotalQty == 0 {
+		// Distinguish "no row" from "row with 0 qty" by checking RowsAffected on a count query.
+		var cnt int64
+		r.db.WithContext(ctx).
+			Table("prl_item_period_summaries").
+			Where("forecast_period = ? AND item_uniq_code = ?", forecastPeriod, uniqCode).
+			Count(&cnt)
+		if cnt == 0 {
+			return 0, false, nil
+		}
+	}
+	return result.PRLTotalQty, true, nil
+}
+
+// GetPRLTotalByPeriodAndCode returns the sum of approved PRL quantities from the prls table.
+func (r *repo) GetPRLTotalByPeriodAndCode(ctx context.Context, forecastPeriod, uniqCode string) (float64, error) {
+	var result struct {
+		Total float64 `gorm:"column:total"`
+	}
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(quantity), 0) AS total
+		FROM prls
+		WHERE uniq_code      = ?
+		  AND forecast_period = ?
+		  AND status         = 'approved'
+		  AND deleted_at     IS NULL
+	`, uniqCode, forecastPeriod).Scan(&result).Error
+	return result.Total, err
 }
