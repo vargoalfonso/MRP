@@ -21,7 +21,19 @@ func New(service deliveryNoteService.IDeliveryNoteService) *HTTPHandler {
 }
 
 func (h *HTTPHandler) GetDeliveryNotes(appCtx *app.Context) *app.CostumeResponse {
-	data, err := h.service.GetAll(appCtx.Request.Context())
+	query := appCtx.Request.URL.Query()
+
+	page, _ := strconv.Atoi(query.Get("page"))
+	limit, _ := strconv.Atoi(query.Get("limit"))
+
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	data, pagination, err := h.service.GetAll(appCtx.Request.Context(), page, limit)
 	if err != nil {
 		return app.NewError(appCtx, err)
 	}
@@ -30,7 +42,10 @@ func (h *HTTPHandler) GetDeliveryNotes(appCtx *app.Context) *app.CostumeResponse
 		RequestID: appCtx.APIReqID,
 		Status:    http.StatusOK,
 		Message:   http.StatusText(http.StatusOK),
-		Data:      data,
+		Data: map[string]interface{}{
+			"data":       data,
+			"pagination": pagination,
+		},
 	}
 }
 
