@@ -35,14 +35,16 @@ type ProcessParameter struct {
 func (ProcessParameter) TableName() string { return "process_parameters" }
 
 type MasterMachine struct {
-	ID             int64 `gorm:"primaryKey;autoIncrement"`
-	MachineNumber  string
-	MachineName    string
-	ProductionLine string
-	ProcessID      *int64
-	Status         string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID              int64 `gorm:"primaryKey;autoIncrement"`
+	MachineNumber   string
+	MachineName     string
+	ProductionLine  string
+	ProcessID       *int64
+	MachineCapacity *int
+	QRImageBase64   *string `gorm:"column:qr_image_base64;type:text"`
+	Status          string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 func (MasterMachine) TableName() string { return "master_machines" }

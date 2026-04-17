@@ -60,6 +60,10 @@ import (
 	kanbanHandler "github.com/ganasa18/go-template/internal/kanban/handler"
 	kanbanRepository "github.com/ganasa18/go-template/internal/kanban/repository"
 	kanbanService "github.com/ganasa18/go-template/internal/kanban/service"
+	masterMachineModule "github.com/ganasa18/go-template/internal/master_machine"
+	masterMachineHandler "github.com/ganasa18/go-template/internal/master_machine/handler"
+	masterMachineRepository "github.com/ganasa18/go-template/internal/master_machine/repository"
+	masterMachineService "github.com/ganasa18/go-template/internal/master_machine/service"
 	appmodule "github.com/ganasa18/go-template/internal/module"
 	poBudgetModule "github.com/ganasa18/go-template/internal/po_budget"
 	poBudgetHandler "github.com/ganasa18/go-template/internal/po_budget/handler"
@@ -244,6 +248,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	processParameterSvc := processParameterService.New(processParameterRepo)
 	processParameterHTTPHandler := processParameterHandler.New(processParameterSvc)
 
+	masterMachineRepo := masterMachineRepository.New(db)
+	masterMachineSvc := masterMachineService.New(masterMachineRepo)
+	masterMachineHTTPHandler := masterMachineHandler.New(masterMachineSvc)
+
 	kanbanRepo := kanbanRepository.New(db)
 	kanbanSvc := kanbanService.New(kanbanRepo)
 	kanbanHTTPHandler := kanbanHandler.New(kanbanSvc)
@@ -291,6 +299,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		approvalWorkflowModule.NewHTTPModule(cfg, baseHTTPHandler, approvalWorkflowHTTPHandler, authSvc, roleSvc, approvalWorkflowSvc),
 		globalParameterModule.NewHTTPModule(cfg, baseHTTPHandler, globalParameterHTTPHandler, authSvc, roleSvc, globalParameterSvc),
 		processParameterModule.NewHTTPModule(cfg, baseHTTPHandler, processParameterHTTPHandler, authSvc, roleSvc, processParameterSvc),
+		masterMachineModule.NewHTTPModule(cfg, baseHTTPHandler, masterMachineHTTPHandler, authSvc, roleSvc, masterMachineSvc),
 		kanbanModule.NewHTTPModule(cfg, baseHTTPHandler, kanbanHTTPHandler, authSvc, roleSvc, kanbanSvc),
 		deliveryNoteModule.NewHTTPModule(cfg, baseHTTPHandler, deliveryNoteHTTPHandler, authSvc, roleSvc, deliveryNoteSvc),
 		productionModule.NewHTTPModule(cfg, baseHTTPHandler, productionHTTPHandler, authSvc, roleSvc, productionSvc),
