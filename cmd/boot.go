@@ -288,6 +288,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	scrapSvc := scrapService.New(scrapRepository, db)
 	scrapHTTPHandler := scrapHandler.New(scrapSvc)
 
+	warehouseRepo := warehouseRepository.New(db)
+	warehouseSvc := warehouseService.New(warehouseRepo)
+	warehouseHTTPHandler := warehouseHandler.New(warehouseSvc)
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -321,6 +325,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		productionModule.NewHTTPModule(cfg, baseHTTPHandler, productionHTTPHandler, authSvc, roleSvc, productionSvc),
 		scrapModule.NewHTTPModule(cfg, baseHTTPHandler, scrapHTTPHandler, authSvc, roleSvc, scrapSvc),
 		finishedGoodsModule.NewHTTPModule(cfg, baseHTTPHandler, fgHTTPHandler, authSvc, roleSvc, fgSvc),
+		warehouseModule.NewHTTPModule(cfg, baseHTTPHandler, warehouseHTTPHandler, authSvc),
 	}
 
 	// --- Server ---

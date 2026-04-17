@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +21,7 @@ import (
 
 type IDeliveryNoteService interface {
 	Create(ctx context.Context, req models.CreateDNRequest) (*models.DeliveryNote, error)
-	GetAll(ctx context.Context) ([]models.DeliveryNote, error)
+	GetAll(ctx context.Context, page, limit int) ([]models.DeliveryNote, models.Pagination, error)
 	GetByID(ctx context.Context, id int64) (*models.DeliveryNote, error)
 	ScanAndUpdate(ctx context.Context, req models.QRPayload) (string, error)
 	PreviewDN(ctx context.Context, req models.CreateDNRequest) (*models.PreviewDNResponse, error)
@@ -254,16 +255,53 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 	return &dn, nil
 }
 
-func (s *deliveryNoteService) GetAll(ctx context.Context) ([]models.DeliveryNote, error) {
+func (s *deliveryNoteService) GetAll(ctx context.Context, page, limit int) ([]models.DeliveryNote, models.Pagination, error) {
 	var data []models.DeliveryNote
+	var total int64
 
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	offset := (page - 1) * limit
+
+	// total data
+	if err := s.db.WithContext(ctx).
+		Model(&models.DeliveryNote{}).
+		Count(&total).Error; err != nil {
+		return nil, models.Pagination{}, err
+	}
+
+	// ambil data
 	err := s.db.WithContext(ctx).
 		Preload("Supplier").
 		Preload("Items").
 		Preload("Items.Kanban").
+		Limit(limit).
+		Offset(offset).
+		Order("id DESC").
 		Find(&data).Error
 
-	return data, err
+	if err != nil {
+		return nil, models.Pagination{}, err
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(limit)))
+
+	pagination := models.Pagination{
+		Total:      total,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+	}
+
+	return data, pagination, nil
 }
 
 func (s *deliveryNoteService) GetByID(ctx context.Context, id int64) (*models.DeliveryNote, error) {
