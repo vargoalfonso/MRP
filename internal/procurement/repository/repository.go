@@ -165,12 +165,12 @@ func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoa
 
 	base := r.db.WithContext(ctx).
 		Table("purchase_orders po").
-		Joins("LEFT JOIN supplier s ON s.supplier_id = po.supplier_id").
+		Joins("LEFT JOIN suppliers s ON s.id = po.supplier_id").
 		Joins(`LEFT JOIN LATERAL (
 			SELECT COALESCE(SUM(poi.ordered_qty), 0) AS total_budget_po
 			FROM   purchase_order_items poi
 			WHERE  poi.po_id = po.po_id
-		) budget ON true`)
+		) items_agg ON true`)
 
 	if hasDNTables {
 		base = base.Joins(`LEFT JOIN LATERAL (
@@ -230,10 +230,8 @@ func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoa
 	today := time.Now().Format("2006-01-02")
 	_ = today // kept for future use
 	dnQtySelect := "COALESCE(dn_agg.qty_delivered, 0)                AS qty_delivered"
-	dnUniqSelect := "dn_agg.uniq_code"
 	if !hasDNTables {
 		dnQtySelect = "0::numeric                                       AS qty_delivered"
-		dnUniqSelect = "NULL::varchar                                   AS uniq_code"
 	}
 
 	var rows []models.POBoardRow
@@ -244,15 +242,15 @@ func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoa
 			po.po_stage,
 			po.period,
 			po.po_number,
-			COALESCE(budget.total_budget_po, 0)              AS total_budget_po,
+			COALESCE(items_agg.total_budget_po, 0)           AS total_budget_po,
 			%s,
-			%s,
+			(SELECT poi.item_uniq_code FROM purchase_order_items poi WHERE poi.po_id = po.po_id LIMIT 1) AS uniq_code,
 			po.supplier_id,
 			s.supplier_name,
 			po.status,
 			po.total_amount,
 			false                                            AS is_late
-		`, dnQtySelect, dnUniqSelect)).
+		`, dnQtySelect)).
 		Order(fmt.Sprintf("%s %s", orderBy, dir)).
 		Limit(limit).
 		Offset(offset).
@@ -360,7 +358,7 @@ func (r *repo) GetDNItems(ctx context.Context, dnID int64) ([]models.IncomingDNI
 
 func (r *repo) GetLegacySupplier(ctx context.Context, supplierID int64) (*models.LegacySupplier, error) {
 	var s models.LegacySupplier
-	if err := r.db.WithContext(ctx).First(&s, "supplier_id = ?", supplierID).Error; err != nil {
+	if err := r.db.WithContext(ctx).First(&s, "id = ?", supplierID).Error; err != nil {
 		return nil, fmt.Errorf("GetLegacySupplier %d: %w", supplierID, err)
 	}
 	return &s, nil
@@ -373,9 +371,9 @@ func (r *repo) ListLegacySuppliersByIDs(ctx context.Context, supplierIDs []int64
 
 	var suppliers []models.LegacySupplier
 	err := r.db.WithContext(ctx).
-		Table("supplier").
-		Select("supplier_id, supplier_name").
-		Where("supplier_id IN ?", supplierIDs).
+		Table("suppliers").
+		Select("id, supplier_name").
+		Where("id IN ?", supplierIDs).
 		Find(&suppliers).Error
 	if err != nil {
 		return nil, fmt.Errorf("ListLegacySuppliersByIDs: %w", err)

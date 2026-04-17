@@ -169,6 +169,7 @@ func (s *svc) GetPODetail(ctx context.Context, poID int64) (*models.PODetailResp
 		SupplierID:       po.SupplierID,
 		SupplierName:     supplierName,
 		TotalQuantity:    totalQty,
+		TotalUniq:        len(items),
 		Status:           po.Status,
 		ExternalSystem:   po.ExternalSystem,
 		ExternalPoNumber: po.ExternalPoNumber,
