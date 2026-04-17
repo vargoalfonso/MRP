@@ -44,6 +44,10 @@ import (
 	employeeHandler "github.com/ganasa18/go-template/internal/employee/handler"
 	employeeRepository "github.com/ganasa18/go-template/internal/employee/repository"
 	employeeService "github.com/ganasa18/go-template/internal/employee/service"
+	finishedGoodsModule "github.com/ganasa18/go-template/internal/finished_goods"
+	finishedGoodsHandler "github.com/ganasa18/go-template/internal/finished_goods/handler"
+	finishedGoodsRepo "github.com/ganasa18/go-template/internal/finished_goods/repository"
+	finishedGoodsService "github.com/ganasa18/go-template/internal/finished_goods/service"
 	globalParameterModule "github.com/ganasa18/go-template/internal/global_parameter"
 	globalParameterHandler "github.com/ganasa18/go-template/internal/global_parameter/handler"
 	globalParameterRepository "github.com/ganasa18/go-template/internal/global_parameter/repository"
@@ -93,6 +97,10 @@ import (
 	safetyStockHandler "github.com/ganasa18/go-template/internal/safety_stock_parameter/handler"
 	safetyStockRepo "github.com/ganasa18/go-template/internal/safety_stock_parameter/repository"
 	safetyStockService "github.com/ganasa18/go-template/internal/safety_stock_parameter/service"
+	scrapModule "github.com/ganasa18/go-template/internal/scrap_stock"
+	scrapHandler "github.com/ganasa18/go-template/internal/scrap_stock/handler"
+	scrapRepo "github.com/ganasa18/go-template/internal/scrap_stock/repository"
+	scrapService "github.com/ganasa18/go-template/internal/scrap_stock/service"
 	supplierModule "github.com/ganasa18/go-template/internal/supplier"
 	supplierHandler "github.com/ganasa18/go-template/internal/supplier/handler"
 	supplierRepository "github.com/ganasa18/go-template/internal/supplier/repository"
@@ -248,6 +256,16 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	productionSvc := productionService.New(productionRepo)
 	productionHTTPHandler := productionHandler.New(productionSvc)
 
+	// Finished Goods module
+	fgRepository := finishedGoodsRepo.New(db)
+	fgSvc := finishedGoodsService.New(fgRepository, db)
+	fgHTTPHandler := finishedGoodsHandler.New(fgSvc)
+
+	// Scrap Stock module
+	scrapRepository := scrapRepo.New(db)
+	scrapSvc := scrapService.New(scrapRepository, db)
+	scrapHTTPHandler := scrapHandler.New(scrapSvc)
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -276,6 +294,8 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		kanbanModule.NewHTTPModule(cfg, baseHTTPHandler, kanbanHTTPHandler, authSvc, roleSvc, kanbanSvc),
 		deliveryNoteModule.NewHTTPModule(cfg, baseHTTPHandler, deliveryNoteHTTPHandler, authSvc, roleSvc, deliveryNoteSvc),
 		productionModule.NewHTTPModule(cfg, baseHTTPHandler, productionHTTPHandler, authSvc, roleSvc, productionSvc),
+		scrapModule.NewHTTPModule(cfg, baseHTTPHandler, scrapHTTPHandler, authSvc, roleSvc, scrapSvc),
+		finishedGoodsModule.NewHTTPModule(cfg, baseHTTPHandler, fgHTTPHandler, authSvc, roleSvc, fgSvc),
 	}
 
 	// --- Server ---
