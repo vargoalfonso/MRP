@@ -14,6 +14,7 @@ import (
 	woModels "github.com/ganasa18/go-template/internal/work_order/models"
 	woRepo "github.com/ganasa18/go-template/internal/work_order/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/creatorresolver"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/google/uuid"
 	"github.com/skip2/go-qrcode"
@@ -83,7 +84,7 @@ func (s *service) CreateRMProcessing(ctx context.Context, req woModels.CreateRMP
 
 		woNumber := generateWONumber(prefix, last)
 		woUUID := uuid.New()
-		creatorUUID, creatorName, err := s.resolveCreator(ctx, tx, createdBy)
+		creatorUUID, creatorName, err := creatorresolver.Resolve(ctx, tx, createdBy)
 		if err != nil {
 			return err
 		}
@@ -183,7 +184,7 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 			}
 			woUUID = parsed
 		}
-		creatorUUID, creatorName, err := s.resolveCreator(ctx, tx, createdBy)
+		creatorUUID, creatorName, err := creatorresolver.Resolve(ctx, tx, createdBy)
 		if err != nil {
 			return err
 		}
@@ -420,34 +421,6 @@ func (s *service) getKanbanParam(ctx context.Context, tx *gorm.DB, itemUniqCode 
 		return nil, apperror.InternalWrap("getKanbanParam", err)
 	}
 	return &row, nil
-}
-
-func (s *service) resolveCreator(ctx context.Context, tx *gorm.DB, userUUID string) (*uuid.UUID, *string, error) {
-	userUUID = strings.TrimSpace(userUUID)
-	if userUUID == "" || userUUID == "system" {
-		n := "system"
-		return nil, &n, nil
-	}
-	parsed, err := uuid.Parse(userUUID)
-	if err != nil {
-		// Keep name as raw uuid string for trace; created_by remains NULL.
-		n := userUUID
-		return nil, &n, nil
-	}
-
-	var username string
-	q := tx.WithContext(ctx).Table("users").Select("username").Where("uuid = ?", userUUID).Limit(1)
-	if err := q.Take(&username).Error; err != nil {
-		// If user not found, still store UUID string as name.
-		n := userUUID
-		return &parsed, &n, nil
-	}
-	if strings.TrimSpace(username) == "" {
-		n := userUUID
-		return &parsed, &n, nil
-	}
-	n := username
-	return &parsed, &n, nil
 }
 
 func (s *service) GetWorkOrderQR(ctx context.Context, woUUID string, refresh bool) (*woModels.WorkOrderQRResponse, error) {

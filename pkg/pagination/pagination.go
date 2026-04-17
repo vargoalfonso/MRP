@@ -620,3 +620,165 @@ func clampLimit(n int) int {
 	}
 	return n
 }
+
+// ---------------------------------------------------------------------------
+// Scrap Stock
+// ---------------------------------------------------------------------------
+
+// ScrapStockPaginationInput holds filters for GET /scrap-stocks.
+//
+// Query params:
+//
+//	?scrap_type=process_scrap&uniq=EMA-LV7&packing_number=KBN-001&wo_number=WO-001&status=Active&date_from=2026-01-01&date_to=2026-12-31&page=1&limit=20
+type ScrapStockPaginationInput struct {
+	Limit          int
+	Page           int
+	OrderBy        string
+	OrderDirection string
+	ScrapType      string
+	UniqCode       string
+	PackingNumber  string
+	WONumber       string
+	Status         string
+	DateFrom       string
+	DateTo         string
+}
+
+func (p ScrapStockPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// ScrapStockPagination parses scrap-stock-specific pagination params.
+func ScrapStockPagination(c *app.Context) ScrapStockPaginationInput {
+	base := Pagination(c)
+	return ScrapStockPaginationInput{
+		Limit:          base.Limit,
+		Page:           base.Page,
+		OrderBy:        base.OrderBy,
+		OrderDirection: base.OrderDirection,
+		ScrapType:      c.Query("scrap_type"),
+		UniqCode:       c.Query("uniq"),
+		PackingNumber:  c.Query("packing_number"),
+		WONumber:       c.Query("wo_number"),
+		Status:         c.Query("status"),
+		DateFrom:       c.Query("date_from"),
+		DateTo:         c.Query("date_to"),
+	}
+}
+
+// ScrapReleasePaginationInput holds filters for GET /inventory/scrap-releases.
+//
+// Query params:
+//
+//	?release_type=Sell&approval_status=Pending&scrap_stock_id=5&page=1&limit=20
+type ScrapReleasePaginationInput struct {
+	Limit          int
+	Page           int
+	OrderBy        string
+	OrderDirection string
+	ReleaseType    string
+	ApprovalStatus string
+	ScrapStockID   int64
+}
+
+func (p ScrapReleasePaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// ScrapReleasePagination parses scrap-release-specific pagination params.
+func ScrapReleasePagination(c *app.Context) ScrapReleasePaginationInput {
+	base := Pagination(c)
+
+	var scrapStockID int64
+	if v := c.Query("scrap_stock_id"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			scrapStockID = n
+		}
+	}
+
+	return ScrapReleasePaginationInput{
+		Limit:          base.Limit,
+		Page:           base.Page,
+		OrderBy:        base.OrderBy,
+		OrderDirection: base.OrderDirection,
+		ReleaseType:    c.Query("release_type"),
+		ApprovalStatus: c.Query("approval_status"),
+		ScrapStockID:   scrapStockID,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Finished Goods
+// ---------------------------------------------------------------------------
+
+// FinishedGoodsPaginationInput holds filters for GET /finished-goods.
+//
+// Query params:
+//
+//	?search=EMA&model=CB150&status=low_on_stock&warehouse_location=WH-A&page=1&limit=20
+type FinishedGoodsPaginationInput struct {
+	Limit             int
+	Page              int
+	OrderBy           string
+	OrderDirection    string
+	Search            string
+	Model             string
+	Status            string
+	WarehouseLocation string
+}
+
+func (p FinishedGoodsPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// FinishedGoodsPagination parses finished-goods-specific pagination params.
+func FinishedGoodsPagination(c *app.Context) FinishedGoodsPaginationInput {
+	base := Pagination(c)
+	return FinishedGoodsPaginationInput{
+		Limit:             base.Limit,
+		Page:              base.Page,
+		OrderBy:           base.OrderBy,
+		OrderDirection:    base.OrderDirection,
+		Search:            base.Search,
+		Model:             c.Query("model"),
+		Status:            c.Query("status"),
+		WarehouseLocation: c.Query("warehouse_location"),
+	}
+}
+
+// StatusMonitoringPaginationInput holds filters for GET /finished-goods/status-monitoring.
+//
+// Query params:
+//
+//	?alert_type=low_on_stock&page=1&limit=20
+type StatusMonitoringPaginationInput struct {
+	Limit     int
+	Page      int
+	AlertType string
+}
+
+func (p StatusMonitoringPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// StatusMonitoringPagination parses status-monitoring-specific pagination params.
+func StatusMonitoringPagination(c *app.Context) StatusMonitoringPaginationInput {
+	base := Pagination(c)
+	return StatusMonitoringPaginationInput{
+		Limit:     base.Limit,
+		Page:      base.Page,
+		AlertType: c.Query("alert_type"),
+	}
+}
