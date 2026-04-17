@@ -31,6 +31,7 @@ type BomTreeRow struct {
 	UniqCode   string       `json:"uniq_code"`
 	PartName   string       `json:"part_name"`
 	PartNumber *string      `json:"part_number"`
+	Model      *string      `json:"model"`
 	Asset      AssetInfo    `json:"asset"`
 	Level      interface{}  `json:"level"` // "Parent" | 1 | 2 | 3 | 4
 	QPU        *float64     `json:"qpu"`   // nil for parent

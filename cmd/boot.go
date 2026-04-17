@@ -109,6 +109,10 @@ import (
 	supplierHandler "github.com/ganasa18/go-template/internal/supplier/handler"
 	supplierRepository "github.com/ganasa18/go-template/internal/supplier/repository"
 	supplierService "github.com/ganasa18/go-template/internal/supplier/service"
+	supplierItemModule "github.com/ganasa18/go-template/internal/supplier_item"
+	supplierItemHandler "github.com/ganasa18/go-template/internal/supplier_item/handler"
+	supplierItemRepository "github.com/ganasa18/go-template/internal/supplier_item/repository"
+	supplierItemService "github.com/ganasa18/go-template/internal/supplier_item/service"
 	typeParameterModule "github.com/ganasa18/go-template/internal/type_parameter"
 	typeParameterHandler "github.com/ganasa18/go-template/internal/type_parameter/handler"
 	typeParameterRepository "github.com/ganasa18/go-template/internal/type_parameter/repository"
@@ -121,6 +125,10 @@ import (
 	uploadHandler "github.com/ganasa18/go-template/internal/upload/handler"
 	uploadRepository "github.com/ganasa18/go-template/internal/upload/repository"
 	uploadService "github.com/ganasa18/go-template/internal/upload/service"
+	warehouseModule "github.com/ganasa18/go-template/internal/warehouse"
+	warehouseHandler "github.com/ganasa18/go-template/internal/warehouse/handler"
+	warehouseRepository "github.com/ganasa18/go-template/internal/warehouse/repository"
+	warehouseService "github.com/ganasa18/go-template/internal/warehouse/service"
 	workOrderModule "github.com/ganasa18/go-template/internal/work_order"
 	workOrderHandler "github.com/ganasa18/go-template/internal/work_order/handler"
 	workOrderRepository "github.com/ganasa18/go-template/internal/work_order/repository"
@@ -170,6 +178,12 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	supplierRepo := supplierRepository.New(db)
 	supplierSvc := supplierService.New(supplierRepo)
 	supplierHTTPHandler := supplierHandler.New(supplierSvc)
+	supplierItemRepo := supplierItemRepository.New(db)
+	supplierItemSvc := supplierItemService.New(supplierItemRepo)
+	supplierItemHTTPHandler := supplierItemHandler.New(supplierItemSvc)
+	warehouseRepo := warehouseRepository.New(db)
+	warehouseSvc := warehouseService.New(warehouseRepo)
+	warehouseHTTPHandler := warehouseHandler.New(warehouseSvc)
 	roleHTTPHandler := roleHandler.New(roleSvc)
 
 	employeeRepo := employeeRepository.New(db)
@@ -280,9 +294,11 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		customerModule.NewHTTPModule(cfg, baseHTTPHandler, customerHTTPHandler, authSvc),
 		prlModule.NewHTTPModule(cfg, baseHTTPHandler, prlHTTPHandler, authSvc),
 		supplierModule.NewHTTPModule(cfg, baseHTTPHandler, supplierHTTPHandler, authSvc),
+		supplierItemModule.NewHTTPModule(cfg, baseHTTPHandler, supplierItemHTTPHandler, authSvc),
 		bomModule.NewHTTPModule(cfg, baseHTTPHandler, bomHTTPHandler, authSvc, roleSvc, bomSvc),
 		uploadModule.NewHTTPModule(baseHTTPHandler, uploadHTTPHandler, uploadSvc, authSvc, roleSvc),
 		roleModule.NewHTTPModule(cfg, baseHTTPHandler, roleHTTPHandler, authSvc, roleSvc),
+		warehouseModule.NewHTTPModule(cfg, baseHTTPHandler, warehouseHTTPHandler, authSvc),
 		departementModule.NewHTTPModule(cfg, baseHTTPHandler, departementHTTPHandler, authSvc, roleSvc, departementSvc),
 		employeeModule.NewHTTPModule(cfg, baseHTTPHandler, employeeHTTPHandler, authSvc, roleSvc, employeeSvc),
 		userModule.NewHTTPModule(cfg, baseHTTPHandler, userHTTPHandler, authSvc, roleSvc, userSvc),

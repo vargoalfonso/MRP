@@ -233,4 +233,4 @@ type BomApproval struct {
 	UpdatedAt time.Time `gorm:"not null;default:now()"`
 }
 
-func (BomApproval) TableName() string { return "bom_approvals" }
+//func (BomApproval) TableName() string { return "bom_approvals" }

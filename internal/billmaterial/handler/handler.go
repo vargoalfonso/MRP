@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strconv"
 
-	authModels "github.com/ganasa18/go-template/internal/auth/models"
 	"github.com/ganasa18/go-template/internal/base/app"
 	"github.com/ganasa18/go-template/internal/billmaterial/models"
 	"github.com/ganasa18/go-template/internal/billmaterial/service"
@@ -229,41 +228,41 @@ func (h *HTTPHandler) DeleteBomLine(ctx *app.Context) *app.CostumeResponse {
 //
 // Body: { "action": "approve"|"reject", "notes": "..." }
 // The caller must have the role required for the current approval level.
-func (h *HTTPHandler) ApproveBom(ctx *app.Context) *app.CostumeResponse {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
-	}
+// func (h *HTTPHandler) ApproveBom(ctx *app.Context) *app.CostumeResponse {
+// 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+// 	if err != nil {
+// 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+// 	}
 
-	var req models.ApproveBomRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body"}
-	}
-	if errs := validator.Validate(req); errs != nil {
-		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
-	}
+// 	var req models.ApproveBomRequest
+// 	if err := ctx.ShouldBindJSON(&req); err != nil {
+// 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body"}
+// 	}
+// 	if errs := validator.Validate(req); errs != nil {
+// 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+// 	}
 
-	// extract caller's user ID and roles from JWT claims
-	var userID string
-	var userRoles []string
-	if raw, exists := ctx.Get("claims"); exists {
-		if claims, ok := raw.(*authModels.Claims); ok && claims != nil {
-			userID = claims.UserID
-			userRoles = claims.Roles
-		}
-	}
-	if userID == "" {
-		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnauthorized, Message: "unauthorized"}
-	}
+// 	// extract caller's user ID and roles from JWT claims
+// 	var userID string
+// 	var userRoles []string
+// 	if raw, exists := ctx.Get("claims"); exists {
+// 		if claims, ok := raw.(*authModels.Claims); ok && claims != nil {
+// 			userID = claims.UserID
+// 			userRoles = claims.Roles
+// 		}
+// 	}
+// 	if userID == "" {
+// 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnauthorized, Message: "unauthorized"}
+// 	}
 
-	result, err := h.svc.ApproveBom(ctx.Request.Context(), id, userID, userRoles, req)
-	if err != nil {
-		return app.NewError(ctx, err)
-	}
-	return &app.CostumeResponse{
-		RequestID: ctx.APIReqID,
-		Status:    http.StatusOK,
-		Message:   http.StatusText(http.StatusOK),
-		Data:      result,
-	}
-}
+// 	result, err := h.svc.ApproveBom(ctx.Request.Context(), id, userID, userRoles, req)
+// 	if err != nil {
+// 		return app.NewError(ctx, err)
+// 	}
+// 	return &app.CostumeResponse{
+// 		RequestID: ctx.APIReqID,
+// 		Status:    http.StatusOK,
+// 		Message:   http.StatusText(http.StatusOK),
+// 		Data:      result,
+// 	}
+// }

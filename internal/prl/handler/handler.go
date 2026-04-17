@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -75,6 +76,44 @@ func (h *HTTPHandler) DeleteUniqBOM(appCtx *app.Context) *app.CostumeResponse {
 		return app.NewError(appCtx, err)
 	}
 	return &app.CostumeResponse{RequestID: appCtx.APIReqID, Status: http.StatusOK, Message: "uniq bom deleted successfully"}
+}
+
+// CreatePRL supports:
+//  1. Single create payload (no wrapper): {customer_uuid, uniq_code, product_model, part_name, part_number, forecast_period, quantity}
+//  2. Bulk create payload (wrapper): {"entries":[...]}
+func (h *HTTPHandler) CreatePRL(appCtx *app.Context) *app.CostumeResponse {
+	body, err := appCtx.GetRawData()
+	if err != nil {
+		return badRequest(appCtx, "invalid request body")
+	}
+
+	// Backward compatibility: if request has "entries", treat it as bulk create.
+	var bulkProbe struct {
+		Entries []models.CreatePRLEntryRequest `json:"entries"`
+	}
+	if unmarshalErr := json.Unmarshal(body, &bulkProbe); unmarshalErr == nil && len(bulkProbe.Entries) > 0 {
+		if errs := validator.Validate(models.BulkCreatePRLRequest{Entries: bulkProbe.Entries}); errs != nil {
+			return validationError(appCtx, errs)
+		}
+		result, svcErr := h.service.BulkCreatePRLs(appCtx.Request.Context(), models.BulkCreatePRLRequest{Entries: bulkProbe.Entries})
+		if svcErr != nil {
+			return app.NewError(appCtx, svcErr)
+		}
+		return &app.CostumeResponse{RequestID: appCtx.APIReqID, Status: http.StatusCreated, Message: "prls created successfully", Data: result}
+	}
+
+	var req models.CreatePRLRequest
+	if unmarshalErr := json.Unmarshal(body, &req); unmarshalErr != nil {
+		return badRequest(appCtx, "invalid request body")
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return validationError(appCtx, errs)
+	}
+	item, svcErr := h.service.CreatePRL(appCtx.Request.Context(), req)
+	if svcErr != nil {
+		return app.NewError(appCtx, svcErr)
+	}
+	return &app.CostumeResponse{RequestID: appCtx.APIReqID, Status: http.StatusCreated, Message: "prl created successfully", Data: item}
 }
 
 func (h *HTTPHandler) BulkCreatePRLs(appCtx *app.Context) *app.CostumeResponse {
