@@ -814,7 +814,7 @@ func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invMo
 	}
 	kanbanPkgF := float64(kanbanPkgQty)
 
-	// 3. Resolve daily_usage and safety_stock — two paths, pick one:
+	// 3. Resolve daily_usage and safety_stock — three paths, pick one:
 	//
 	//   PATH A — safety_stock_parameter is active for this item:
 	//     daily_usage  = (PRL + PO) / working_days
@@ -823,6 +823,10 @@ func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invMo
 	//   PATH B — no parameter configured:
 	//     daily_usage  = forecasted_usage_per_day from forecast_results (historical)
 	//     safety_stock = 0  (no threshold → no buy recommendation yet)
+	//
+	//   PATH C — no parameter and no forecast:
+	//     daily_usage  = daily_usage_qty manually set on the raw_material record
+	//     safety_stock = 0
 
 	safetyStockQty := 0.0
 	var dailyUsage float64
@@ -841,6 +845,10 @@ func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invMo
 	} else {
 		// PATH B: no parameter — fall back to historical forecast per day.
 		dailyUsage, _ = s.repo.GetForecastDailyUsage(ctx, uniqCode)
+		// PATH C: no forecast either — use manually set daily_usage_qty from the record.
+		if dailyUsage <= 0 && rm.DailyUsageQty != nil && *rm.DailyUsageQty > 0 {
+			dailyUsage = *rm.DailyUsageQty
+		}
 	}
 
 	// 4. Kanban metrics.
@@ -870,11 +878,16 @@ func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invMo
 		buyNotBuy = "buy"
 	}
 
-	// 7. Stock days = floor(stock / max(1, daily_usage)).
-	//    max(1, ...) prevents division-by-zero when no demand data exists.
+	// 7. Stock days = floor(stock / daily_usage_for_days).
+	//    Prefer the manually set daily_usage_qty from the record (source of truth for days);
+	//    fall back to the computed dailyUsage (from PRL+PO or forecast) if not set.
 	var stockDays *int
-	if dailyUsage > 0 {
-		d := int(stockQty / dailyUsage)
+	dailyUsageForDays := dailyUsage
+	if rm.DailyUsageQty != nil && *rm.DailyUsageQty > 0 {
+		dailyUsageForDays = *rm.DailyUsageQty
+	}
+	if dailyUsageForDays > 0 {
+		d := int(stockQty / dailyUsageForDays)
 		stockDays = &d
 	}
 

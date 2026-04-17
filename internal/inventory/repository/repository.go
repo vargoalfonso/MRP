@@ -937,9 +937,10 @@ func (r *repo) GetRawMaterialByUniqCode(ctx context.Context, uniqCode string) (*
 	// Only select the columns that will remain after derived fields are dropped:
 	// stock_qty is the only truly persistent field needed for kanban computation.
 	// raw_material_type is kept to detect SSP (buy/not-buy = n/a).
+	// daily_usage_qty is kept as PATH C manual fallback when no parameter or forecast exists.
 	err := r.db.WithContext(ctx).
 		Table("raw_materials").
-		Select("id, uniq_code, stock_qty, raw_material_type").
+		Select("id, uniq_code, stock_qty, raw_material_type, daily_usage_qty").
 		Where("uniq_code = ? AND deleted_at IS NULL", uniqCode).
 		First(&row).Error
 	if err != nil {
