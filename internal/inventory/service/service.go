@@ -858,8 +858,10 @@ func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invMo
 
 	// 8. Stock days = floor(stock / max(1, effective_daily_usage))  (BRD §4).
 	var stockDays *int
+	var stockDaysRaw float64
 	if effectiveDailyUsage > 0 {
-		d := int(stockQty / math.Max(1, effectiveDailyUsage))
+		stockDaysRaw = stockQty / math.Max(1, effectiveDailyUsage)
+		d := int(stockDaysRaw)
 		stockDays = &d
 	}
 
@@ -928,6 +930,7 @@ func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invMo
 			EffectiveDailyUsage:  effectiveDailyUsage,
 			SafetyStockCalcType:  ssCalcType,
 			SafetyStockConstanta: ssConstanta,
+			StockDaysRaw:         stockDaysRaw,
 			Warnings:             warnings,
 		},
 	}, nil

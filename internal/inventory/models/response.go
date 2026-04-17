@@ -45,6 +45,7 @@ type KanbanCalcContext struct {
 	EffectiveDailyUsage  float64  `json:"effective_daily_usage"`  // base_daily_usage * stockdays_constanta
 	SafetyStockCalcType  string   `json:"safety_stock_calc_type"` // normalised calculation_type from safety_stock_parameters
 	SafetyStockConstanta float64  `json:"safety_stock_constanta"` // constanta from safety_stock_parameters (0 = not set)
+	StockDaysRaw         float64  `json:"stock_days_raw"`         // stock_qty / effective_daily_usage before floor()
 	Warnings             []string `json:"warnings,omitempty"`     // non-empty when a calc_type is not yet implemented
 }
 
