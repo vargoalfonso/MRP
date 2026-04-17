@@ -8,12 +8,12 @@ import (
 
 	//"time"
 
-	//awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
+	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
 	"github.com/ganasa18/go-template/internal/billmaterial/models"
 	"github.com/ganasa18/go-template/internal/billmaterial/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
 
-	//"github.com/ganasa18/go-template/pkg/approval"
+	"github.com/ganasa18/go-template/pkg/approval"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/google/uuid"
 )
@@ -283,7 +283,6 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 		return nil, err
 	}
 
-<<<<<<< Updated upstream
 	// 6a. Auto-create approval instance if workflow is configured.
 	wf, err := s.repo.GetApprovalWorkflowByActionName(ctx, "bom")
 	if err != nil {
@@ -305,35 +304,6 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 			return nil, err
 		}
 	}
-=======
-	// 6a. Auto-create approval instance — one row in approval_instances tracks
-	// this BOM through all configured levels. Progress is stored as JSONB so
-	// the frontend can render per-level status without parsing complex state.
-	// wf, err := s.repo.GetApprovalWorkflowByActionName(ctx, "bom")
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// if wf == nil {
-	// 	return nil, apperror.BadRequest("no active approval workflow configured for action 'bom'")
-	// }
-	// maxLevel := approval.MaxLevel(wf)
-	// if maxLevel < 2 {
-	// 	return nil, apperror.BadRequest("approval workflow 'bom' must have at least 2 levels configured")
-	// }
-	// instance := &awmodels.ApprovalInstance{
-	// 	ActionName:         "bom",
-	// 	ReferenceTable:     "bom_item",
-	// 	ReferenceID:        bom.ID,
-	// 	ApprovalWorkflowID: wf.ID,
-	// 	CurrentLevel:       1,
-	// 	MaxLevel:           maxLevel,
-	// 	Status:             "pending",
-	// 	ApprovalProgress:   approval.BuildProgress(wf, maxLevel),
-	// }
-	// if err := s.repo.CreateApprovalInstance(ctx, instance); err != nil {
-	// 	return nil, err
-	// }
->>>>>>> Stashed changes
 
 	// 7. Recurse children
 	if err := s.createChildren(ctx, bom.ID, parent.ID, req.Children); err != nil {
