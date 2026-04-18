@@ -81,6 +81,7 @@ type DeliveryNoteItem struct {
 	ReceivedAt     *time.Time      `json:"received_at" gorm:"column:received_at"`         //request, diisi ketika barang diterima, berisi tanggal dan jam ketika barang diterima
 	PackingNumber  string          `json:"packing_number" gorm:"column:packing_number"`   //request, diambil dari kanban number di kanban parameter bedasarkan item_uniq_code
 	Check          string          `json:"check" gorm:"check"`                            //field untuk menampung nilai check ketika menerima barang,
+	QtySent        int64           `json:"qty_sent" gorm:"qty_sent"`
 }
 
 type KanbanParameter struct {
@@ -138,4 +139,17 @@ type PurchaseOrderItem struct {
 	CreatedAt       time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at" db:"updated_at"`
 	PoBudgetEntryID int64     `json:"po_budget_entry_id" db:"po_budget_entry_id"`
+}
+
+type DeliveryNoteLog struct {
+	ID            int64     `json:"id" gorm:"primaryKey;column:id"`
+	DNID          int64     `json:"dn_id" gorm:"column:dn_id;not null;index"`
+	DNItemID      int64     `json:"dn_item_id" gorm:"column:dn_item_id;not null;index"`
+	ItemUniqCode  string    `json:"item_uniq_code" gorm:"column:item_uniq_code;type:varchar(100);not null"`
+	PackingNumber string    `json:"packing_number" gorm:"column:packing_number;type:varchar(100);index"`
+	ScanType      string    `json:"scan_type" gorm:"column:scan_type;type:varchar(20);not null"` // outgoing | incoming
+	Qty           float64   `json:"qty" gorm:"column:qty;type:numeric(15,2);not null"`
+	FromLocation  string    `json:"from_location" gorm:"column:from_location;type:varchar(50)"`
+	ToLocation    string    `json:"to_location" gorm:"column:to_location;type:varchar(50)"`
+	CreatedAt     time.Time `json:"created_at" gorm:"column:created_at;autoCreateTime"`
 }

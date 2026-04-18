@@ -141,7 +141,7 @@ func (h *HTTPHandler) ScanDeliveryNoteItem(appCtx *app.Context) *app.CostumeResp
 		}
 	}
 
-	response, err := h.service.ScanAndUpdate(appCtx.Request.Context(), req)
+	response, err := h.service.Scan(appCtx.Request.Context(), req)
 	if err != nil {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
