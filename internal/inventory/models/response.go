@@ -35,18 +35,29 @@ type KanbanSummary struct {
 // KanbanCalcContext carries the intermediate values used to produce the KanbanSummary.
 // Useful for debugging parameter changes without having to query multiple tables manually.
 type KanbanCalcContext struct {
-	ForecastPeriod       string   `json:"forecast_period"`        // period used for PRL + working_days lookup
-	WorkingDays          int      `json:"working_days"`           // working_days active for that period
-	PRLTotal             float64  `json:"prl_total"`              // sum of approved PRL qty for the period
-	PRLFromCache         bool     `json:"prl_from_cache"`         // true = read from prl_item_period_summaries
-	BaseDailyUsage       float64  `json:"base_daily_usage"`       // prl_total / working_days
-	StockdaysCalcType    string   `json:"stockdays_calc_type"`    // normalised calculation_type from stockdays_parameters
-	StockdaysConstanta   float64  `json:"stockdays_constanta"`    // constanta from stockdays_parameters (0 = not set)
-	EffectiveDailyUsage  float64  `json:"effective_daily_usage"`  // base_daily_usage * stockdays_constanta
-	SafetyStockCalcType  string   `json:"safety_stock_calc_type"` // normalised calculation_type from safety_stock_parameters
-	SafetyStockConstanta float64  `json:"safety_stock_constanta"` // constanta from safety_stock_parameters (0 = not set)
-	StockDaysRaw         float64  `json:"stock_days_raw"`         // stock_qty / effective_daily_usage before floor()
-	Warnings             []string `json:"warnings,omitempty"`     // non-empty when a calc_type is not yet implemented
+	// Active period from global_parameters (was ForecastPeriod in the old design).
+	ForecastPeriod       string  `json:"forecast_period"`        // active_periode used for demand lookup
+	WorkingDays          int     `json:"working_days"`           // resolved working_days (after fallback)
+	PRLTotal             float64 `json:"prl_total"`              // equals total_demand_sum (PRL + PO customer)
+	PRLFromCache         bool    `json:"prl_from_cache"`         // true = read from inventory_demand_periode_summaries
+	BaseDailyUsage       float64 `json:"base_daily_usage"`       // total_demand_sum / working_days
+	StockdaysCalcType    string  `json:"stockdays_calc_type"`    // normalised calculation_type from stockdays_parameters
+	StockdaysConstanta   float64 `json:"stockdays_constanta"`    // constanta from stockdays_parameters (0 = not set)
+	EffectiveDailyUsage  float64 `json:"effective_daily_usage"`  // derived from base_daily_usage × stockdays param
+	SafetyStockCalcType  string  `json:"safety_stock_calc_type"` // normalised calculation_type from safety_stock_parameters
+	SafetyStockConstanta float64 `json:"safety_stock_constanta"` // constanta from safety_stock_parameters (0 = not set)
+	StockDaysRaw         float64 `json:"stock_days_raw"`         // stock_qty / effective_daily_usage before floor()
+
+	// Demand breakdown (new — non-breaking additions).
+	ActivePeriode          string   `json:"active_periode"`            // global active period
+	SnapshotDate           string   `json:"snapshot_date,omitempty"`   // date of the demand snapshot used
+	WorkingDaysPeriodeUsed string   `json:"working_days_periode_used"` // period that provided working_days (after fallback)
+	PRLSum                 float64  `json:"prl_sum"`                   // PRL demand for active_periode
+	POCustomerSum          float64  `json:"po_customer_sum"`           // PO customer demand for active_periode
+	TotalDemandSum         float64  `json:"total_demand_sum"`          // PRLSum + POCustomerSum
+	CyclePengiriman        int      `json:"cycle_pengiriman"`          // from supplier_item.customer_cycle
+	Threshold              float64  `json:"threshold"`                 // safety_stock_qty × cycle_pengiriman
+	Warnings               []string `json:"warnings,omitempty"`        // non-empty when a calc_type is not yet implemented
 }
 
 type InventoryPagination struct {

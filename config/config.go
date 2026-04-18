@@ -74,6 +74,10 @@ type Config struct {
 
 	// External integrations
 	RobotSplitURL string // URL of the robot split-percentage service
+
+	// Admin job basic auth (used by cron-triggered endpoints)
+	AdminJobUser string
+	AdminJobPass string
 }
 
 // IsDevelopment returns true when AppEnv == "development".
@@ -144,6 +148,9 @@ func InitAppConfig() *Config {
 		LogFormat: getEnv("LOG_FORMAT", "text"),
 
 		RobotSplitURL: getEnv("ROBOT_SPLIT_URL", ""),
+
+		AdminJobUser: getEnv("ADMIN_JOB_USER", "admin_job"),
+		AdminJobPass: mustEnv("ADMIN_JOB_PASS"),
 	}
 
 	// Stateful mode requires a separate refresh secret.

@@ -77,6 +77,10 @@ import (
 	poSplitSettingHandler "github.com/ganasa18/go-template/internal/po_split_setting/handler"
 	poSplitSettingRepository "github.com/ganasa18/go-template/internal/po_split_setting/repository"
 	poSplitSettingService "github.com/ganasa18/go-template/internal/po_split_setting/service"
+	coModule "github.com/ganasa18/go-template/internal/customer_order"
+	coHandler "github.com/ganasa18/go-template/internal/customer_order/handler"
+	coRepository "github.com/ganasa18/go-template/internal/customer_order/repository"
+	coService "github.com/ganasa18/go-template/internal/customer_order/service"
 	prlModule "github.com/ganasa18/go-template/internal/prl"
 	prlHandler "github.com/ganasa18/go-template/internal/prl/handler"
 	prlRepository "github.com/ganasa18/go-template/internal/prl/repository"
@@ -282,6 +286,11 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	productionSvc := productionService.New(productionRepo)
 	productionHTTPHandler := productionHandler.New(productionSvc)
 
+	// Customer Order module (PO / DN / SO)
+	coRepo := coRepository.New(db)
+	coSvc := coService.New(coRepo)
+	coHTTPHandler := coHandler.New(coSvc)
+
 	// Admin Jobs module
 	adminJobsRepository := adminJobsRepo.New(db)
 	adminJobsSvc := adminJobsService.New(adminJobsRepository)
@@ -330,7 +339,8 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		productionModule.NewHTTPModule(cfg, baseHTTPHandler, productionHTTPHandler, authSvc, roleSvc, productionSvc),
 		scrapModule.NewHTTPModule(cfg, baseHTTPHandler, scrapHTTPHandler, authSvc, roleSvc, scrapSvc),
 		finishedGoodsModule.NewHTTPModule(cfg, baseHTTPHandler, fgHTTPHandler, authSvc, roleSvc, fgSvc),
-		adminJobsModule.NewHTTPModule(baseHTTPHandler, adminJobsHTTPHandler, adminJobsSvc, authSvc),
+		adminJobsModule.NewHTTPModule(cfg, baseHTTPHandler, adminJobsHTTPHandler, adminJobsSvc),
+		coModule.NewHTTPModule(cfg, baseHTTPHandler, coHTTPHandler, authSvc, roleSvc, coSvc),
 	}
 
 	// --- Server ---
