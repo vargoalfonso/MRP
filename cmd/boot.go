@@ -10,6 +10,10 @@ import (
 	userHandler "github.com/ganasa18/go-template/internal/access_control/handler"
 	userRepository "github.com/ganasa18/go-template/internal/access_control/repository"
 	userService "github.com/ganasa18/go-template/internal/access_control/service"
+	adminJobsModule "github.com/ganasa18/go-template/internal/admin_jobs"
+	adminJobsHandler "github.com/ganasa18/go-template/internal/admin_jobs/handler"
+	adminJobsRepo "github.com/ganasa18/go-template/internal/admin_jobs/repository"
+	adminJobsService "github.com/ganasa18/go-template/internal/admin_jobs/service"
 	actionUIModule "github.com/ganasa18/go-template/internal/action_ui"
 	actionUIHandler "github.com/ganasa18/go-template/internal/action_ui/handler"
 	actionUIRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
@@ -278,6 +282,11 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	productionSvc := productionService.New(productionRepo)
 	productionHTTPHandler := productionHandler.New(productionSvc)
 
+	// Admin Jobs module
+	adminJobsRepository := adminJobsRepo.New(db)
+	adminJobsSvc := adminJobsService.New(adminJobsRepository)
+	adminJobsHTTPHandler := adminJobsHandler.New(adminJobsSvc)
+
 	// Finished Goods module
 	fgRepository := finishedGoodsRepo.New(db)
 	fgSvc := finishedGoodsService.New(fgRepository, db)
@@ -321,6 +330,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		productionModule.NewHTTPModule(cfg, baseHTTPHandler, productionHTTPHandler, authSvc, roleSvc, productionSvc),
 		scrapModule.NewHTTPModule(cfg, baseHTTPHandler, scrapHTTPHandler, authSvc, roleSvc, scrapSvc),
 		finishedGoodsModule.NewHTTPModule(cfg, baseHTTPHandler, fgHTTPHandler, authSvc, roleSvc, fgSvc),
+		adminJobsModule.NewHTTPModule(baseHTTPHandler, adminJobsHTTPHandler, adminJobsSvc, authSvc),
 	}
 
 	// --- Server ---

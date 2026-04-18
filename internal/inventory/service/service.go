@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"math"
 	"strings"
 	"time"
 
@@ -791,86 +792,105 @@ const (
 )
 
 func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error) {
-	// 1. Load only the persistent stock data from raw_materials.
-	//    Derived/computed columns (safety_stock_qty, kanban_standard_qty, daily_usage_qty,
-	//    status, stock_days, buy_not_buy) are intentionally NOT read here because they
-	//    will be dropped — all values are computed from the parameter tables below.
+	const inventoryType = "raw_material"
+
+	// 1. Load stock data from raw_materials.
 	rm, err := s.repo.GetRawMaterialByUniqCode(ctx, uniqCode)
 	if err != nil {
-		// Item not found — return a zero summary so the frontend row still renders.
 		return &invModels.KanbanSummary{
 			UniqCode:  uniqCode,
 			Status:    "normal",
 			BuyNotBuy: "n/a",
 		}, nil
 	}
-
 	stockQty := rm.StockQty
 
-	// 2. Kanban pcs per package — from supplier_item.pcs_per_kanban, fallback to 50.
+	// 2. Kanban pcs per package.
 	kanbanPkgQty := kanbanDefaultPkgQty
 	if pkgQty, err := s.repo.GetKanbanPkgQty(ctx, uniqCode); err == nil && pkgQty > 0 {
 		kanbanPkgQty = pkgQty
 	}
 	kanbanPkgF := float64(kanbanPkgQty)
 
-	// 3. Resolve daily_usage and safety_stock — three paths, pick one:
-	//
-	//   PATH A — safety_stock_parameter is active for this item:
-	//     daily_usage  = (PRL + PO) / working_days
-	//     safety_stock = daily_usage × constanta
-	//
-	//   PATH B — no parameter configured:
-	//     daily_usage  = forecasted_usage_per_day from forecast_results (historical)
-	//     safety_stock = 0  (no threshold → no buy recommendation yet)
-	//
-	//   PATH C — no parameter and no forecast:
-	//     daily_usage  = daily_usage_qty manually set on the raw_material record
-	//     safety_stock = 0
+	// 3. Latest approved PRL period for this item.
+	period, _ := s.repo.GetLatestApprovedPRLPeriodByCode(ctx, uniqCode)
 
+	// 4. Working days for that period (fallback 20 if not configured).
+	workingDays := 0
+	if period != "" {
+		workingDays, _ = s.repo.GetWorkingDaysByPeriod(ctx, period)
+	}
+	if workingDays <= 0 {
+		workingDays = 20
+	}
+
+	// 5. PRL total: cache first, live DB fallback.
+	var prlTotal float64
+	var prlFromCache bool
+	if period != "" {
+		if cached, hit, _ := s.repo.GetPRLTotalFromCache(ctx, period, uniqCode); hit {
+			prlTotal = cached
+			prlFromCache = true
+		} else {
+			prlTotal, _ = s.repo.GetPRLTotalByPeriodAndCode(ctx, period, uniqCode)
+		}
+	}
+
+	// 6. Base daily usage = prl_total / working_days  (BRD §2).
+	baseDailyUsage := prlTotal / float64(workingDays)
+
+	var warnings []string
+
+	// 7. Effective daily usage via stockdays parameter  (BRD §3).
+	effectiveDailyUsage := baseDailyUsage
+	var sdCalcType string
+	var sdConstanta float64
+	if sdParam, err := s.repo.GetStockdaysParam(ctx, inventoryType, uniqCode); err == nil && sdParam != nil {
+		sdCalcType = normalizeCalcType(sdParam.CalculationType)
+		sdConstanta = sdParam.Constanta
+		switch sdCalcType {
+		case "days":
+			effectiveDailyUsage = baseDailyUsage * sdParam.Constanta
+		case "percentage", "forecast", "machine_pattern":
+			warnings = append(warnings, "stockdays calc_type '"+sdCalcType+"' not yet implemented; effective_daily_usage defaulted to base_daily_usage")
+		}
+	}
+
+	// 8. Stock days = floor(stock / max(1, effective_daily_usage))  (BRD §4).
+	var stockDays *int
+	var stockDaysRaw float64
+	if effectiveDailyUsage > 0 {
+		stockDaysRaw = stockQty / math.Max(1, effectiveDailyUsage)
+		d := int(stockDaysRaw)
+		stockDays = &d
+	}
+
+	// 9. Safety stock qty via safety_stock parameter  (BRD §5).
 	safetyStockQty := 0.0
-	var dailyUsage float64
-
-	param, paramErr := s.repo.GetSafetyStockParam(ctx, uniqCode)
-	if paramErr == nil && param != nil {
-		// PATH A: parameter active — derive daily usage from PRL + PO demand.
-		workingDays, _ := s.repo.GetActiveWorkingDays(ctx)
-		if workingDays <= 0 {
-			workingDays = 20
-		}
-		prl, _ := s.repo.GetPRLQtyByUniqCode(ctx, uniqCode)
-		po, _ := s.repo.GetActivePOQtyByUniqCode(ctx, uniqCode)
-		dailyUsage = (prl + po) / float64(workingDays)
-		safetyStockQty = dailyUsage * param.Constanta
-	} else {
-		// PATH B: no parameter — fall back to historical forecast per day.
-		dailyUsage, _ = s.repo.GetForecastDailyUsage(ctx, uniqCode)
-		// PATH C: no forecast either — use manually set daily_usage_qty from the record.
-		if dailyUsage <= 0 && rm.DailyUsageQty != nil && *rm.DailyUsageQty > 0 {
-			dailyUsage = *rm.DailyUsageQty
+	var ssCalcType string
+	var ssConstanta float64
+	if ssParam, err := s.repo.GetSafetyStockParamByType(ctx, inventoryType, uniqCode); err == nil && ssParam != nil {
+		ssCalcType = normalizeCalcType(ssParam.CalculationType)
+		ssConstanta = ssParam.Constanta
+		switch ssCalcType {
+		case "days":
+			safetyStockQty = baseDailyUsage * ssParam.Constanta
+		case "percentage":
+			safetyStockQty = baseDailyUsage * (ssParam.Constanta / 100)
+		case "forecast", "machine_pattern":
+			warnings = append(warnings, "safety_stock calc_type '"+ssCalcType+"' not yet implemented; safety_stock_qty defaulted to 0")
 		}
 	}
 
-	// 4. Kanban metrics.
-	totalKanban := int64(stockQty / kanbanPkgF)
-
-	deficit := safetyStockQty - stockQty
-	var kanbansNeeded int64
-	var stockToComplete float64
-	if deficit > 0 {
-		kanbansNeeded = int64((deficit + kanbanPkgF - 1) / kanbanPkgF) // ceil
-		stockToComplete = float64(kanbansNeeded) * kanbanPkgF
-	}
-
-	// 5. Status.
+	// 10. Status  (BRD §6).
 	status := "normal"
-	if stockQty < safetyStockQty {
+	if safetyStockQty > 0 && stockQty < safetyStockQty {
 		status = "low_on_stock"
 	} else if safetyStockQty > 0 && stockQty > safetyStockQty*kanbanHighRatio {
 		status = "overstock"
 	}
 
-	// 6. Buy / Not Buy.
+	// 11. Buy / Not Buy  (BRD §6).
 	buyNotBuy := "not_buy"
 	if rm.RawMaterialType == "ssp" {
 		buyNotBuy = "n/a"
@@ -878,17 +898,14 @@ func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invMo
 		buyNotBuy = "buy"
 	}
 
-	// 7. Stock days = floor(stock / daily_usage_for_days).
-	//    Prefer the manually set daily_usage_qty from the record (source of truth for days);
-	//    fall back to the computed dailyUsage (from PRL+PO or forecast) if not set.
-	var stockDays *int
-	dailyUsageForDays := dailyUsage
-	if rm.DailyUsageQty != nil && *rm.DailyUsageQty > 0 {
-		dailyUsageForDays = *rm.DailyUsageQty
-	}
-	if dailyUsageForDays > 0 {
-		d := int(stockQty / dailyUsageForDays)
-		stockDays = &d
+	// 12. Kanban metrics.
+	totalKanban := int64(stockQty / kanbanPkgF)
+	deficit := safetyStockQty - stockQty
+	var kanbansNeeded int64
+	var stockToComplete float64
+	if deficit > 0 {
+		kanbansNeeded = int64((deficit + kanbanPkgF - 1) / kanbanPkgF) // ceil
+		stockToComplete = float64(kanbansNeeded) * kanbanPkgF
 	}
 
 	return &invModels.KanbanSummary{
@@ -902,7 +919,39 @@ func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invMo
 		Status:          status,
 		BuyNotBuy:       buyNotBuy,
 		StockDays:       stockDays,
+		CalcContext: invModels.KanbanCalcContext{
+			ForecastPeriod:       period,
+			WorkingDays:          workingDays,
+			PRLTotal:             prlTotal,
+			PRLFromCache:         prlFromCache,
+			BaseDailyUsage:       baseDailyUsage,
+			StockdaysCalcType:    sdCalcType,
+			StockdaysConstanta:   sdConstanta,
+			EffectiveDailyUsage:  effectiveDailyUsage,
+			SafetyStockCalcType:  ssCalcType,
+			SafetyStockConstanta: ssConstanta,
+			StockDaysRaw:         stockDaysRaw,
+			Warnings:             warnings,
+		},
 	}, nil
+}
+
+// normalizeCalcType maps the UI label stored in DB to a short internal code.
+// Rules per BRD "Normalisasi calculation_type".
+func normalizeCalcType(label string) string {
+	lower := strings.ToLower(label)
+	switch {
+	case strings.Contains(lower, "percentage"):
+		return "percentage"
+	case strings.Contains(lower, "forecast") || strings.Contains(lower, "demand forecasting"):
+		return "forecast"
+	case strings.Contains(lower, "machine pattern"):
+		return "machine_pattern"
+	case strings.Contains(lower, "days"):
+		return "days"
+	default:
+		return "days"
+	}
 }
 
 // ---------------------------------------------------------------------------
