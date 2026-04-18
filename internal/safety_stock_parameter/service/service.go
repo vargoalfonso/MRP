@@ -47,11 +47,17 @@ func (s *service) Create(ctx context.Context, req models.CreateSafetyStockReques
 		return nil, err
 	}
 
+	status := "active"
+	if req.Status != nil {
+		status = *req.Status
+	}
+
 	data := models.SafetyStockParameter{
 		InventoryType:   req.InventoryType,
 		ItemUniqCode:    req.ItemUniqCode,
 		CalculationType: req.CalculationType,
 		Constanta:       req.Constanta,
+		Status:          status,
 	}
 
 	if err := s.repo.Create(ctx, &data); err != nil {
@@ -63,9 +69,15 @@ func (s *service) Create(ctx context.Context, req models.CreateSafetyStockReques
 
 func (s *service) Update(ctx context.Context, id int64, req models.UpdateSafetyStockRequest) (*models.SafetyStockParameter, error) {
 
+	status := "active"
+	if req.Status != nil {
+		status = *req.Status
+	}
+
 	err := s.repo.Update(ctx, id, map[string]interface{}{
 		"calculation_type": req.CalculationType,
 		"constanta":        req.Constanta,
+		"status":           status,
 	})
 	if err != nil {
 		return nil, err
