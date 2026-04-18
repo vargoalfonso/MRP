@@ -46,6 +46,7 @@ func NewHTTPModule(
 //
 //	GET    /api/v1/finished-goods                   list FG inventory
 //	POST   /api/v1/finished-goods                   create FG record (manual)
+//	GET    /api/v1/finished-goods/parameterized-summary dynamic per-row summary by uniq_code
 //	GET    /api/v1/finished-goods/form-options/uniq  uniq autocomplete for create form
 //	GET    /api/v1/finished-goods/summary            4 dashboard cards
 //	GET    /api/v1/finished-goods/status-monitoring  status monitoring + alerts tab
@@ -62,6 +63,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 
 	// NOTE: named sub-paths must be registered before /:id to avoid routing conflict
 	fg.GET("/form-options/uniq", perm("finished_goods", "view"), m.base.RunAction(m.handler.CreateFormUniqOptions))
+	fg.GET("/parameterized-summary", perm("finished_goods", "view"), m.base.RunAction(m.handler.GetParameterizedSummary))
 	fg.GET("/summary", perm("finished_goods", "view"), m.base.RunAction(m.handler.GetSummary))
 	fg.GET("/status-monitoring", perm("finished_goods", "view"), m.base.RunAction(m.handler.GetStatusMonitoring))
 

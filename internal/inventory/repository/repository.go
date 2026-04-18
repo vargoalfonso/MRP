@@ -174,6 +174,22 @@ type StockdaysRow struct {
 	Constanta       float64 `gorm:"column:constanta"`
 }
 
+// DemandSnapshotRow is a projection from inventory_demand_periode_summaries.
+type DemandSnapshotRow struct {
+	UniqCode                   string   `gorm:"column:uniq_code"`
+	ActivePeriode              string   `gorm:"column:active_periode"`
+	SnapshotDate               string   `gorm:"column:snapshot_date"`
+	WorkingDaysPeriodeUsed     string   `gorm:"column:working_days_periode_used"`
+	WorkingDaysUsed            int      `gorm:"column:working_days_used"`
+	SafetyStockCalcTypeActive  *string  `gorm:"column:safety_stock_calc_type_active"`
+	SafetyStockConstantaActive *float64 `gorm:"column:safety_stock_constanta_active"`
+	StockdaysCalcTypeActive    *string  `gorm:"column:stockdays_calc_type_active"`
+	StockdaysConstantaActive   *float64 `gorm:"column:stockdays_constanta_active"`
+	PRLSum                     float64  `gorm:"column:prl_sum"`
+	POCustomerSum              float64  `gorm:"column:po_customer_sum"`
+	TotalDemandSum             float64  `gorm:"column:total_demand_sum"`
+}
+
 // ---------------------------------------------------------------------------
 // Interface
 // ---------------------------------------------------------------------------
@@ -239,6 +255,22 @@ type IRepository interface {
 	// GetPRLTotalFromCache reads from prl_item_period_summaries; returns (qty, found, err).
 	GetPRLTotalFromCache(ctx context.Context, forecastPeriod, uniqCode string) (float64, bool, error)
 	GetPRLTotalByPeriodAndCode(ctx context.Context, forecastPeriod, uniqCode string) (float64, error)
+
+	// Demand snapshot helpers (inventory_demand_periode_summaries).
+	// GetGlobalActivePeriode returns the active period from global_parameters.
+	GetGlobalActivePeriode(ctx context.Context) (string, error)
+	// GetWorkingDaysWithFallback returns (workingDays, periodeUsed). Falls back to the
+	// latest available active period when activePeriode has no working_days configured.
+	GetWorkingDaysWithFallback(ctx context.Context, activePeriode string) (int, string, error)
+	// GetDemandSnapshot reads the most recent snapshot for (activePeriode, uniqCode).
+	// Returns (row, found, err).
+	GetDemandSnapshot(ctx context.Context, activePeriode, uniqCode string) (*DemandSnapshotRow, bool, error)
+	// GetPOCustomerSumByPeriodeAndCode returns the live PO Customer sum for a single item.
+	// Used as fallback when no demand snapshot exists yet.
+	GetPOCustomerSumByPeriodeAndCode(ctx context.Context, activePeriode, uniqCode string) (float64, error)
+	// GetCyclePengiriman returns the delivery cycle (integer) from supplier_item.customer_cycle.
+	// Returns 1 when no record exists or parsing fails (safe default).
+	GetCyclePengiriman(ctx context.Context, uniqCode string) (int, error)
 }
 
 type ItemLookupRow struct {
@@ -1172,4 +1204,118 @@ func (r *repo) GetPRLTotalByPeriodAndCode(ctx context.Context, forecastPeriod, u
 		  AND deleted_at     IS NULL
 	`, uniqCode, forecastPeriod).Scan(&result).Error
 	return result.Total, err
+}
+
+// ---------------------------------------------------------------------------
+// Demand snapshot helpers
+// ---------------------------------------------------------------------------
+
+func (r *repo) GetGlobalActivePeriode(ctx context.Context) (string, error) {
+	var result struct {
+		Period string `gorm:"column:period"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("global_parameters").
+		Select("period").
+		Where("parameter_group = 'working_days' AND status = 'active'").
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	return result.Period, err
+}
+
+func (r *repo) GetWorkingDaysWithFallback(ctx context.Context, activePeriode string) (int, string, error) {
+	var result struct {
+		Period      string `gorm:"column:period"`
+		WorkingDays int    `gorm:"column:working_days"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("global_parameters").
+		Select("period, working_days").
+		Where("parameter_group = 'working_days' AND status = 'active' AND period = ? AND working_days > 0", activePeriode).
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, "", err
+	}
+	if result.WorkingDays > 0 {
+		return result.WorkingDays, result.Period, nil
+	}
+	// Fallback: latest available active period with working_days > 0.
+	err = r.db.WithContext(ctx).
+		Table("global_parameters").
+		Select("period, working_days").
+		Where("parameter_group = 'working_days' AND status = 'active' AND working_days > 0").
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, "", err
+	}
+	return result.WorkingDays, result.Period, nil
+}
+
+// GetDemandSnapshot returns the latest snapshot row for (activePeriode, uniqCode).
+func (r *repo) GetDemandSnapshot(ctx context.Context, activePeriode, uniqCode string) (*DemandSnapshotRow, bool, error) {
+	var row DemandSnapshotRow
+	err := r.db.WithContext(ctx).
+		Table("inventory_demand_periode_summaries").
+		Select("uniq_code, active_periode, snapshot_date::text AS snapshot_date, working_days_periode_used, working_days_used, safety_stock_calc_type_active, safety_stock_constanta_active, stockdays_calc_type_active, stockdays_constanta_active, prl_sum, po_customer_sum, total_demand_sum").
+		Where("active_periode = ? AND uniq_code = ?", activePeriode, uniqCode).
+		Order("snapshot_date DESC").
+		Limit(1).
+		Scan(&row).Error
+	if err != nil {
+		return nil, false, err
+	}
+	if row.UniqCode == "" {
+		return nil, false, nil
+	}
+	return &row, true, nil
+}
+
+// GetPOCustomerSumByPeriodeAndCode returns live PO Customer sum for one item from customer_order_document_items.
+func (r *repo) GetPOCustomerSumByPeriodeAndCode(ctx context.Context, activePeriode, uniqCode string) (float64, error) {
+	var result struct {
+		Total float64 `gorm:"column:total"`
+	}
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(i.quantity), 0) AS total
+		FROM customer_order_document_items i
+		JOIN customer_order_documents d ON d.id = i.document_id
+		WHERE i.item_uniq_code = ?
+		  AND d.period_schedule = ?
+		  AND d.document_type   = 'PO'
+		  AND d.status NOT IN ('cancelled', 'draft')
+		  AND d.deleted_at      IS NULL
+	`, uniqCode, activePeriode).Scan(&result).Error
+	return result.Total, err
+}
+
+// GetCyclePengiriman parses customer_cycle from supplier_item as an integer.
+// Returns 1 when no active record exists or the value cannot be parsed.
+func (r *repo) GetCyclePengiriman(ctx context.Context, uniqCode string) (int, error) {
+	var result struct {
+		CustomerCycle *string `gorm:"column:customer_cycle"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("supplier_item").
+		Select("customer_cycle").
+		Where("uniq_code = ? AND status = 'active' AND deleted_at IS NULL", uniqCode).
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 1, err
+	}
+	if result.CustomerCycle == nil || *result.CustomerCycle == "" {
+		return 1, nil
+	}
+	var cycle int
+	_, parseErr := fmt.Sscanf(*result.CustomerCycle, "%d", &cycle)
+	if parseErr != nil || cycle <= 0 {
+		return 1, nil
+	}
+	return cycle, nil
 }

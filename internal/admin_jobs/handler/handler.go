@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/ganasa18/go-template/internal/admin_jobs/service"
 	"github.com/ganasa18/go-template/internal/base/app"
@@ -13,29 +14,29 @@ type HTTPHandler struct {
 
 func New(svc service.IService) *HTTPHandler { return &HTTPHandler{svc: svc} }
 
-// RebuildPRLPeriodSummaries rebuilds the prl_item_period_summaries cache for the given forecast period.
+// RebuildPRLPeriodSummaries rebuilds inventory_demand_periode_summaries for today.
+// The active_periode is resolved from global parameters — no query param is needed.
 //
-//	POST /api/v1/admin/jobs/rebuild-prl-period-summaries?forecast_period=April+2026
+//	POST /api/v1/admin/jobs/rebuild-prl-period-summaries
 func (h *HTTPHandler) RebuildPRLPeriodSummaries(ctx *app.Context) *app.CostumeResponse {
-	forecastPeriod := ctx.Query("forecast_period")
-
-	n, usedPeriod, err := h.svc.RebuildPRLPeriodSummaries(ctx.Request.Context(), forecastPeriod)
+	n, activePeriode, err := h.svc.RebuildDemandPeriodeSummaries(ctx.Request.Context())
 	if err != nil {
 		return &app.CostumeResponse{
 			RequestID: ctx.APIReqID,
 			Status:    http.StatusInternalServerError,
-			Message:   "failed to rebuild prl period summaries: " + err.Error(),
+			Message:   "failed to rebuild demand periode summaries: " + err.Error(),
 		}
 	}
 
-	if usedPeriod == "" {
+	if activePeriode == "" {
 		return &app.CostumeResponse{
 			RequestID: ctx.APIReqID,
 			Status:    http.StatusOK,
-			Message:   "no approved PRL period found; nothing rebuilt",
+			Message:   "no active working-days period found in global parameters; nothing rebuilt",
 			Data: map[string]interface{}{
-				"rows_upserted":   0,
-				"forecast_period": "",
+				"rows_upserted":  0,
+				"active_periode": "",
+				"snapshot_date":  "",
 			},
 		}
 	}
@@ -45,8 +46,9 @@ func (h *HTTPHandler) RebuildPRLPeriodSummaries(ctx *app.Context) *app.CostumeRe
 		Status:    http.StatusOK,
 		Message:   http.StatusText(http.StatusOK),
 		Data: map[string]interface{}{
-			"rows_upserted":   n,
-			"forecast_period": usedPeriod,
+			"rows_upserted":  n,
+			"active_periode": activePeriode,
+			"snapshot_date":  time.Now().Format("2006-01-02"),
 		},
 	}
 }
