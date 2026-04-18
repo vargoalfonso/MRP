@@ -17,13 +17,14 @@ import (
 	deliveryNoteRepo "github.com/ganasa18/go-template/internal/delivery_note/repository"
 	"github.com/skip2/go-qrcode"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type IDeliveryNoteService interface {
 	Create(ctx context.Context, req models.CreateDNRequest) (*models.DeliveryNote, error)
 	GetAll(ctx context.Context, page, limit int) ([]models.DeliveryNote, models.Pagination, error)
 	GetByID(ctx context.Context, id int64) (*models.DeliveryNote, error)
-	ScanAndUpdate(ctx context.Context, req models.QRPayload) (string, error)
+	Scan(ctx context.Context, req models.QRPayload) (string, error)
 	PreviewDN(ctx context.Context, req models.CreateDNRequest) (*models.PreviewDNResponse, error)
 	PreviewItem(ctx context.Context, req models.PreviewDNItem) (*models.PreviewDNItemRespons, error)
 }
@@ -103,10 +104,8 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 		// 🔥 CREATE HEADER
 		// ==============================
 		dn = models.DeliveryNote{
-			DNNumber: dn.DNNumber,
-			PONumber: po.PoNumber,
-			// CustomerID:      req.CustomerID,
-			// ContactPerson:   req.ContactPerson,
+			DNNumber:        dn.DNNumber,
+			PONumber:        po.PoNumber,
 			Period:          req.Period,
 			Type:            req.Type,
 			Status:          "draft",
@@ -194,6 +193,11 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 				return err
 			}
 
+			qtyStart, err := s.repo.CheckItemExistsInDN(ctx, it.ItemUniqCode)
+			if err != nil {
+				return err
+			}
+
 			packing := fmt.Sprintf("DN-%04d-PKG-%04d", dn.ID, i+1)
 
 			items = append(items, models.DeliveryNoteItem{
@@ -201,7 +205,7 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 				ItemUniqCode:  it.ItemUniqCode,
 				Quantity:      it.Qty,
 				OrderQty:      int64(poItem.OrderedQty),
-				QtyStated:     it.Qty,
+				QtyStated:     qtyStart,
 				UOM:           poItem.UOM,
 				Weight:        int64(poItem.WeightKg),
 				KanbanID:      kanban.ID,
@@ -209,6 +213,7 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 				PackingNumber: packing,
 				DateIncoming:  &date,
 				Check:         "progress",
+				QtySent:       0,
 				CreatedAt:     time.Now(),
 				UpdatedAt:     time.Now(),
 			})
@@ -367,18 +372,23 @@ func generateQRBase64(value string) (string, error) {
 	return "data:image/png;base64," + base64Str, nil
 }
 
-func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, req models.QRPayload) (string, error) {
-	returnStatus := ""
+func (s *deliveryNoteService) Scan(ctx context.Context, req models.QRPayload) (string, error) {
+
+	var result string
 
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 
+		if req.Quantity <= 0 {
+			return fmt.Errorf("qty harus lebih dari 0")
+		}
+
 		var item models.DeliveryNoteItem
 
-		// 🔥 1. cari item
-		err := tx.Where("packing_number = ?", req.Packing).
-			First(&item).Error
+		// 🔒 lock row
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("packing_number = ?", req.Packing).
+			First(&item).Error; err != nil {
 
-		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return fmt.Errorf("item tidak ditemukan")
 			}
@@ -386,78 +396,161 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, req models.QRPa
 		}
 
 		var dn models.DeliveryNote
-
-		err = tx.Where("id = ? AND status = ?", item.DNID, "active").
-			First(&dn).Error
-
-		if dn.Status == "completed" {
-			return fmt.Errorf("delivery note sudah completed, tidak bisa scan")
+		if err := tx.Where("id = ?", item.DNID).
+			First(&dn).Error; err != nil {
+			return err
 		}
 
 		if dn.Status != "active" {
-			return fmt.Errorf("delivery note tidak aktif")
+			return fmt.Errorf("DN tidak aktif")
 		}
 
+		qty := int64(req.Quantity)
 		now := time.Now()
 
-		// 🔥 2. kalau sudah pernah scan
-		if item.Check == "incoming" || item.Check == "completed" {
+		var scanType, fromLoc, toLoc, status string
 
-			if item.ReceivedAt != nil {
+		// ======================================================
+		// 🟢 RM / IRM
+		// ======================================================
+		if dn.Type == "RM" || dn.Type == "IRM" {
 
-				diff := now.Sub(*item.ReceivedAt).Seconds()
+			remaining := item.Quantity - item.QtyReceived
 
-				// ❌ duplicate < 60 detik
-				if diff <= 60 {
-					return fmt.Errorf("duplicate scan detected, please wait before scanning again")
+			if remaining <= 0 {
+				return fmt.Errorf("item sudah selesai, tidak bisa scan lagi")
+			}
+
+			if qty > remaining {
+				return fmt.Errorf("qty melebihi sisa. sisa saat ini: %d", remaining)
+			}
+
+			newQty := item.QtyReceived + qty
+
+			// 🔥 status logic
+			if item.QtyReceived == 0 {
+				status = "incoming"
+			} else if newQty < item.Quantity {
+				status = "remaining"
+			} else {
+				status = "completed"
+			}
+
+			if err := tx.Model(&models.DeliveryNoteItem{}).
+				Where("id = ?", item.ID).
+				Updates(map[string]interface{}{
+					"qty_received": gorm.Expr("COALESCE(qty_received,0) + ?", qty),
+					"check":        status,
+				}).Error; err != nil {
+				return err
+			}
+
+			scanType = "incoming"
+			fromLoc = "supplier"
+			toLoc = "warehouse"
+			result = status
+		}
+
+		// ======================================================
+		// 🔴 SUBCON
+		// ======================================================
+		if dn.Type == "SUBCON" {
+
+			// ===============================
+			// 🔴 OUTGOING
+			// ===============================
+			if item.QtySent < item.Quantity {
+
+				remaining := item.Quantity - item.QtySent
+
+				if remaining <= 0 {
+					return fmt.Errorf("item sudah selesai, tidak bisa scan lagi")
 				}
 
-				// 🔥 > 60 detik → completed
-				err = tx.Model(&models.DeliveryNoteItem{}).
+				if qty > remaining {
+					return fmt.Errorf("qty melebihi sisa kirim. sisa saat ini: %d", remaining)
+				}
+
+				newQty := item.QtySent + qty
+
+				if item.QtySent == 0 {
+					status = "outgoing"
+				} else if newQty < item.Quantity {
+					status = "remaining"
+				} else {
+					status = "remaining" // belum selesai, masih nunggu return
+				}
+
+				if err := tx.Model(&models.DeliveryNoteItem{}).
 					Where("id = ?", item.ID).
 					Updates(map[string]interface{}{
-						"check":      "completed",
-						"updated_at": now,
-					}).Error
-
-				if err != nil {
+						"qty_sent": gorm.Expr("COALESCE(qty_sent,0) + ?", qty),
+						"check":    status,
+					}).Error; err != nil {
 					return err
 				}
 
-				returnStatus = "completed"
-				return nil
+				scanType = "outgoing"
+				fromLoc = "warehouse"
+				toLoc = "vendor"
+				result = status
+
+			} else {
+
+				// ===============================
+				// 🟢 INCOMING (RETURN)
+				// ===============================
+				remaining := item.QtySent - item.QtyReceived
+
+				if qty > remaining {
+					return fmt.Errorf("qty melebihi sisa return")
+				}
+
+				newQty := item.QtyReceived + qty
+
+				if item.QtyReceived == 0 {
+					status = "incoming"
+				} else if newQty < item.QtySent {
+					status = "remaining"
+				} else {
+					status = "completed"
+				}
+
+				if err := tx.Model(&models.DeliveryNoteItem{}).
+					Where("id = ?", item.ID).
+					Updates(map[string]interface{}{
+						"qty_received": gorm.Expr("COALESCE(qty_received,0) + ?", qty),
+						"check":        status,
+					}).Error; err != nil {
+					return err
+				}
+
+				scanType = "incoming"
+				fromLoc = "vendor"
+				toLoc = "warehouse"
+				result = status
 			}
 		}
 
-		// 🔥 3. FIRST SCAN → incoming
-		err = tx.Model(&models.DeliveryNoteItem{}).
-			Where("id = ?", item.ID).
-			Updates(map[string]interface{}{
-				"check":           "incoming",
-				"qty_received":    item.OrderQty,
-				"weight_received": item.Weight,
-				"date_incoming":   now,
-				"received_at":     now,
-				"updated_at":      now,
-			}).Error
+		// ======================================================
+		// 🧾 LOG
+		// ======================================================
+		log := models.DeliveryNoteLog{
+			DNID:          item.DNID,
+			DNItemID:      item.ID,
+			ItemUniqCode:  item.ItemUniqCode,
+			PackingNumber: req.Packing,
+			ScanType:      scanType,
+			Qty:           float64(qty),
+			FromLocation:  fromLoc,
+			ToLocation:    toLoc,
+			CreatedAt:     now,
+		}
 
-		if err != nil {
+		if err := tx.Create(&log).Error; err != nil {
 			return err
 		}
 
-		// 🔥 4. update DN
-		err = tx.Model(&models.DeliveryNote{}).
-			Where("id = ?", item.DNID).
-			Updates(map[string]interface{}{
-				"total_dn_incoming": gorm.Expr("COALESCE(total_dn_incoming, 0) + ?", 1),
-				"total_po_incoming": gorm.Expr("COALESCE(total_po_incoming, 0) + ?", item.OrderQty),
-			}).Error
-
-		if err != nil {
-			return err
-		}
-
-		returnStatus = "incoming"
 		return nil
 	})
 
@@ -465,7 +558,7 @@ func (s *deliveryNoteService) ScanAndUpdate(ctx context.Context, req models.QRPa
 		return "", err
 	}
 
-	return returnStatus, nil
+	return result, nil
 }
 
 func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.CreateDNRequest) (*models.PreviewDNResponse, error) {

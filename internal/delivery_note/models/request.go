@@ -57,7 +57,8 @@ type PreviewDNItemRespons struct {
 }
 
 type QRPayload struct {
-	Packing string `json:"packing"`
+	Packing  string `json:"packing"`
+	Quantity int    `json:"qty"`
 }
 
 type Pagination struct {
