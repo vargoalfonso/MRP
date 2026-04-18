@@ -42,6 +42,11 @@ func (s *service) GetByID(ctx context.Context, id int64) (*models.SafetyStockPar
 
 func (s *service) Create(ctx context.Context, req models.CreateSafetyStockRequest) (*models.SafetyStockParameter, error) {
 
+	_, err := s.repo.FindByItemCode(ctx, req.ItemUniqCode)
+	if err == nil {
+		return nil, errors.New("item sudah ada")
+	}
+
 	// 🔥 VALIDATION DI SINI
 	if err := validateCalculationType(req.CalculationType); err != nil {
 		return nil, err
