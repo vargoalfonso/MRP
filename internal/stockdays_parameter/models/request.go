@@ -5,11 +5,13 @@ type CreateStockdaysRequest struct {
 	ItemUniqCode    string  `json:"item_uniq_code" binding:"required"`
 	CalculationType string  `json:"calculation_type" binding:"required"`
 	Constanta       float64 `json:"constanta"`
+	Status          *string `json:"status"`
 }
 
 type UpdateStockdaysRequest struct {
 	CalculationType string  `json:"calculation_type"`
 	Constanta       float64 `json:"constanta"`
+	Status          *string `json:"status"`
 }
 
 type BulkCreateStockdaysRequest struct {
