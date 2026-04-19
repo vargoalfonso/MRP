@@ -15,7 +15,9 @@ import (
 type IRepository interface {
 	Create(ctx context.Context, doc *models.CustomerOrderDocument) error
 	FindByUUID(ctx context.Context, uuid string) (*models.CustomerOrderDocument, error)
+	GetSummary(ctx context.Context, documentType string) (*models.SummaryResponse, error)
 	List(ctx context.Context, f models.ListFilters) ([]models.CustomerOrderDocument, int64, error)
+	Update(ctx context.Context, doc *models.CustomerOrderDocument) error
 	UpdateStatus(ctx context.Context, doc *models.CustomerOrderDocument) error
 	SoftDelete(ctx context.Context, doc *models.CustomerOrderDocument) error
 	GetActivePeriode(ctx context.Context) (string, error)
@@ -93,11 +95,145 @@ func (r *repository) List(ctx context.Context, f models.ListFilters) ([]models.C
 	}
 
 	var docs []models.CustomerOrderDocument
-	err := q.Order("created_at DESC").Limit(f.Limit).Offset(f.Offset).Find(&docs).Error
+	err := q.Preload("Items", func(db *gorm.DB) *gorm.DB {
+		return db.Order("line_no ASC")
+	}).Order("created_at DESC").Limit(f.Limit).Offset(f.Offset).Find(&docs).Error
 	if err != nil {
 		return nil, 0, apperror.InternalWrap("list customer orders failed", err)
 	}
 	return docs, total, nil
+}
+
+func (r *repository) GetSummary(ctx context.Context, documentType string) (*models.SummaryResponse, error) {
+	if documentType == "ALL" {
+		return r.getAllSummary(ctx)
+	}
+
+	base := r.db.WithContext(ctx).
+		Table("customer_order_documents").
+		Where("deleted_at IS NULL AND document_type = ?", documentType)
+
+	if documentType == "DN" {
+		base = base.Where("status = ?", "active")
+	} else {
+		base = base.Where("status <> ?", "cancelled")
+	}
+
+	resp := &models.SummaryResponse{DocumentType: documentType}
+	if err := base.Count(&resp.TotalDocuments).Error; err != nil {
+		return nil, apperror.InternalWrap("count customer order summary failed", err)
+	}
+
+	var quantitySummary struct {
+		TotalQuantity float64 `gorm:"column:total_quantity"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("customer_order_document_items coi").
+		Select("COALESCE(SUM(coi.quantity), 0) AS total_quantity").
+		Joins("JOIN customer_order_documents cod ON cod.id = coi.document_id").
+		Where("cod.deleted_at IS NULL AND cod.document_type = ?", documentType)
+	if documentType == "DN" {
+		err = err.Where("cod.status = ?", "active")
+	} else {
+		err = err.Where("cod.status <> ?", "cancelled")
+	}
+	scanErr := err.Scan(&quantitySummary).Error
+	if scanErr != nil {
+		return nil, apperror.InternalWrap("sum customer order quantity failed", scanErr)
+	}
+	resp.TotalQuantity = quantitySummary.TotalQuantity
+
+	return resp, nil
+}
+
+func (r *repository) getAllSummary(ctx context.Context) (*models.SummaryResponse, error) {
+	resp := &models.SummaryResponse{DocumentType: "ALL"}
+	resp.DN = &models.SummaryMetric{}
+	resp.PO = &models.SummaryMetric{}
+	resp.SO = &models.SummaryMetric{}
+	resp.Total = &models.SummaryMetric{}
+
+	if err := r.allSummaryDocumentsQuery(ctx).
+		Where("document_type = ? AND status = ?", "DN", "active").
+		Count(&resp.DN.TotalDocuments).Error; err != nil {
+		return nil, apperror.InternalWrap("count active dns failed", err)
+	}
+	if err := r.allSummaryDocumentsQuery(ctx).
+		Where("document_type = ? AND status <> ?", "PO", "cancelled").
+		Count(&resp.PO.TotalDocuments).Error; err != nil {
+		return nil, apperror.InternalWrap("count customer pos failed", err)
+	}
+	if err := r.allSummaryDocumentsQuery(ctx).
+		Where("document_type = ? AND status <> ?", "SO", "cancelled").
+		Count(&resp.SO.TotalDocuments).Error; err != nil {
+		return nil, apperror.InternalWrap("count special orders failed", err)
+	}
+	resp.Total.TotalDocuments = resp.DN.TotalDocuments + resp.PO.TotalDocuments + resp.SO.TotalDocuments
+
+	var totals struct {
+		DNTotalQuantity float64 `gorm:"column:dn_total_quantity"`
+		POTotalQuantity float64 `gorm:"column:po_total_quantity"`
+		SOTotalQuantity float64 `gorm:"column:so_total_quantity"`
+		TotalQuantity   float64 `gorm:"column:total_quantity"`
+	}
+	if err := r.db.WithContext(ctx).
+		Table("customer_order_document_items coi").
+		Select("COALESCE(SUM(CASE WHEN cod.document_type = 'DN' AND cod.status = 'active' THEN coi.quantity ELSE 0 END), 0) AS dn_total_quantity").
+		Select("COALESCE(SUM(CASE WHEN cod.document_type = 'PO' AND cod.status <> 'cancelled' THEN coi.quantity ELSE 0 END), 0) AS po_total_quantity").
+		Select("COALESCE(SUM(CASE WHEN cod.document_type = 'SO' AND cod.status <> 'cancelled' THEN coi.quantity ELSE 0 END), 0) AS so_total_quantity").
+		Select("COALESCE(SUM(coi.quantity), 0) AS total_quantity").
+		Joins("JOIN customer_order_documents cod ON cod.id = coi.document_id").
+		Where("cod.deleted_at IS NULL").
+		Where("(cod.document_type = 'DN' AND cod.status = 'active') OR (cod.document_type IN ('PO','SO') AND cod.status <> 'cancelled')").
+		Scan(&totals).Error; err != nil {
+		return nil, apperror.InternalWrap("sum all customer order quantity failed", err)
+	}
+	resp.DN.TotalQuantity = totals.DNTotalQuantity
+	resp.PO.TotalQuantity = totals.POTotalQuantity
+	resp.SO.TotalQuantity = totals.SOTotalQuantity
+	resp.Total.TotalQuantity = totals.TotalQuantity
+	resp.TotalQuantity = totals.TotalQuantity
+
+	return resp, nil
+}
+
+func (r *repository) allSummaryDocumentsQuery(ctx context.Context) *gorm.DB {
+	return r.db.WithContext(ctx).
+		Table("customer_order_documents").
+		Where("deleted_at IS NULL")
+}
+
+func (r *repository) Update(ctx context.Context, doc *models.CustomerOrderDocument) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.CustomerOrderDocument{}).
+			Where("id = ? AND deleted_at IS NULL", doc.ID).
+			Updates(map[string]interface{}{
+				"document_date":          doc.DocumentDate,
+				"customer_id":            doc.CustomerID,
+				"customer_name_snapshot": doc.CustomerNameSnapshot,
+				"contact_person":         doc.ContactPerson,
+				"delivery_address":       doc.DeliveryAddress,
+				"notes":                  doc.Notes,
+				"updated_at":             time.Now(),
+			}).Error; err != nil {
+			return apperror.InternalWrap("update customer order failed", err)
+		}
+
+		if err := tx.Where("document_id = ?", doc.ID).Delete(&models.CustomerOrderDocumentItem{}).Error; err != nil {
+			return apperror.InternalWrap("delete customer order items failed", err)
+		}
+
+		for i := range doc.Items {
+			doc.Items[i].DocumentID = doc.ID
+		}
+		if len(doc.Items) > 0 {
+			if err := tx.Create(&doc.Items).Error; err != nil {
+				return apperror.InternalWrap("create customer order items failed", err)
+			}
+		}
+
+		return nil
+	})
 }
 
 func (r *repository) UpdateStatus(ctx context.Context, doc *models.CustomerOrderDocument) error {
