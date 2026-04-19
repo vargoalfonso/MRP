@@ -43,19 +43,40 @@ func NewHTTPModule(
 func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	auth := authMiddleware.JWTMiddleware(m.authenticator)
 
+	// 🔐 base group
 	g := r.Group("/api/v1/action-ui")
 	g.Use(auth)
 
+	// ================================
+	// 📦 INCOMING MATERIAL
+	// ================================
 	incoming := g.Group("/incoming-material")
+	// 🔍 Lookup (scan QR → auto fill)
+	// GET /api/v1/action-ui/incoming-material/lookup?packing_number=KB-123456&item_uniq_code=UQ-123
+	incoming.GET("/lookup", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.LookupByPackingNumber))
+	// 📥 Submit scan incoming
+	// POST /api/v1/action-ui/incoming-material/scans
+	incoming.POST("/scans", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.CreateIncomingScan))
 
-	// GET /api/v1/action-ui/incoming/lookup?packing_number=KB-123456
-	// Must be before POST /scans (static before wildcard)
-	incoming.GET("/lookup",
-		roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"),
-		m.base.RunAction(m.handler.LookupByPackingNumber),
-	)
-	incoming.POST("/scans",
-		roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"),
-		m.base.RunAction(m.handler.CreateIncomingScan),
-	)
+	// ================================
+	// 🏭 PRODUCTION
+	// ================================
+	production := g.Group("/production")
+	// 🔍 Scan Context (QR → get WO + process info)
+	// GET /api/v1/action-ui/production/scan-context?uniq=UQ-123
+	production.GET("/scan-context", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.ScanContext))
+	// ▶️ Scan In (start production)
+	// POST /api/v1/action-ui/production/scan-in
+	production.POST("/scan-in", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.ScanIn))
+	// ⏹️ Scan Out (finish process)
+	// POST /api/v1/action-ui/production/scan-out
+	production.POST("/scan-out", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.ScanOut))
+
+	// ================================
+	// 🧪 QC
+	// ================================
+	qc := g.Group("/qc")
+	// ✅ QC Submit (round 1 / 2 / 3)
+	// POST /api/v1/action-ui/qc/submit
+	qc.POST("/submit", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.QCSubmit))
 }
