@@ -93,7 +93,9 @@ func (r *repository) List(ctx context.Context, f models.ListFilters) ([]models.C
 	}
 
 	var docs []models.CustomerOrderDocument
-	err := q.Order("created_at DESC").Limit(f.Limit).Offset(f.Offset).Find(&docs).Error
+	err := q.Preload("Items", func(db *gorm.DB) *gorm.DB {
+		return db.Order("line_no ASC")
+	}).Order("created_at DESC").Limit(f.Limit).Offset(f.Offset).Find(&docs).Error
 	if err != nil {
 		return nil, 0, apperror.InternalWrap("list customer orders failed", err)
 	}
