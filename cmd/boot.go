@@ -12,6 +12,7 @@ import (
 	userService "github.com/ganasa18/go-template/internal/access_control/service"
 	actionUIModule "github.com/ganasa18/go-template/internal/action_ui"
 	actionUIHandler "github.com/ganasa18/go-template/internal/action_ui/handler"
+	actionUIProductionRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
 	actionUIRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
 	actionUIService "github.com/ganasa18/go-template/internal/action_ui/service"
 	approvalWorkflowModule "github.com/ganasa18/go-template/internal/approval_workflow"
@@ -206,7 +207,8 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 
 	// Action UI module (incoming scans)
 	actionRepo := actionUIRepo.New(db)
-	actionSvc := actionUIService.New(actionRepo)
+	actionUIProductionRepo := actionUIProductionRepo.NewProductionRepository(db)
+	actionSvc := actionUIService.New(actionRepo, actionUIProductionRepo)
 	actionHTTPHandler := actionUIHandler.New(actionSvc)
 
 	// QC module (task list + approve/reject)

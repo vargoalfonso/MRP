@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"github.com/ganasa18/go-template/internal/action_ui/dto"
 	actionModels "github.com/ganasa18/go-template/internal/action_ui/models"
 	actionService "github.com/ganasa18/go-template/internal/action_ui/service"
 	"github.com/ganasa18/go-template/internal/base/app"
@@ -57,7 +58,12 @@ func (h *HTTPHandler) CreateIncomingScan(ctx *app.Context) *app.CostumeResponse 
 	userCtx := userPkg.MustExtractUserContext(ctx)
 	resp, idempotentHit, err := h.svc.CreateIncomingScan(ctx.Request.Context(), req, userCtx.UserID)
 	if err != nil {
-		return app.NewError(ctx, err)
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
 	}
 
 	status := http.StatusCreated
@@ -72,5 +78,117 @@ func (h *HTTPHandler) CreateIncomingScan(ctx *app.Context) *app.CostumeResponse 
 		Status:    status,
 		Message:   message,
 		Data:      resp,
+	}
+}
+
+func (h *HTTPHandler) ScanContext(ctx *app.Context) *app.CostumeResponse {
+	wo := ctx.Query("wo")
+	if wo == "" {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "wo is required",
+		}
+	}
+
+	result, err := h.svc.ScanContext(ctx.Request.Context(), wo)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data:      result,
+	}
+}
+
+func (h *HTTPHandler) ScanIn(ctx *app.Context) *app.CostumeResponse {
+	var req dto.ScanInRequest
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+
+	err := h.svc.ScanIn(ctx.Request.Context(), req)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusCreated,
+		Message:   "Scan In Success",
+	}
+}
+
+func (h *HTTPHandler) ScanOut(ctx *app.Context) *app.CostumeResponse {
+	var req dto.ScanOutRequest
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+
+	err := h.svc.ScanOut(ctx.Request.Context(), req)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusCreated,
+		Message:   "Scan Out Success",
+	}
+}
+
+func (h *HTTPHandler) QCSubmit(ctx *app.Context) *app.CostumeResponse {
+	var req dto.QCSubmitRequest
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+
+	err := h.svc.QCSubmit(ctx.Request.Context(), req)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusCreated,
+		Message:   "QC Submit Success",
 	}
 }
