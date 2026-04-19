@@ -81,6 +81,10 @@ import (
 	coHandler "github.com/ganasa18/go-template/internal/customer_order/handler"
 	coRepository "github.com/ganasa18/go-template/internal/customer_order/repository"
 	coService "github.com/ganasa18/go-template/internal/customer_order/service"
+	dscModule "github.com/ganasa18/go-template/internal/delivery_scheduling_customer"
+	dscHandler "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/handler"
+	dscRepository "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/repository"
+	dscService "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/service"
 	prlModule "github.com/ganasa18/go-template/internal/prl"
 	prlHandler "github.com/ganasa18/go-template/internal/prl/handler"
 	prlRepository "github.com/ganasa18/go-template/internal/prl/repository"
@@ -306,6 +310,11 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	scrapSvc := scrapService.New(scrapRepository, db)
 	scrapHTTPHandler := scrapHandler.New(scrapSvc)
 
+	// Delivery Scheduling Customer module (outbound customer delivery)
+	dscRepo := dscRepository.New(db)
+	dscSvc := dscService.New(dscRepo, db)
+	dscHTTPHandler := dscHandler.New(dscSvc)
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -341,6 +350,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		finishedGoodsModule.NewHTTPModule(cfg, baseHTTPHandler, fgHTTPHandler, authSvc, roleSvc, fgSvc),
 		adminJobsModule.NewHTTPModule(cfg, baseHTTPHandler, adminJobsHTTPHandler, adminJobsSvc),
 		coModule.NewHTTPModule(cfg, baseHTTPHandler, coHTTPHandler, authSvc, roleSvc, coSvc),
+		dscModule.NewHTTPModule(baseHTTPHandler, dscHTTPHandler, authSvc, roleSvc, dscSvc),
 	}
 
 	// --- Server ---
