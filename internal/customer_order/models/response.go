@@ -3,21 +3,24 @@ package models
 import "time"
 
 type DocumentResponse struct {
-	ID             string     `json:"id"`
-	DocumentType   string     `json:"document_type"`
-	DocumentNumber string     `json:"document_number"`
-	DocumentDate   time.Time  `json:"document_date"`
-	PeriodSchedule string     `json:"period_schedule"`
-	CustomerID     int64      `json:"customer_id"`
-	CustomerName   string     `json:"customer_name"`
-	ContactPerson  *string    `json:"contact_person"`
-	DeliveryAddress *string   `json:"delivery_address"`
-	Status         string     `json:"status"`
-	Notes          *string    `json:"notes"`
-	CreatedBy      string     `json:"created_by"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
-	Items          []ItemResponse `json:"items,omitempty"`
+	ID                 string         `json:"id"`
+	DocumentType       string         `json:"document_type"`
+	DocumentNumber     string         `json:"document_number"`
+	DocumentDate       time.Time      `json:"document_date"`
+	HeaderDeliveryDate *time.Time     `json:"header_delivery_date,omitempty"`
+	PeriodSchedule     string         `json:"period_schedule"`
+	CustomerID         int64          `json:"customer_id"`
+	CustomerName       string         `json:"customer_name"`
+	ContactPerson      *string        `json:"contact_person"`
+	DeliveryAddress    *string        `json:"delivery_address"`
+	Status             string         `json:"status"`
+	Notes              *string        `json:"notes"`
+	TotalQuantity      float64        `json:"total_quantity"`
+	TotalUniq          int            `json:"total_uniq"`
+	CreatedBy          string         `json:"created_by"`
+	CreatedAt          time.Time      `json:"created_at"`
+	UpdatedAt          time.Time      `json:"updated_at"`
+	Items              []ItemResponse `json:"items,omitempty"`
 }
 
 type ItemResponse struct {
@@ -43,6 +46,21 @@ type PaginationMeta struct {
 	TotalPages int   `json:"total_pages"`
 }
 
+type SummaryMetric struct {
+	TotalDocuments int64   `json:"total_documents"`
+	TotalQuantity  float64 `json:"total_quantity"`
+}
+
+type SummaryResponse struct {
+	DocumentType   string         `json:"document_type"`
+	TotalDocuments int64          `json:"total_documents,omitempty"`
+	TotalQuantity  float64        `json:"total_quantity"`
+	DN             *SummaryMetric `json:"dn,omitempty"`
+	PO             *SummaryMetric `json:"po,omitempty"`
+	SO             *SummaryMetric `json:"so,omitempty"`
+	Total          *SummaryMetric `json:"total,omitempty"`
+}
+
 func ToDocumentResponse(d *CustomerOrderDocument) DocumentResponse {
 	resp := DocumentResponse{
 		ID:              d.UUID,
@@ -61,7 +79,14 @@ func ToDocumentResponse(d *CustomerOrderDocument) DocumentResponse {
 		UpdatedAt:       d.UpdatedAt,
 	}
 
+	uniqCodes := make(map[string]struct{}, len(d.Items))
+	if d.DocumentType == "DN" {
+		resp.HeaderDeliveryDate = &d.DocumentDate
+	}
+
 	for _, item := range d.Items {
+		resp.TotalQuantity += item.Quantity
+		uniqCodes[item.ItemUniqCode] = struct{}{}
 		resp.Items = append(resp.Items, ItemResponse{
 			ID:           item.UUID,
 			LineNo:       item.LineNo,
@@ -73,6 +98,7 @@ func ToDocumentResponse(d *CustomerOrderDocument) DocumentResponse {
 			DeliveryDate: item.DeliveryDate,
 		})
 	}
+	resp.TotalUniq = len(uniqCodes)
 
 	return resp
 }

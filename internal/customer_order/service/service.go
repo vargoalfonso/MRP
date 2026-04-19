@@ -14,7 +14,9 @@ import (
 type IService interface {
 	Create(ctx context.Context, req models.CreateOrderRequest, createdBy string) (*models.DocumentResponse, error)
 	GetByUUID(ctx context.Context, id string) (*models.DocumentResponse, error)
+	GetSummary(ctx context.Context, req models.SummaryRequest) (*models.SummaryResponse, error)
 	List(ctx context.Context, q models.ListOrderQuery) (*models.ListResponse, error)
+	Update(ctx context.Context, id string, req models.UpdateOrderRequest) (*models.DocumentResponse, error)
 	UpdateStatus(ctx context.Context, id string, req models.UpdateStatusRequest) (*models.DocumentResponse, error)
 	Delete(ctx context.Context, id string) error
 }
@@ -107,6 +109,10 @@ func (s *service) GetByUUID(ctx context.Context, id string) (*models.DocumentRes
 	return &resp, nil
 }
 
+func (s *service) GetSummary(ctx context.Context, req models.SummaryRequest) (*models.SummaryResponse, error) {
+	return s.repo.GetSummary(ctx, req.DocumentType)
+}
+
 func (s *service) List(ctx context.Context, q models.ListOrderQuery) (*models.ListResponse, error) {
 	page := q.Page
 	if page <= 0 {
@@ -143,6 +149,67 @@ func (s *service) List(ctx context.Context, q models.ListOrderQuery) (*models.Li
 		Items:      items,
 		Pagination: models.NewPaginationMeta(page, limit, total),
 	}, nil
+}
+
+func (s *service) Update(ctx context.Context, id string, req models.UpdateOrderRequest) (*models.DocumentResponse, error) {
+	doc, err := s.repo.FindByUUID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if doc.Status != "draft" {
+		return nil, apperror.BadRequest("only draft documents can be updated")
+	}
+
+	if err := validateUpdateDeliveryDate(doc.DocumentType, req); err != nil {
+		return nil, err
+	}
+
+	customerName, err := s.repo.GetCustomerNameByID(ctx, req.CustomerID)
+	if err != nil {
+		return nil, err
+	}
+
+	doc.CustomerID = req.CustomerID
+	doc.CustomerNameSnapshot = customerName
+	doc.ContactPerson = optionalString(req.ContactPerson)
+	doc.DeliveryAddress = optionalString(req.DeliveryAddress)
+	doc.Notes = optionalString(req.Notes)
+	if doc.DocumentType == "DN" {
+		doc.DocumentDate = resolveUpdateDocumentDate(req)
+	}
+	doc.Items = nil
+
+	for i, it := range req.Items {
+		snap, err := s.repo.GetItemSnapshot(ctx, it.ItemUniqCode)
+		if err != nil {
+			return nil, err
+		}
+
+		item := models.CustomerOrderDocumentItem{
+			UUID:         uuid.NewString(),
+			LineNo:       i + 1,
+			ItemUniqCode: it.ItemUniqCode,
+			PartName:     snap.PartName,
+			PartNumber:   stringOrEmpty(snap.PartNumber),
+			Model:        snap.Model,
+			Quantity:     it.Quantity,
+		}
+		if it.DeliveryDate != "" && doc.DocumentType != "DN" {
+			t, err := time.Parse("2006-01-02", it.DeliveryDate)
+			if err != nil {
+				return nil, apperror.BadRequest("item delivery_date format must be YYYY-MM-DD")
+			}
+			item.DeliveryDate = &t
+		}
+		doc.Items = append(doc.Items, item)
+	}
+
+	if err := s.repo.Update(ctx, doc); err != nil {
+		return nil, err
+	}
+
+	resp := models.ToDocumentResponse(doc)
+	return &resp, nil
 }
 
 func (s *service) UpdateStatus(ctx context.Context, id string, req models.UpdateStatusRequest) (*models.DocumentResponse, error) {
@@ -203,6 +270,34 @@ func resolveDocumentDate(req models.CreateOrderRequest) time.Time {
 	return time.Now()
 }
 
+func resolveUpdateDocumentDate(req models.UpdateOrderRequest) time.Time {
+	if req.DeliveryDate != "" {
+		if t, err := time.Parse("2006-01-02", req.DeliveryDate); err == nil {
+			return t
+		}
+	}
+	return time.Now()
+}
+
+func validateUpdateDeliveryDate(documentType string, req models.UpdateOrderRequest) error {
+	switch documentType {
+	case "DN":
+		if strings.TrimSpace(req.DeliveryDate) == "" {
+			return apperror.BadRequest("delivery_date is required for DN (header level)")
+		}
+		if _, err := time.Parse("2006-01-02", req.DeliveryDate); err != nil {
+			return apperror.BadRequest("delivery_date format must be YYYY-MM-DD")
+		}
+	case "PO", "SO":
+		for _, it := range req.Items {
+			if strings.TrimSpace(it.DeliveryDate) == "" {
+				return apperror.BadRequest("delivery_date is required per item for " + documentType)
+			}
+		}
+	}
+	return nil
+}
+
 func validateStatusTransition(current, next string) error {
 	allowed := map[string][]string{
 		"draft":  {"active", "cancelled"},
@@ -221,4 +316,12 @@ func stringOrEmpty(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func optionalString(v string) *string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	return &v
 }

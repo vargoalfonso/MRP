@@ -50,7 +50,9 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	{
 		g.POST("", roleMiddleware.RequirePermission(m.roleService, "customer_order", "create"), m.base.RunAction(m.handler.Create))
 		g.GET("", roleMiddleware.RequirePermission(m.roleService, "customer_order", "view"), m.base.RunAction(m.handler.List))
+		g.POST("/summary", roleMiddleware.RequirePermission(m.roleService, "customer_order", "view"), m.base.RunAction(m.handler.Summary))
 		g.GET("/:id", roleMiddleware.RequirePermission(m.roleService, "customer_order", "view"), m.base.RunAction(m.handler.GetByID))
+		g.PATCH("/:id", roleMiddleware.RequirePermission(m.roleService, "customer_order", "update"), m.base.RunAction(m.handler.Update))
 		g.PATCH("/:id/status", roleMiddleware.RequirePermission(m.roleService, "customer_order", "update"), m.base.RunAction(m.handler.UpdateStatus))
 		g.DELETE("/:id", roleMiddleware.RequirePermission(m.roleService, "customer_order", "delete"), m.base.RunAction(m.handler.Delete))
 	}

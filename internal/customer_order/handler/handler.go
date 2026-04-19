@@ -65,6 +65,70 @@ func (h *HTTPHandler) GetByID(ctx *app.Context) *app.CostumeResponse {
 	}
 }
 
+func (h *HTTPHandler) Summary(ctx *app.Context) *app.CostumeResponse {
+	var req models.SummaryRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body",
+		}
+	}
+
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": errs},
+		}
+	}
+
+	resp, err := h.svc.GetSummary(ctx.Request.Context(), req)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      resp,
+	}
+}
+
+func (h *HTTPHandler) Update(ctx *app.Context) *app.CostumeResponse {
+	var req models.UpdateOrderRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body",
+		}
+	}
+
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": errs},
+		}
+	}
+
+	resp, err := h.svc.Update(ctx.Request.Context(), ctx.Param("id"), req)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      resp,
+	}
+}
+
 func (h *HTTPHandler) List(ctx *app.Context) *app.CostumeResponse {
 	var q models.ListOrderQuery
 	if err := ctx.ShouldBindQuery(&q); err != nil {
