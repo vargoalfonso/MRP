@@ -194,14 +194,20 @@ type ConfirmDNResponse struct {
 // ─── Delivery Scan Responses ──────────────────────────────────────────────────
 
 type DeliveryLookupResponse struct {
-	DNID          string  `json:"dn_id"`
-	DNItemID      string  `json:"dn_item_id"`
-	DNNumber      string  `json:"dn_number"`
-	ItemUniqCode  string  `json:"item_uniq_code"`
-	PartName      string  `json:"part_name"`
-	QuantityOrder float64 `json:"quantity_order"`
-	RemainingQty  float64 `json:"remaining_qty"`
-	UOM           string  `json:"uom"`
+	DNID            string  `json:"dn_id"`
+	DNItemID        string  `json:"dn_item_id"`
+	DNNumber        string  `json:"dn_number"`
+	PODNReference   string  `json:"po_dn_reference"`
+	ItemUniqCode    string  `json:"item_uniq_code"`
+	PartName        string  `json:"part_name"`
+	Model           string  `json:"model"`
+	PartNo          string  `json:"part_no"`
+	PackingNumber   string  `json:"packing_number"`
+	QuantityOrder   float64 `json:"quantity_order"`
+	RemainingQty    float64 `json:"remaining_qty"`
+	UOM             string  `json:"uom"`
+	DeliveryDate    string  `json:"delivery_date"`
+	DeliveryCycle   string  `json:"delivery_cycle"`
 }
 
 type SubmitScanResponse struct {
