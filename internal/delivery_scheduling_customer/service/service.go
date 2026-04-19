@@ -807,15 +807,30 @@ func (s *service) LookupDeliveryItem(ctx context.Context, dnNumber, itemUniqCode
 		return nil, errors.New("delivery note tidak ditemukan")
 	}
 
+	// Try to get cycle from linked schedule
+	var deliveryCycle string
+	if dn.ScheduleID != nil {
+		var sc models.ScheduleCustomer
+		if err := s.db.WithContext(ctx).Select("cycle").Where("id = ?", *dn.ScheduleID).First(&sc).Error; err == nil {
+			deliveryCycle = derefStr(sc.Cycle)
+		}
+	}
+
 	return &models.DeliveryLookupResponse{
 		DNID:          dn.UUID,
 		DNItemID:      item.UUID,
 		DNNumber:      dn.DNNumber,
+		PODNReference: derefStr(dn.CustomerOrderReference),
 		ItemUniqCode:  item.ItemUniqCode,
 		PartName:      item.PartName,
+		Model:         derefStr(item.Model),
+		PartNo:        item.PartNumber,
+		PackingNumber: item.PackingNumber,
 		QuantityOrder: item.Quantity,
 		RemainingQty:  item.Quantity - item.QtyShipped,
 		UOM:           item.UOM,
+		DeliveryDate:  dn.DeliveryDate.Format("2006-01-02"),
+		DeliveryCycle: deliveryCycle,
 	}, nil
 }
 
