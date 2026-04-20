@@ -15,6 +15,12 @@ const (
 	SourceProductionReject SourceFlag = "production_reject" // reserved for future use
 	SourceStockOpname      SourceFlag = "stock_opname"
 
+	// Scrap Stock movements
+	SourceScrapManual       SourceFlag = "scrap_manual"
+	SourceScrapIncomingScan SourceFlag = "scrap_incoming_scan"
+	SourceScrapReleaseSell  SourceFlag = "scrap_release_sell"
+	SourceScrapReleaseDump  SourceFlag = "scrap_release_dump"
+
 	// Legacy values (avoid introducing new usage; kept for backward compatibility)
 	SourceWOScan     SourceFlag = "wo_scan"
 	SourceProduction SourceFlag = "production"
@@ -36,4 +42,5 @@ const (
 	CategoryRawMaterial      MovementCategory = "raw_material"
 	CategoryIndirectMaterial MovementCategory = "indirect_raw_material"
 	CategorySubcon           MovementCategory = "subcon"
+	CategoryScrap            MovementCategory = "scrap"
 )
