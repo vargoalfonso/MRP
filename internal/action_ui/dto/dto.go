@@ -83,3 +83,13 @@ type FinishedGoodsResponse struct {
 	UOM        string  `json:"uom"`
 	Status     string  `json:"status"`
 }
+
+type IncomingScanRequest struct {
+	DNItemID       int64
+	ScanRef        string
+	Qty            float64
+	WeightKg       float64
+	Warehouse      string
+	ScannedBy      string
+	IdempotencyKey string
+}

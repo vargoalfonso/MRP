@@ -15,6 +15,7 @@ import (
 	approvalRepo "github.com/ganasa18/go-template/internal/approval_workflow/repository"
 	"github.com/ganasa18/go-template/internal/delivery_note/models"
 	deliveryNoteRepo "github.com/ganasa18/go-template/internal/delivery_note/repository"
+	"github.com/google/uuid"
 	"github.com/skip2/go-qrcode"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -27,6 +28,8 @@ type IDeliveryNoteService interface {
 	Scan(ctx context.Context, req models.QRPayload) (string, error)
 	PreviewDN(ctx context.Context, req models.CreateDNRequest) (*models.PreviewDNResponse, error)
 	PreviewItem(ctx context.Context, req models.PreviewDNItem) (*models.PreviewDNItemRespons, error)
+	ScanDelivery(ctx context.Context, req models.ScanDeliveryRequest) error
+	SubmitDelivery(ctx context.Context, req models.SubmitDeliveryRequest) error
 }
 
 // implementation
@@ -706,4 +709,197 @@ func BuildApprovalProgress(workflow workflowModels.ApprovalWorkflow) (workflowMo
 	}
 
 	return workflowModels.ApprovalProgress{Levels: levels}, maxLevel
+}
+
+func (s *deliveryNoteService) ScanDelivery(ctx context.Context, req models.ScanDeliveryRequest) error {
+
+	if req.KanbanNumber == "" {
+		return errors.New("kanban wajib diisi")
+	}
+
+	if req.DNNumber == "" {
+		return errors.New("DN wajib diisi")
+	}
+
+	if req.Qty <= 0 {
+		return errors.New("qty harus > 0")
+	}
+
+	return s.repo.WithTx(ctx, func(tx *gorm.DB) error {
+
+		poItem, err := s.repo.GetPOItemByPackingNumber(ctx, req.KanbanNumber)
+		if err != nil {
+			return errors.New("item tidak ditemukan")
+		}
+		// =============================
+		// 🔍 GET STOCK (LOCK)
+		// =============================
+		fg, err := s.repo.GetFinishedGoodsForUpdate(ctx, tx, poItem.ItemUniqCode)
+		if err != nil {
+			return errors.New("kanban tidak ditemukan")
+		}
+
+		if fg.StockQty <= 0 {
+			return errors.New("stock kosong")
+		}
+
+		if fg.StockQty < req.Qty {
+			return errors.New("stock tidak cukup")
+		}
+
+		// =============================
+		// 🔎 CEK DN SUDAH ADA?
+		// =============================
+		dn, err := s.repo.FindDNByNumber(ctx, tx, req.DNNumber)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		// =============================
+		// 🆕 CREATE HEADER (kalau belum ada)
+		// =============================
+		if dn == nil || dn.ID == 0 {
+			now := time.Now()
+
+			newDN := models.DeliveryNoteSupplier{
+				DNNumber:     req.DNNumber,
+				KanbanNumber: req.KanbanNumber,
+				Status:       "draft",
+				ScannedBy:    req.ScannedBy,
+				ScannedAt:    &now,
+				TotalQty:     req.Qty,
+			}
+
+			if err := s.repo.CreateDN(ctx, tx, &newDN); err != nil {
+				return err
+			}
+
+			dn = &newDN
+		} else {
+			// =============================
+			// ➕ UPDATE TOTAL QTY
+			// =============================
+			if err := s.repo.AddDNQty(ctx, tx, dn.ID, req.Qty); err != nil {
+				return err
+			}
+		}
+
+		// =============================
+		// 📝 INSERT ITEM
+		// =============================
+		item := models.DeliveryNoteSupplierItem{
+			DNID:         dn.ID,
+			KanbanNumber: req.KanbanNumber,
+			Qty:          req.Qty,
+		}
+
+		if err := s.repo.InsertDNItem(ctx, tx, &item); err != nil {
+			return err
+		}
+
+		// =============================
+		// 📉 REDUCE STOCK
+		// =============================
+		if err := s.repo.ReduceStockTx(ctx, tx, fg.ID, req.Qty); err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
+func (s *deliveryNoteService) SubmitDelivery(ctx context.Context, req models.SubmitDeliveryRequest) error {
+
+	if len(req.Items) == 0 {
+		return errors.New("items tidak boleh kosong")
+	}
+
+	parsedDate, err := time.Parse("2006-01-02", req.Date)
+	if err != nil {
+		return errors.New("format date salah (YYYY-MM-DD)")
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+
+		priority := req.Priority
+
+		if priority == "" {
+			priority = "normal" // default aman
+		}
+		// =============================
+		// 🧾 CREATE HEADER
+		// =============================
+		header := models.DeliveryScheduleCustomer{
+			UUID:           uuid.NewString(),
+			ScheduleNumber: generateScheduleNumber(), // nanti helper
+			CustomerID:     req.CustomerID,
+			ScheduleDate:   parsedDate,
+			Cycle:          req.Cycle,
+			Priority:       priority,
+			Status:         "scheduled",
+			ApprovalStatus: "pending",
+			CreatedBy:      req.CreatedBy,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+		}
+
+		if err := s.repo.InsertHeaderTx(tx, &header); err != nil {
+			return err
+		}
+
+		// =============================
+		// 🔁 LOOP ITEMS
+		// =============================
+		for i, item := range req.Items {
+
+			// 🔒 LOCK FG
+			fg, err := s.repo.GetFGForUpdate(tx, item.ItemUniqCode)
+			if err != nil {
+				return errors.New("finished goods tidak ditemukan")
+			}
+
+			// =============================
+			// ❗ VALIDASI STOCK
+			// =============================
+			if fg.StockQty < item.Qty {
+				return errors.New("stock tidak cukup untuk item " + item.ItemUniqCode)
+			}
+
+			// =============================
+			// 📦 INSERT ITEM
+			// =============================
+			detail := models.DeliveryScheduleItemCustomer{
+				UUID:              uuid.NewString(),
+				ScheduleID:        header.ID,
+				LineNo:            i + 1,
+				ItemUniqCode:      item.ItemUniqCode,
+				PartName:          fg.PartName,
+				PartNumber:        fg.PartNumber,
+				TotalOrderQty:     fg.StockQty, // optional
+				TotalDeliveryQty:  item.Qty,
+				UOM:               item.UOM,
+				Status:            "scheduled",
+				FGReadinessStatus: "ready",
+				CreatedAt:         time.Now(),
+				UpdatedAt:         time.Now(),
+			}
+
+			if err := s.repo.InsertItemTx(tx, &detail); err != nil {
+				return err
+			}
+
+			// =============================
+			// 📉 REDUCE STOCK
+			// =============================
+			if err := s.repo.ReduceFGStock(tx, fg.ID, item.Qty); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+func generateScheduleNumber() string {
+	return "SCH-" + time.Now().Format("20060102150405")
 }

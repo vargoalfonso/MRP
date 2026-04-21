@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/datatypes"
+)
 
 // IncomingReceivingScan maps to incoming_receiving_scans (append-only).
 // Created by migration: scripts/migrations/0015_dn_feature_up.sql
@@ -17,3 +21,26 @@ type IncomingReceivingScan struct {
 }
 
 func (IncomingReceivingScan) TableName() string { return "incoming_receiving_scans" }
+
+type QCTask struct {
+	ID int64 `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+
+	TaskType string `gorm:"column:task_type;size:32;not null" json:"task_type"`
+	Status   string `gorm:"column:status;size:32;not null" json:"status"`
+
+	// IncomingDNItemID links to delivery_note_items.id (bigint).
+	IncomingDNItemID *int64 `gorm:"column:incoming_dn_item_id" json:"incoming_dn_item_id"`
+
+	GoodQuantity  *int       `gorm:"column:good_quantity" json:"good_quantity"`
+	NgQuantity    *int       `gorm:"column:ng_quantity" json:"ng_quantity"`
+	ScrapQuantity *int       `gorm:"column:scrap_quantity" json:"scrap_quantity"`
+	DateChecked   *time.Time `gorm:"column:date_checked;type:date" json:"date_checked"`
+
+	Round        int            `gorm:"column:round;default:1" json:"round"`
+	RoundResults datatypes.JSON `gorm:"column:round_results;type:jsonb" json:"round_results"`
+
+	CreatedAt time.Time `gorm:"column:created_at;not null;default:now()" json:"created_at"`
+	UpdatedAt time.Time `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
+}
+
+func (QCTask) TableName() string { return "qc_tasks" }

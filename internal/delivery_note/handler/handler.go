@@ -235,3 +235,67 @@ func (h *HTTPHandler) PreviewItem(appCtx *app.Context) *app.CostumeResponse {
 		Data:      data,
 	}
 }
+
+func (h *HTTPHandler) ScanDelivery(appCtx *app.Context) *app.CostumeResponse {
+	var req models.ScanDeliveryRequest
+
+	// =============================
+	// 📥 BIND JSON
+	// =============================
+	if err := appCtx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body",
+		}
+	}
+
+	// =============================
+	// 🚀 CALL SERVICE
+	// =============================
+	err := h.service.ScanDelivery(appCtx.Request.Context(), req)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	// =============================
+	// ✅ RESPONSE
+	// =============================
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "scan delivery supplier success",
+	}
+}
+
+func (h *HTTPHandler) SubmitDelivery(appCtx *app.Context) *app.CostumeResponse {
+	var req models.SubmitDeliveryRequest
+
+	// =============================
+	// 📥 BIND JSON
+	// =============================
+	if err := appCtx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body",
+		}
+	}
+
+	// =============================
+	// 🚀 CALL SERVICE
+	// =============================
+	err := h.service.SubmitDelivery(appCtx.Request.Context(), req)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	// =============================
+	// ✅ RESPONSE
+	// =============================
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "scan delivery customer success",
+	}
+}

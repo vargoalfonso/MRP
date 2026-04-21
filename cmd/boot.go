@@ -16,6 +16,7 @@ import (
 	adminJobsService "github.com/ganasa18/go-template/internal/admin_jobs/service"
 	actionUIModule "github.com/ganasa18/go-template/internal/action_ui"
 	actionUIHandler "github.com/ganasa18/go-template/internal/action_ui/handler"
+	actionUIIncomingRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
 	actionUIProductionRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
 	actionUIRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
 	actionUIService "github.com/ganasa18/go-template/internal/action_ui/service"
@@ -234,7 +235,8 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	// Action UI module (incoming scans)
 	actionRepo := actionUIRepo.New(db)
 	actionUIProductionRepo := actionUIProductionRepo.NewProductionRepository(db)
-	actionSvc := actionUIService.New(actionRepo, actionUIProductionRepo)
+	actionUIIncomingRepo := actionUIIncomingRepo.NewIncomingRepository(db)
+	actionSvc := actionUIService.New(actionRepo, actionUIProductionRepo, actionUIIncomingRepo)
 	actionHTTPHandler := actionUIHandler.New(actionSvc)
 
 	// QC module (task list + approve/reject)

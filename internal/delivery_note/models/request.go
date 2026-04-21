@@ -67,3 +67,26 @@ type Pagination struct {
 	Limit      int   `json:"limit"`
 	TotalPages int   `json:"total_pages"`
 }
+
+type ScanDeliveryRequest struct {
+	DNNumber     string  `json:"dn_number"`
+	KanbanNumber string  `json:"kanban_number"`
+	Qty          float64 `json:"qty"`
+	ScannedBy    string  `json:"scanned_by"`
+}
+
+type SubmitDeliveryRequest struct {
+	CustomerID int64  `json:"customer_id"`
+	Cycle      string `json:"cycle"`
+	Date       string `json:"date"`
+	CreatedBy  string `json:"created_by"`
+	Priority   string `json:"priority"`
+
+	Items []DeliveryItemRequest `json:"items"`
+}
+
+type DeliveryItemRequest struct {
+	ItemUniqCode string  `json:"item_uniq_code"`
+	Qty          float64 `json:"qty"`
+	UOM          string  `json:"uom"`
+}
