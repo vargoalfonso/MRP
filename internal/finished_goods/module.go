@@ -44,14 +44,15 @@ func NewHTTPModule(
 
 // RegisterRoutes registers all Finished Goods endpoints.
 //
-//	GET    /api/v1/finished-goods                   list FG inventory
-//	POST   /api/v1/finished-goods                   create FG record (manual)
-//	GET    /api/v1/finished-goods/parameterized-summary dynamic per-row summary by uniq_code
-//	GET    /api/v1/finished-goods/form-options/uniq  uniq autocomplete for create form
-//	GET    /api/v1/finished-goods/summary            4 dashboard cards
-//	GET    /api/v1/finished-goods/status-monitoring  status monitoring + alerts tab
-//	GET    /api/v1/finished-goods/:id                detail
-//	PUT    /api/v1/finished-goods/:id                update (stock, warehouse, wo)
+//	GET    /api/v1/finished-goods                        list FG inventory
+//	POST   /api/v1/finished-goods                        create FG record (manual, single)
+//	POST   /api/v1/finished-goods/bulk                   bulk create FG records (JSON array, FE parses Excel)
+//	GET    /api/v1/finished-goods/parameterized-summary  dynamic per-row summary by uniq_code
+//	GET    /api/v1/finished-goods/form-options/uniq      uniq autocomplete for create form
+//	GET    /api/v1/finished-goods/summary                4 dashboard cards
+//	GET    /api/v1/finished-goods/status-monitoring      status monitoring + alerts tab
+//	GET    /api/v1/finished-goods/:id                    detail
+//	PUT    /api/v1/finished-goods/:id                    update (stock, warehouse, wo)
 func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	auth := authMiddleware.JWTMiddleware(m.authenticator)
 	perm := func(resource, action string) gin.HandlerFunc {
@@ -69,6 +70,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 
 	fg.GET("", perm("finished_goods", "view"), m.base.RunAction(m.handler.ListFinishedGoods))
 	fg.POST("", perm("finished_goods", "create"), m.base.RunAction(m.handler.CreateFinishedGoods))
+	fg.POST("/bulk", perm("finished_goods", "create"), m.base.RunAction(m.handler.BulkCreateFinishedGoods))
 	fg.GET("/:id", perm("finished_goods", "view"), m.base.RunAction(m.handler.GetFinishedGoodsByID))
 	fg.PUT("/:id", perm("finished_goods", "update"), m.base.RunAction(m.handler.UpdateFinishedGoods))
 }

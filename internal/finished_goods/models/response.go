@@ -130,6 +130,23 @@ type FGCreateUniqOptionsResponse struct {
 	Items []FGCreateUniqOptionItem `json:"items"`
 }
 
+// FGBulkCreateResult is the result for one item in a bulk create operation.
+type FGBulkCreateResult struct {
+	Index     int     `json:"index"`
+	UniqCode  string  `json:"uniq_code"`
+	Status    string  `json:"status"` // "created" | "failed"
+	ID        *int64  `json:"id,omitempty"`
+	UUID      *string `json:"uuid,omitempty"`
+	Error     *string `json:"error,omitempty"`
+}
+
+// FGBulkCreateResponse is returned by POST /api/v1/finished-goods/bulk.
+type FGBulkCreateResponse struct {
+	Created int                  `json:"created"`
+	Failed  int                  `json:"failed"`
+	Results []FGBulkCreateResult `json:"results"`
+}
+
 // FGParameterizedSummary is a dynamic per-item summary for row-level UI refresh.
 // Values are computed fresh from finished_goods + kanban_parameters on each request.
 type FGParameterizedSummary struct {
