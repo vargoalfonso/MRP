@@ -34,3 +34,14 @@ type OutgoingRMListResponse struct {
 	Items      []OutgoingRMItem `json:"items"`
 	Pagination Pagination       `json:"pagination"`
 }
+
+// FormOptionItem is returned by GET /form-options to pre-fill the create modal.
+type FormOptionItem struct {
+	ID                int64    `json:"id"`
+	UniqCode          string   `json:"uniq_code"`
+	PartNumber        *string  `json:"part_number"`
+	PartName          *string  `json:"part_name"`
+	UOM               *string  `json:"uom"`
+	StockQty          float64  `json:"stock_qty"`
+	WarehouseLocation *string  `json:"warehouse_location"`
+}

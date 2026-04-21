@@ -58,4 +58,5 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	g.GET("", perm("outgoing_raw_material", "view"), m.base.RunAction(m.handler.ListOutgoingRM))
 	g.POST("", perm("outgoing_raw_material", "create"), m.base.RunAction(m.handler.CreateOutgoingRM))
 	g.GET("/:id", perm("outgoing_raw_material", "view"), m.base.RunAction(m.handler.GetOutgoingRMByID))
+	g.GET("/form-options", perm("outgoing_raw_material", "view"), m.base.RunAction(m.handler.GetFormOptions))
 }
