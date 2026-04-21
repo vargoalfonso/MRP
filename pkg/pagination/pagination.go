@@ -782,3 +782,51 @@ func StatusMonitoringPagination(c *app.Context) StatusMonitoringPaginationInput 
 		AlertType: c.Query("alert_type"),
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Outgoing Raw Material
+// ---------------------------------------------------------------------------
+
+// OutgoingRMPaginationInput holds filters for GET /inventory/raw-materials/outgoing.
+//
+// Query params:
+//
+//	?search=OUT-RM&date_from=2024-01-01&date_to=2024-12-31&reason=Production+Use&uniq=RM-001&transaction_id=OUT-RM-00001&work_order_no=WO-2024-001&page=1&limit=20
+type OutgoingRMPaginationInput struct {
+	Limit          int
+	Page           int
+	OrderBy        string
+	OrderDirection string
+	Search         string
+	DateFrom       string
+	DateTo         string
+	Reason         string
+	Uniq           string
+	TransactionID  string
+	WorkOrderNo    string
+}
+
+func (p OutgoingRMPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// OutgoingRMPagination parses outgoing RM list query params.
+func OutgoingRMPagination(c *app.Context) OutgoingRMPaginationInput {
+	base := Pagination(c)
+	return OutgoingRMPaginationInput{
+		Limit:          base.Limit,
+		Page:           base.Page,
+		OrderBy:        base.OrderBy,
+		OrderDirection: base.OrderDirection,
+		Search:         base.Search,
+		DateFrom:       c.Query("date_from"),
+		DateTo:         c.Query("date_to"),
+		Reason:         c.Query("reason"),
+		Uniq:           c.Query("uniq"),
+		TransactionID:  c.Query("transaction_id"),
+		WorkOrderNo:    c.Query("work_order_no"),
+	}
+}
