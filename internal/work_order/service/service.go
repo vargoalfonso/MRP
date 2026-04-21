@@ -1250,17 +1250,13 @@ func (s *service) fetchProcessFlows(ctx context.Context, tx *gorm.DB, uniqCodes 
 		       ro.cycle_time_sec,
 		       ro.setup_time_min
 		FROM   items i
-		JOIN   routing_headers rh ON rh.item_id = i.id
+		JOIN   bom_item bi ON bi.item_id = i.id AND bi.is_current = TRUE AND bi.status = 'Released'
+		JOIN   routing_headers rh ON rh.item_revision_id = bi.root_item_revision_id
 		JOIN   routing_operations ro ON ro.routing_header_id = rh.id
 		JOIN   process_parameters pp ON pp.id = ro.process_id
 		LEFT   JOIN master_machines mm ON mm.id = ro.machine_id
 		WHERE  i.uniq_code IN ?
 		  AND  i.deleted_at IS NULL
-		  AND  rh.id IN (
-		           SELECT MAX(rh2.id)
-		           FROM   routing_headers rh2
-		           WHERE  rh2.item_id = i.id
-		       )
 		ORDER  BY i.uniq_code, ro.op_seq`
 
 	var opRows []opRow

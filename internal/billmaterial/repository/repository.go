@@ -24,13 +24,17 @@ type IRepository interface {
 	UpsertMaterialSpec(ctx context.Context, spec *models.ItemMaterialSpec) error
 	CreateRoutingHeader(ctx context.Context, h *models.RoutingHeader) error
 	CreateOperation(ctx context.Context, op *models.RoutingOperation) error
+	UpdateOperation(ctx context.Context, op *models.RoutingOperation) error
+	GetOperationByID(ctx context.Context, opID int64) (*models.RoutingOperation, error)
 	CreateTooling(ctx context.Context, t *models.RoutingOperationTooling) error
+	ReplaceToolings(ctx context.Context, operationID int64, toolings []models.ToolingInput) error
 	CreateBomItem(ctx context.Context, b *models.BomItem) error
 	UpdateBomItem(ctx context.Context, bom *models.BomItem) error
 	CreateBomLine(ctx context.Context, line *models.BomLine) error
 	DeleteBomItem(ctx context.Context, bomID int64) error
 	DeleteBomLinesByIDs(ctx context.Context, bomID int64, lineIDs []int64) (int64, error)
 	DeleteRoutingByItemID(ctx context.Context, itemID int64) error
+	DeleteRoutingByRevisionID(ctx context.Context, revisionID int64) error
 	UpsertItemAssetURL(ctx context.Context, itemID int64, assetType, url string) error
 	UpdateBomLine(ctx context.Context, line *models.BomLine) error
 	GetBomLineByID(ctx context.Context, bomID, lineID int64) (*models.BomLine, error)
@@ -38,9 +42,12 @@ type IRepository interface {
 	// Reads
 	GetItemByID(ctx context.Context, id int64) (*models.Item, error)
 	GetItemByUniq(ctx context.Context, uniqCode string) (*models.Item, error)
+	GetRevisionByID(ctx context.Context, revisionID int64) (*models.ItemRevision, error)
 	GetLatestRevision(ctx context.Context, itemID int64) (*models.ItemRevision, error)
+	GetRevisionsByIDs(ctx context.Context, revisionIDs []int64) ([]models.ItemRevision, error)
 	GetFirstAsset(ctx context.Context, itemID int64) (*models.ItemAsset, error)
 	GetMaterialSpec(ctx context.Context, revisionID int64) (*models.ItemMaterialSpec, error)
+	GetRoutingHeaderByRevisionID(ctx context.Context, revisionID int64) (*models.RoutingHeader, error)
 	GetRoutingWithOps(ctx context.Context, itemID int64) (*models.RoutingHeader, []models.RoutingOperation, []models.RoutingOperationTooling, error)
 	GetSupplierName(ctx context.Context, id uuid.UUID) string
 	GetProcessName(ctx context.Context, id int64) string
@@ -61,6 +68,8 @@ type IRepository interface {
 	// BOM list — returns parent bom_items with their item info
 	ListBomItems(ctx context.Context, filter ListFilter) ([]models.BomItem, int64, error)
 	GetBomByID(ctx context.Context, bomID int64) (*models.BomItem, error)
+	GetBomByItemAndVersion(ctx context.Context, itemID int64, version int) (*models.BomItem, error)
+	GetBomVersionsByItemID(ctx context.Context, itemID int64) ([]models.BomItem, error)
 	// BOM lines flat for a given bom_item_id, ordered by level then line creation
 	GetBomLines(ctx context.Context, bomItemID int64) ([]models.BomLine, error)
 
@@ -120,6 +129,10 @@ func (r *repository) UpdateItem(ctx context.Context, item *models.Item) error {
 func (r *repository) CreateRevision(ctx context.Context, rev *models.ItemRevision) error {
 	rev.UUID = uuid.New()
 	if err := r.db.WithContext(ctx).Create(rev).Error; err != nil {
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "item_revisions_item_id_revision_key") || strings.Contains(msg, "duplicate key value") {
+			return apperror.Conflict("revision label already exists for this item")
+		}
 		return apperror.InternalWrap("Create Revision Error", err)
 	}
 	return nil
@@ -174,14 +187,55 @@ func (r *repository) CreateRoutingHeader(ctx context.Context, h *models.RoutingH
 
 func (r *repository) CreateOperation(ctx context.Context, op *models.RoutingOperation) error {
 	if err := r.db.WithContext(ctx).Create(op).Error; err != nil {
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "routing_operations_routing_header_id_op_seq_key") || strings.Contains(msg, "duplicate key value") {
+			return apperror.Conflict("op_seq already exists in this routing version")
+		}
 		return apperror.InternalWrap("CreateOperation", err)
 	}
 	return nil
 }
 
+func (r *repository) UpdateOperation(ctx context.Context, op *models.RoutingOperation) error {
+	if err := r.db.WithContext(ctx).Save(op).Error; err != nil {
+		return apperror.InternalWrap("UpdateOperation", err)
+	}
+	return nil
+}
+
+func (r *repository) GetOperationByID(ctx context.Context, opID int64) (*models.RoutingOperation, error) {
+	var op models.RoutingOperation
+	err := r.db.WithContext(ctx).First(&op, "id = ?", opID).Error
+	return one(&op, err, "routing operation")
+}
+
 func (r *repository) CreateTooling(ctx context.Context, t *models.RoutingOperationTooling) error {
 	if err := r.db.WithContext(ctx).Create(t).Error; err != nil {
 		return apperror.InternalWrap("CreateTooling", err)
+	}
+	return nil
+}
+
+func (r *repository) ReplaceToolings(ctx context.Context, operationID int64, toolings []models.ToolingInput) error {
+	if len(toolings) == 0 {
+		return nil
+	}
+	if err := r.db.WithContext(ctx).Where("routing_operation_id = ?", operationID).Delete(&models.RoutingOperationTooling{}).Error; err != nil {
+		if isMissingRoutingToolingsTable(err) {
+			return nil
+		}
+		return apperror.InternalWrap("ReplaceToolings delete", err)
+	}
+	for _, ti := range toolings {
+		tooling := &models.RoutingOperationTooling{
+			RoutingOperationID: operationID,
+			ToolingType:        ti.ToolingType,
+			ToolingCode:        ti.ToolingCode,
+			ToolingName:        ti.ToolingName,
+		}
+		if err := r.CreateTooling(ctx, tooling); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -269,6 +323,40 @@ func (r *repository) DeleteRoutingByItemID(ctx context.Context, itemID int64) er
 	return nil
 }
 
+func (r *repository) DeleteRoutingByRevisionID(ctx context.Context, revisionID int64) error {
+	var headers []models.RoutingHeader
+	if err := r.db.WithContext(ctx).Where("item_revision_id = ?", revisionID).Find(&headers).Error; err != nil {
+		return apperror.InternalWrap("DeleteRoutingByRevisionID find headers", err)
+	}
+	if len(headers) == 0 {
+		return nil
+	}
+	headerIDs := make([]int64, len(headers))
+	for i, h := range headers {
+		headerIDs[i] = h.ID
+	}
+	var ops []models.RoutingOperation
+	if err := r.db.WithContext(ctx).Where("routing_header_id IN ?", headerIDs).Find(&ops).Error; err != nil {
+		return apperror.InternalWrap("DeleteRoutingByRevisionID find ops", err)
+	}
+	if len(ops) > 0 {
+		opIDs := make([]int64, len(ops))
+		for i, op := range ops {
+			opIDs[i] = op.ID
+		}
+		if err := r.db.WithContext(ctx).Where("routing_operation_id IN ?", opIDs).Delete(&models.RoutingOperationTooling{}).Error; err != nil {
+			return apperror.InternalWrap("DeleteRoutingByRevisionID delete toolings", err)
+		}
+		if err := r.db.WithContext(ctx).Where("id IN ?", opIDs).Delete(&models.RoutingOperation{}).Error; err != nil {
+			return apperror.InternalWrap("DeleteRoutingByRevisionID delete ops", err)
+		}
+	}
+	if err := r.db.WithContext(ctx).Where("id IN ?", headerIDs).Delete(&models.RoutingHeader{}).Error; err != nil {
+		return apperror.InternalWrap("DeleteRoutingByRevisionID delete headers", err)
+	}
+	return nil
+}
+
 // UpsertItemAssetURL updates the first active asset for the item or creates one if none exists.
 func (r *repository) UpsertItemAssetURL(ctx context.Context, itemID int64, assetType, url string) error {
 	res := r.db.WithContext(ctx).
@@ -320,6 +408,12 @@ func (r *repository) GetItemByUniq(ctx context.Context, uniqCode string) (*model
 	return one(&item, err, "item")
 }
 
+func (r *repository) GetRevisionByID(ctx context.Context, revisionID int64) (*models.ItemRevision, error) {
+	var rev models.ItemRevision
+	err := r.db.WithContext(ctx).First(&rev, "id = ?", revisionID).Error
+	return one(&rev, err, "revision")
+}
+
 func (r *repository) GetLatestRevision(ctx context.Context, itemID int64) (*models.ItemRevision, error) {
 	var rev models.ItemRevision
 	err := r.db.WithContext(ctx).Where("item_id = ?", itemID).Order("id DESC").First(&rev).Error
@@ -327,6 +421,17 @@ func (r *repository) GetLatestRevision(ctx context.Context, itemID int64) (*mode
 		return nil, nil // no revision is not an error
 	}
 	return one(&rev, err, "revision")
+}
+
+func (r *repository) GetRevisionsByIDs(ctx context.Context, revisionIDs []int64) ([]models.ItemRevision, error) {
+	if len(revisionIDs) == 0 {
+		return nil, nil
+	}
+	var revisions []models.ItemRevision
+	if err := r.db.WithContext(ctx).Where("id IN ?", revisionIDs).Find(&revisions).Error; err != nil {
+		return nil, apperror.InternalWrap("GetRevisionsByIDs", err)
+	}
+	return revisions, nil
 }
 
 func (r *repository) GetFirstAsset(ctx context.Context, itemID int64) (*models.ItemAsset, error) {
@@ -345,6 +450,18 @@ func (r *repository) GetMaterialSpec(ctx context.Context, revisionID int64) (*mo
 		return nil, nil
 	}
 	return one(&spec, err, "material spec")
+}
+
+func (r *repository) GetRoutingHeaderByRevisionID(ctx context.Context, revisionID int64) (*models.RoutingHeader, error) {
+	var header models.RoutingHeader
+	err := r.db.WithContext(ctx).
+		Where("item_revision_id = ?", revisionID).
+		Order("id DESC").
+		First(&header).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return one(&header, err, "routing header")
 }
 
 func (r *repository) GetRoutingWithOps(ctx context.Context, itemID int64) (*models.RoutingHeader, []models.RoutingOperation, []models.RoutingOperationTooling, error) {
@@ -526,12 +643,17 @@ func (r *repository) GetToolingsByOperationIDs(ctx context.Context, operationIDs
 	if err := r.db.WithContext(ctx).
 		Where("routing_operation_id IN ?", operationIDs).
 		Find(&toolings).Error; err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), `relation "routing_operation_toolings" does not exist`) {
+		if isMissingRoutingToolingsTable(err) {
 			return nil, nil
 		}
 		return nil, apperror.InternalWrap("GetToolingsByOperationIDs", err)
 	}
 	return toolings, nil
+}
+
+func isMissingRoutingToolingsTable(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "routing_operation_toolings") && strings.Contains(msg, "does not exist")
 }
 
 func (r *repository) GetSupplierNamesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
@@ -614,6 +736,7 @@ func (r *repository) ListBomItems(ctx context.Context, f ListFilter) ([]models.B
 	needJoin := f.UniqCode != "" || f.Search != ""
 
 	q := r.db.WithContext(ctx).Model(&models.BomItem{})
+	q = q.Where("bom_item.is_current = ?", true)
 	if needJoin {
 		q = q.Joins("JOIN items ON items.id = bom_item.item_id").
 			Where("items.deleted_at IS NULL")
@@ -647,6 +770,20 @@ func (r *repository) GetBomByID(ctx context.Context, bomID int64) (*models.BomIt
 	var b models.BomItem
 	err := r.db.WithContext(ctx).First(&b, bomID).Error
 	return one(&b, err, "bom item")
+}
+
+func (r *repository) GetBomByItemAndVersion(ctx context.Context, itemID int64, version int) (*models.BomItem, error) {
+	var b models.BomItem
+	err := r.db.WithContext(ctx).Where("item_id = ? AND version = ?", itemID, version).First(&b).Error
+	return one(&b, err, "bom item")
+}
+
+func (r *repository) GetBomVersionsByItemID(ctx context.Context, itemID int64) ([]models.BomItem, error) {
+	var items []models.BomItem
+	if err := r.db.WithContext(ctx).Where("item_id = ?", itemID).Order("version ASC").Find(&items).Error; err != nil {
+		return nil, apperror.InternalWrap("GetBomVersionsByItemID", err)
+	}
+	return items, nil
 }
 
 func (r *repository) GetBomLines(ctx context.Context, bomItemID int64) ([]models.BomLine, error) {
