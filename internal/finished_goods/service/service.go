@@ -30,6 +30,7 @@ type IService interface {
 	ListCreateUniqOptions(ctx context.Context, q string, limit int) (*fgModels.FGCreateUniqOptionsResponse, error)
 	GetFinishedGoodsByID(ctx context.Context, id int64) (*fgModels.FinishedGoodsItem, error)
 	CreateFinishedGoods(ctx context.Context, req fgModels.CreateFinishedGoodsRequest, createdBy string) (*fgModels.FinishedGoodsItem, error)
+	BulkCreateFinishedGoods(ctx context.Context, req fgModels.BulkCreateFinishedGoodsRequest, createdBy string) (*fgModels.FGBulkCreateResponse, error)
 	UpdateFinishedGoods(ctx context.Context, id int64, req fgModels.UpdateFinishedGoodsRequest, updatedBy string) (*fgModels.FinishedGoodsItem, error)
 }
 
@@ -334,33 +335,32 @@ func (s *service) ListCreateUniqOptions(ctx context.Context, q string, limit int
 	rows := make([]row, 0, limit)
 	err := s.db.WithContext(ctx).Raw(`
 		SELECT
-			bi.uniq_code,
-			MAX(bi.part_number) AS part_number,
-			MAX(bi.part_name) AS part_name,
-			NULL::text AS model,
-			wo.wo_number AS last_wo_number,
-			MAX(kp.kanban_qty) AS kanban_qty,
-			MAX(kp.min_stock) AS min_threshold,
-			MAX(kp.max_stock) AS max_threshold
-		FROM bom_items bi
+			kp.item_uniq_code   AS uniq_code,
+			woi.part_number     AS part_number,
+			woi.part_name       AS part_name,
+			i.model             AS model,
+			w.wo_number         AS last_wo_number,
+			kp.kanban_qty       AS kanban_qty,
+			kp.min_stock        AS min_threshold,
+			kp.max_stock        AS max_threshold
+		FROM kanban_parameters kp
 		LEFT JOIN LATERAL (
-			SELECT w.wo_number
-			FROM work_orders w
-			WHERE w.uniq_code = bi.uniq_code AND w.deleted_at IS NULL
-			ORDER BY w.created_at DESC
+			SELECT woi2.part_number, woi2.part_name, woi2.wo_id
+			FROM work_order_items woi2
+			WHERE woi2.item_uniq_code = kp.item_uniq_code
+			ORDER BY woi2.created_at DESC
 			LIMIT 1
-		) wo ON TRUE
-		LEFT JOIN kanban_parameters kp
-			ON kp.item_uniq_code = bi.uniq_code
-			AND kp.deleted_at IS NULL
-			AND kp.status ILIKE 'active'
-		WHERE bi.deleted_at IS NULL
+		) woi ON TRUE
+		LEFT JOIN work_orders w ON w.id = woi.wo_id
+		LEFT JOIN items i
+			ON i.uniq_code = kp.item_uniq_code
+			AND i.deleted_at IS NULL
+		WHERE kp.status ILIKE 'active'
 			AND ($1 = ''
-				OR bi.uniq_code ILIKE '%' || $1 || '%'
-				OR COALESCE(bi.part_name, '') ILIKE '%' || $1 || '%'
-				OR COALESCE(bi.part_number, '') ILIKE '%' || $1 || '%')
-		GROUP BY bi.uniq_code, wo.wo_number
-		ORDER BY bi.uniq_code
+				OR kp.item_uniq_code           ILIKE $1 || '%'
+				OR COALESCE(woi.part_name, '')  ILIKE $1 || '%'
+				OR COALESCE(woi.part_number, '') ILIKE $1 || '%')
+		ORDER BY kp.item_uniq_code
 		LIMIT $2
 	`, q, limit).Scan(&rows).Error
 	if err != nil {
@@ -401,32 +401,34 @@ func (s *service) GetFinishedGoodsByID(ctx context.Context, id int64) (*fgModels
 // ---------------------------------------------------------------------------
 
 func (s *service) CreateFinishedGoods(ctx context.Context, req fgModels.CreateFinishedGoodsRequest, createdBy string) (*fgModels.FinishedGoodsItem, error) {
-	// Look up BOM item for part details and kanban parameters
+	// Look up part details + last WO + initial quantity from work_order_items
 	type bomRow struct {
-		PartNumber *string `gorm:"column:part_number"`
-		PartName   string  `gorm:"column:part_name"`
-		Model      *string `gorm:"column:model"`
+		PartNumber *string  `gorm:"column:part_number"`
+		PartName   *string  `gorm:"column:part_name"`
+		Model      *string  `gorm:"column:model"`
+		WONumber   *string  `gorm:"column:wo_number"`
+		Quantity   float64  `gorm:"column:quantity"`
 	}
 	var bom bomRow
 	_ = s.db.WithContext(ctx).Raw(`
-		SELECT part_number, part_name, NULL AS model
-		FROM bom_items
-		WHERE uniq_code = ? AND deleted_at IS NULL
+		SELECT woi.part_number, woi.part_name, i.model, w.wo_number, woi.quantity
+		FROM work_order_items woi
+		JOIN work_orders w ON w.id = woi.wo_id
+		LEFT JOIN items i ON i.uniq_code = woi.item_uniq_code AND i.deleted_at IS NULL
+		WHERE woi.item_uniq_code = ?
+		ORDER BY w.created_at DESC
 		LIMIT 1
 	`, req.UniqCode).Scan(&bom)
 
-	// Look up last WO for this uniq
 	var woNumber *string
-	var woResult struct {
-		WONumber string `gorm:"column:wo_number"`
+	if req.WONumberOverride != nil && *req.WONumberOverride != "" {
+		woNumber = req.WONumberOverride
+	} else if bom.WONumber != nil && *bom.WONumber != "" {
+		woNumber = bom.WONumber
 	}
-	if err := s.db.WithContext(ctx).Raw(`
-		SELECT wo_number FROM work_orders
-		WHERE uniq_code = ? AND deleted_at IS NULL
-		ORDER BY created_at DESC LIMIT 1
-	`, req.UniqCode).Scan(&woResult).Error; err == nil && woResult.WONumber != "" {
-		woNumber = &woResult.WONumber
-	}
+
+	// Initial stock from WO item quantity; bulk upload can override via StockQty
+	initialStock := bom.Quantity
 
 	// Look up kanban parameters
 	type kanbanRow struct {
@@ -456,19 +458,66 @@ func (s *service) CreateFinishedGoods(ctx context.Context, req fgModels.CreateFi
 		maxThreshold = &kanban.MaxStock
 	}
 
-	stockToComplete := computeStockToComplete(0, safetyStockQty)
-	kanbanCount := computeKanbanCount(0, kanbanStandardQty)
-	status := computeStatus(0, minThreshold, maxThreshold)
-
 	now := time.Now()
+
+	// Check if record already exists (including soft-deleted) — upsert behaviour
+	var existing fgModels.FinishedGoods
+	err := s.db.WithContext(ctx).
+		Unscoped().
+		Where("uniq_code = ?", req.UniqCode).
+		First(&existing).Error
+
+	if err == nil {
+		// Record exists: restore if soft-deleted, update warehouse + kanban params
+		stockToComplete := computeStockToComplete(existing.StockQty, safetyStockQty)
+		kanbanCount := computeKanbanCount(existing.StockQty, kanbanStandardQty)
+		status := computeStatus(existing.StockQty, minThreshold, maxThreshold)
+
+		updates := map[string]interface{}{
+			"deleted_at":              nil,
+			"warehouse_location":      req.WarehouseLocation,
+			"wo_number":               woNumber,
+			"part_number":             bom.PartNumber,
+			"part_name":               bom.PartName,
+			"model":                   bom.Model,
+			"kanban_standard_qty":     kanbanStandardQty,
+			"min_threshold":           minThreshold,
+			"max_threshold":           maxThreshold,
+			"safety_stock_qty":        safetyStockQty,
+			"kanban_count":            kanbanCount,
+			"stock_to_complete_kanban": stockToComplete,
+			"status":                  status,
+			"updated_by":              createdBy,
+			"updated_at":              now,
+		}
+		if err := s.db.WithContext(ctx).Unscoped().Model(&fgModels.FinishedGoods{}).
+			Where("uniq_code = ?", req.UniqCode).
+			Updates(updates).Error; err != nil {
+			return nil, apperror.InternalWrap("fg upsert update", err)
+		}
+		existing.WarehouseLocation = &req.WarehouseLocation
+		existing.WONumber = woNumber
+		existing.KanbanStandardQty = kanbanStandardQty
+		existing.MinThreshold = minThreshold
+		existing.MaxThreshold = maxThreshold
+		existing.SafetyStockQty = safetyStockQty
+		existing.DeletedAt = nil
+		return toItem(&existing), nil
+	}
+
+	// New record — initial stock from WO item quantity
+	stockToComplete := computeStockToComplete(initialStock, safetyStockQty)
+	kanbanCount := computeKanbanCount(initialStock, kanbanStandardQty)
+	status := computeStatus(initialStock, minThreshold, maxThreshold)
+
 	fg := &fgModels.FinishedGoods{
 		UniqCode:              req.UniqCode,
 		PartNumber:            bom.PartNumber,
-		PartName:              &bom.PartName,
+		PartName:              bom.PartName,
 		Model:                 bom.Model,
 		WONumber:              woNumber,
 		WarehouseLocation:     &req.WarehouseLocation,
-		StockQty:              0,
+		StockQty:              initialStock,
 		KanbanCount:           kanbanCount,
 		KanbanStandardQty:     kanbanStandardQty,
 		MinThreshold:          minThreshold,
@@ -486,15 +535,14 @@ func (s *service) CreateFinishedGoods(ctx context.Context, req fgModels.CreateFi
 		return nil, err
 	}
 
-	// Append movement log (initial entry, qty_change = 0)
 	src := "manual"
 	_ = s.repo.AppendMovementLog(ctx, &fgModels.FGMovementLog{
 		FgID:         fg.ID,
 		UniqCode:     fg.UniqCode,
 		MovementType: "manual_add",
-		QtyChange:    0,
+		QtyChange:    initialStock,
 		QtyBefore:    0,
-		QtyAfter:     0,
+		QtyAfter:     initialStock,
 		SourceFlag:   &src,
 		WONumber:     fg.WONumber,
 		LoggedBy:     &createdBy,
@@ -502,6 +550,58 @@ func (s *service) CreateFinishedGoods(ctx context.Context, req fgModels.CreateFi
 	})
 
 	return toItem(fg), nil
+}
+
+// ---------------------------------------------------------------------------
+// Bulk Create
+// ---------------------------------------------------------------------------
+
+func (s *service) BulkCreateFinishedGoods(ctx context.Context, req fgModels.BulkCreateFinishedGoodsRequest, createdBy string) (*fgModels.FGBulkCreateResponse, error) {
+	results := make([]fgModels.FGBulkCreateResult, 0, len(req.Items))
+	created := 0
+	failed := 0
+
+	for i, item := range req.Items {
+		singleReq := fgModels.CreateFinishedGoodsRequest{
+			UniqCode:          item.UniqCode,
+			WarehouseLocation: item.WarehouseLocation,
+			WONumberOverride:  item.WONumber,
+		}
+		fg, err := s.CreateFinishedGoods(ctx, singleReq, createdBy)
+		if err != nil {
+			failed++
+			errMsg := err.Error()
+			results = append(results, fgModels.FGBulkCreateResult{
+				Index:    i,
+				UniqCode: item.UniqCode,
+				Status:   "failed",
+				Error:    &errMsg,
+			})
+			continue
+		}
+
+		// Apply initial stock_qty from review step if provided
+		if item.StockQty != nil && *item.StockQty > 0 {
+			stockReq := fgModels.UpdateFinishedGoodsRequest{StockQty: item.StockQty}
+			fg, _ = s.UpdateFinishedGoods(ctx, fg.ID, stockReq, createdBy)
+		}
+
+		created++
+		uuidStr := fg.UUID
+		results = append(results, fgModels.FGBulkCreateResult{
+			Index:    i,
+			UniqCode: item.UniqCode,
+			Status:   "created",
+			ID:       &fg.ID,
+			UUID:     &uuidStr,
+		})
+	}
+
+	return &fgModels.FGBulkCreateResponse{
+		Created: created,
+		Failed:  failed,
+		Results: results,
+	}, nil
 }
 
 // ---------------------------------------------------------------------------
