@@ -34,6 +34,7 @@ type CustomerOrderDocumentItem struct {
 	PartName     string     `gorm:"size:255;not null" json:"part_name"`
 	PartNumber   string     `gorm:"size:128;not null" json:"part_number"`
 	Model        *string    `gorm:"size:255" json:"model"`
+	UOM          string     `gorm:"size:64" json:"uom"`
 	Quantity     float64    `gorm:"type:numeric(15,4);not null" json:"quantity"`
 	DeliveryDate *time.Time `json:"delivery_date"`
 	CreatedAt    time.Time  `json:"created_at"`
@@ -46,4 +47,5 @@ type ItemSnapshot struct {
 	PartName   string  `gorm:"column:part_name"`
 	PartNumber *string `gorm:"column:part_number"`
 	Model      *string `gorm:"column:model"`
+	UOM        *string `gorm:"column:uom"`
 }

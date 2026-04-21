@@ -23,14 +23,15 @@ type CreateScheduleRequest struct {
 
 type CreateScheduleItem struct {
 	// CustomerOrderDocumentItemUUID is the UUID of the source item line from customer_order_document_items.
+	// When provided, service auto-resolves part_no, part_name, model, uom, total_order from DB.
 	CustomerOrderDocumentItemUUID string  `json:"customer_order_document_item_uuid"`
-	ItemUniqCode                string  `json:"item_uniq_code" validate:"required"`
-	PartNo                      string  `json:"part_no" validate:"required"`
-	PartName                    string  `json:"part_name" validate:"required"`
-	Model                       string  `json:"model"`
-	TotalOrder                  float64 `json:"total_order" validate:"required,gt=0"`
-	TotalDelivery               float64 `json:"total_delivery" validate:"required,gt=0"`
-	UOM                         string  `json:"uom" validate:"required"`
+	ItemUniqCode                  string  `json:"item_uniq_code" validate:"required"`
+	PartNo                        string  `json:"part_no"`
+	PartName                      string  `json:"part_name"`
+	Model                         string  `json:"model"`
+	TotalOrder                    float64 `json:"total_order"`
+	TotalDelivery                 float64 `json:"total_delivery" validate:"required,gt=0"`
+	UOM                           string  `json:"uom"`
 }
 
 type ApproveScheduleRequest struct {

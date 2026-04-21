@@ -30,6 +30,7 @@ type ItemResponse struct {
 	PartName     string     `json:"part_name"`
 	PartNumber   string     `json:"part_number"`
 	Model        *string    `json:"model"`
+	UOM          string     `json:"uom"`
 	Quantity     float64    `json:"quantity"`
 	DeliveryDate *time.Time `json:"delivery_date"`
 }
@@ -94,6 +95,7 @@ func ToDocumentResponse(d *CustomerOrderDocument) DocumentResponse {
 			PartName:     item.PartName,
 			PartNumber:   item.PartNumber,
 			Model:        item.Model,
+			UOM:          item.UOM,
 			Quantity:     item.Quantity,
 			DeliveryDate: item.DeliveryDate,
 		})
