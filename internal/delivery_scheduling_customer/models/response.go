@@ -43,7 +43,7 @@ type ScheduleRow struct {
 	PartName       string  `json:"part_name"`
 	Quantity       float64 `json:"quantity"`
 	Cycle          string  `json:"cycle"`
-	DNNumber       *string `json:"dn_number"`
+	DNNumber       string  `json:"dn_number"`
 	Status         string  `json:"status"`
 	ApprovalStatus string  `json:"approval_status"`
 }

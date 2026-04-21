@@ -121,16 +121,38 @@ func (s *service) CreateSchedule(ctx context.Context, req models.CreateScheduleR
 
 		items := make([]models.ScheduleItemCustomer, 0, len(req.Items))
 		for i, it := range req.Items {
-			// Resolve item UUID → integer ID
+			// Resolve item UUID → integer ID + auto-fill snapshot fields
 			var coItemID *int64
 			if it.CustomerOrderDocumentItemUUID != "" {
-				var resolvedItemID int64
+				var snap struct {
+					ID         int64   `gorm:"column:id"`
+					PartName   string  `gorm:"column:part_name"`
+					PartNumber string  `gorm:"column:part_number"`
+					Model      *string `gorm:"column:model"`
+					UOM        string  `gorm:"column:uom"`
+					Quantity   float64 `gorm:"column:quantity"`
+				}
 				if err := s.db.WithContext(ctx).
 					Table("customer_order_document_items").
-					Select("id").
+					Select("id, part_name, part_number, model, uom, quantity").
 					Where("uuid = ?", it.CustomerOrderDocumentItemUUID).
-					Scan(&resolvedItemID).Error; err == nil && resolvedItemID > 0 {
-					coItemID = &resolvedItemID
+					Scan(&snap).Error; err == nil && snap.ID > 0 {
+					coItemID = &snap.ID
+					if it.PartName == "" {
+						it.PartName = snap.PartName
+					}
+					if it.PartNo == "" {
+						it.PartNo = snap.PartNumber
+					}
+					if it.Model == "" && snap.Model != nil {
+						it.Model = *snap.Model
+					}
+					if it.UOM == "" {
+						it.UOM = snap.UOM
+					}
+					if it.TotalOrder == 0 {
+						it.TotalOrder = snap.Quantity
+					}
 				}
 			}
 
@@ -228,7 +250,7 @@ func (s *service) GetSchedulesList(ctx context.Context, f models.ScheduleListFil
 				PartName:       item.PartName,
 				Quantity:       item.TotalDeliveryQty,
 				Cycle:          derefStr(item.Cycle),
-				DNNumber:       item.DNNumber,
+				DNNumber:       derefStr(item.DNNumber),
 				Status:         sc.Status,
 				ApprovalStatus: sc.ApprovalStatus,
 			}

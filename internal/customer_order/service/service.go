@@ -78,6 +78,7 @@ func (s *service) Create(ctx context.Context, req models.CreateOrderRequest, cre
 			PartName:     snap.PartName,
 			PartNumber:   stringOrEmpty(snap.PartNumber),
 			Model:        snap.Model,
+			UOM:          stringOrEmpty(snap.UOM),
 			Quantity:     it.Quantity,
 		}
 
@@ -192,6 +193,7 @@ func (s *service) Update(ctx context.Context, id string, req models.UpdateOrderR
 			PartName:     snap.PartName,
 			PartNumber:   stringOrEmpty(snap.PartNumber),
 			Model:        snap.Model,
+			UOM:          stringOrEmpty(snap.UOM),
 			Quantity:     it.Quantity,
 		}
 		if it.DeliveryDate != "" && doc.DocumentType != "DN" {

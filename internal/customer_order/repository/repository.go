@@ -293,7 +293,7 @@ func (r *repository) GetItemSnapshot(ctx context.Context, uniqCode string) (*mod
 	var snap models.ItemSnapshot
 	err := r.db.WithContext(ctx).
 		Table("items").
-		Select("part_name, part_number, model").
+		Select("part_name, part_number, model, uom").
 		Where("uniq_code = ?", uniqCode).
 		Scan(&snap).Error
 	if err != nil {
