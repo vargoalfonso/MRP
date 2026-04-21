@@ -171,30 +171,36 @@ type RoutingOperationTooling struct {
 func (RoutingOperationTooling) TableName() string { return "routing_operation_toolings" }
 
 type BomItem struct {
-	ID          int64     `gorm:"primaryKey;autoIncrement"`
-	UUID        uuid.UUID `gorm:"type:uuid;uniqueIndex;not null"`
-	ItemID      int64     `gorm:"not null;index"`
-	Version     int       `gorm:"default:1"`
-	Status      string    `gorm:"size:20;default:Draft"`
-	Description *string   `gorm:"type:text"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID                 int64      `gorm:"primaryKey;autoIncrement"`
+	UUID               uuid.UUID  `gorm:"type:uuid;uniqueIndex;not null"`
+	ItemID             int64      `gorm:"not null;index"`
+	RootItemRevisionID *int64     `gorm:"column:root_item_revision_id;index"`
+	CopiedFromBomID    *int64     `gorm:"column:copied_from_bom_id;index"`
+	Version            int        `gorm:"default:1"`
+	Status             string     `gorm:"size:20;default:Draft"`
+	Description        *string    `gorm:"type:text"`
+	ChangeNote         *string    `gorm:"column:change_note;type:text"`
+	CreatedBy          *uuid.UUID `gorm:"column:created_by;type:uuid"`
+	IsCurrent          bool       `gorm:"column:is_current;default:false"`
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 func (BomItem) TableName() string { return "bom_item" }
 
 type BomLine struct {
-	ID           int64   `gorm:"primaryKey;autoIncrement"`
-	BomItemID    int64   `gorm:"not null;index"`
-	ParentItemID int64   `gorm:"not null;index"`
-	ChildItemID  int64   `gorm:"not null;index"`
-	Level        int16   `gorm:"default:1"`
-	QtyPerUniq   float64 `gorm:"type:numeric(18,6);default:1"`
-	Uom          *string `gorm:"column:uom;size:32"`
-	ScrapFactor  float64 `gorm:"type:numeric(9,6);default:0"`
-	IsPhantom    bool    `gorm:"default:false"`
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID                  int64   `gorm:"primaryKey;autoIncrement"`
+	BomItemID           int64   `gorm:"not null;index"`
+	ParentItemID        int64   `gorm:"not null;index"`
+	ChildItemID         int64   `gorm:"not null;index"`
+	Level               int16   `gorm:"default:1"`
+	QtyPerUniq          float64 `gorm:"type:numeric(18,6);default:1"`
+	Uom                 *string `gorm:"column:uom;size:32"`
+	ChildItemRevisionID *int64  `gorm:"column:child_item_revision_id;index"`
+	ScrapFactor         float64 `gorm:"type:numeric(9,6);default:0"`
+	IsPhantom           bool    `gorm:"default:false"`
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 func (BomLine) TableName() string { return "bom_lines" }
