@@ -26,6 +26,30 @@ func parseID(ctx *app.Context) (int64, bool) {
 	return id, true
 }
 
+// GetFormOptions returns raw material options for the create outgoing form autocomplete.
+// FE hits this when user types in the RM Code / uniq field to pre-fill rm_name, uom, and current stock.
+//
+//	GET /api/v1/outgoing-raw-materials/form-options?q=LV3&limit=20
+func (h *HTTPHandler) GetFormOptions(ctx *app.Context) *app.CostumeResponse {
+	q := ctx.Query("q")
+	limit := 20
+	if v := ctx.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	data, err := h.svc.SearchRawMaterials(ctx.Request.Context(), q, limit)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
 // ListOutgoingRM returns paginated outgoing RM transactions.
 //
 //	GET /api/v1/outgoing-raw-materials?date_from=2024-01-01&date_to=2024-12-31&reason=Production+Use&uniq=RM-PL-689795&limit=20&page=1

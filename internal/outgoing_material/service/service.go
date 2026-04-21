@@ -20,6 +20,8 @@ type IService interface {
 	List(ctx context.Context, p pagination.OutgoingRMPaginationInput) (*outModels.OutgoingRMListResponse, error)
 	GetByID(ctx context.Context, id int64) (*outModels.OutgoingRMItem, error)
 	Create(ctx context.Context, req outModels.CreateOutgoingRMRequest, createdBy string) (*outModels.OutgoingRMItem, error)
+	// SearchRawMaterials returns raw material options for the create form autocomplete.
+	SearchRawMaterials(ctx context.Context, q string, limit int) ([]outModels.FormOptionItem, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +106,26 @@ func (s *service) Create(ctx context.Context, req outModels.CreateOutgoingRMRequ
 	s.appendMovementLog(ctx, orm)
 	item := modelToItem(orm)
 	return &item, nil
+}
+
+func (s *service) SearchRawMaterials(ctx context.Context, q string, limit int) ([]outModels.FormOptionItem, error) {
+	rows, err := s.repo.SearchRawMaterials(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]outModels.FormOptionItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, outModels.FormOptionItem{
+			ID:                r.ID,
+			UniqCode:          r.UniqCode,
+			PartNumber:        r.PartNumber,
+			PartName:          r.PartName,
+			UOM:               r.UOM,
+			StockQty:          r.StockQty,
+			WarehouseLocation: r.WarehouseLocation,
+		})
+	}
+	return items, nil
 }
 
 // appendMovementLog writes one row to inventory_movement_logs. Non-fatal — errors are swallowed.

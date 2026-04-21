@@ -57,9 +57,23 @@ type OutgoingRow struct {
 // Interface
 // ---------------------------------------------------------------------------
 
+// RMFormOptionRow is a minimal projection from raw_materials used for autocomplete.
+type RMFormOptionRow struct {
+	ID                int64    `gorm:"column:id"`
+	UniqCode          string   `gorm:"column:uniq_code"`
+	PartNumber        *string  `gorm:"column:part_number"`
+	PartName          *string  `gorm:"column:part_name"`
+	UOM               *string  `gorm:"column:uom"`
+	StockQty          float64  `gorm:"column:stock_qty"`
+	WarehouseLocation *string  `gorm:"column:warehouse_location"`
+}
+
 type IRepository interface {
 	List(ctx context.Context, f ListFilter) ([]OutgoingRow, int64, error)
 	GetByID(ctx context.Context, id int64) (*outModels.OutgoingRawMaterial, error)
+	// SearchRawMaterials queries raw_materials for autocomplete on the create form.
+	// Searches uniq_code, part_name, and part_number. Returns up to limit rows.
+	SearchRawMaterials(ctx context.Context, q string, limit int) ([]RMFormOptionRow, error)
 	// ProcessTx runs the outgoing transaction atomically:
 	// 1. Locks and reads raw_materials stock for the given uniq code.
 	// 2. Validates stock >= quantity_out.
@@ -205,4 +219,23 @@ func (r *repo) ProcessTx(ctx context.Context, orm *outModels.OutgoingRawMaterial
 	}
 
 	return tx.Commit().Error
+}
+
+func (r *repo) SearchRawMaterials(ctx context.Context, q string, limit int) ([]RMFormOptionRow, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	query := r.db.WithContext(ctx).
+		Table("raw_materials").
+		Select("id, uniq_code, part_number, part_name, uom, stock_qty, warehouse_location").
+		Where("deleted_at IS NULL")
+	if q != "" {
+		s := "%" + q + "%"
+		query = query.Where("uniq_code ILIKE ? OR part_name ILIKE ? OR part_number ILIKE ?", s, s, s)
+	}
+	var rows []RMFormOptionRow
+	if err := query.Order("uniq_code ASC").Limit(limit).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
