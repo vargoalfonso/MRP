@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/ganasa18/go-template/internal/action_ui/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
@@ -24,6 +25,9 @@ type IProductionRepository interface {
 	InsertRawMaterial(ctx context.Context, rm models.RawMaterialLog) error
 	InsertQCLog(ctx context.Context, qc models.QCLog) error
 	InsertFinishedGoods(ctx context.Context, fg models.FinishedGoods) error
+
+	IsQCPendingExist(ctx context.Context, woItemID int64, process string) (bool, error)
+	CreateQC(ctx context.Context, qc *models.QCTask) error
 }
 
 type productionRepo struct {
@@ -193,4 +197,22 @@ func (r *productionRepo) InsertQCLog(ctx context.Context, qc models.QCLog) error
 func (r *productionRepo) InsertFinishedGoods(ctx context.Context, fg models.FinishedGoods) error {
 	return r.db.WithContext(ctx).
 		Create(&fg).Error
+}
+
+func (r *productionRepo) IsQCPendingExist(ctx context.Context, woItemID int64, process string) (bool, error) {
+	var count int64
+
+	err := r.db.WithContext(ctx).
+		Table("qc_tasks").
+		Where("task_type = ?", "production_qc").
+		Where("status = ?", "pending").
+		Where("round_results->>'process_name' = ?", process).
+		Where("round_results->>'wo_id' = ?", fmt.Sprintf("%d", woItemID)).
+		Count(&count).Error
+
+	return count > 0, err
+}
+
+func (r *productionRepo) CreateQC(ctx context.Context, qc *models.QCTask) error {
+	return r.db.WithContext(ctx).Create(qc).Error
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/ganasa18/go-template/internal/action_ui/models"
 	"github.com/ganasa18/go-template/internal/action_ui/repository"
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 )
 
 type IService interface {
@@ -40,10 +42,11 @@ type IService interface {
 type service struct {
 	repo           repository.IRepository
 	repoProduction repository.IProductionRepository
+	repoIncoming   repository.IIncomingRepository
 }
 
-func New(repo repository.IRepository, repoProduction repository.IProductionRepository) IService {
-	return &service{repo: repo, repoProduction: repoProduction}
+func New(repo repository.IRepository, repoProduction repository.IProductionRepository, repoIncoming repository.IIncomingRepository) IService {
+	return &service{repo: repo, repoProduction: repoProduction, repoIncoming: repoIncoming}
 }
 
 func (s *service) LookupByPackingNumber(ctx context.Context, packingNumber, itemUniqCode string) (*models.IncomingScanDNItem, error) {
@@ -233,7 +236,47 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 	item.ScanInCount++
 	item.LastScannedProcess = currentProcess
 
+	err = s.createQCTaskIfNeeded(ctx, item, log, req)
+	if err != nil {
+		return err
+	}
+
 	return s.repoProduction.UpdateWOItem(ctx, item)
+}
+
+func (s *service) createQCTaskIfNeeded(ctx context.Context, item models.WorkOrderItem, log models.ProductionScanLog, req dto.ScanInRequest) error {
+
+	// 🔒 cek sudah ada QC pending belum (anti duplicate)
+	exist, err := s.repoProduction.IsQCPendingExist(ctx, item.ID, log.ProcessName)
+	if err != nil {
+		return err
+	}
+	if exist {
+		return nil // sudah ada, skip
+	}
+
+	qc := models.QCTask{
+		TaskType: "production_qc",
+		Status:   "pending",
+
+		// optional kalau mau link ke WO item
+		// IncomingDNItemID: nil,
+
+		Round: 1,
+
+		// 🔥 simpan info tambahan ke JSON
+		RoundResults: datatypes.JSON([]byte(fmt.Sprintf(`{
+			"kanban_number": "%s",
+			"process_name": "%s",
+			"wo_id": %d,
+			"qty": %f
+		}`, item.KanbanNumber, log.ProcessName, item.WOID, log.QtyInput))),
+
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	return s.repoProduction.CreateQC(ctx, &qc)
 }
 
 func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
@@ -447,3 +490,68 @@ func getCurrentIndex(step int, total int) int {
 
 	return idx
 }
+
+// func (s *service) ScanIncoming(ctx context.Context, req dto.IncomingScanRequest) error {
+
+// 	// =============================
+// 	// 🔒 IDEMPOTENCY CHECK
+// 	// =============================
+// 	exist, err := s.repoIncoming.IsIdempotentExist(ctx, req.IdempotencyKey)
+// 	if err != nil {
+// 		return err
+// 	}
+// 	if exist {
+// 		return nil // already processed
+// 	}
+
+// 	// =============================
+// 	// 🔍 VALIDATE DN ITEM
+// 	// =============================
+// 	_, err = s.repoIncoming.GetDNItem(ctx, req.DNItemID)
+// 	if err != nil {
+// 		return errors.New("DN item not found")
+// 	}
+
+// 	// =============================
+// 	// 📝 INSERT SCAN
+// 	// =============================
+// 	scan := models.IncomingReceivingScan{
+// 		IncomingDNItemID:  req.DNItemID,
+// 		IdempotencyKey:    req.IdempotencyKey,
+// 		ScanRef:           req.ScanRef,
+// 		Qty:               req.Qty,
+// 		WeightKg:          req.WeightKg,
+// 		ScannedAt:         time.Now(),
+// 		ScannedBy:         req.ScannedBy,
+// 		WarehouseLocation: req.Warehouse,
+// 		Status:            "pending",
+// 	}
+
+// 	if err := s.repoIncoming.InsertScan(ctx, &scan); err != nil {
+// 		return err
+// 	}
+
+// 	// =============================
+// 	// 🧪 CREATE QC TASK
+// 	// =============================
+// 	qc := models.QCTask{
+// 		TaskType:         "incoming_qc",
+// 		Status:           "pending",
+// 		IncomingDNItemID: &req.DNItemID,
+// 		CreatedAt:        time.Now(),
+// 		UpdatedAt:        time.Now(),
+// 	}
+
+// 	if err := s.repoIncoming.CreateQCTask(ctx, &qc); err != nil {
+// 		return err
+// 	}
+
+// 	// =============================
+// 	// 🔗 LINK QC → SCAN
+// 	// =============================
+// 	if err := s.repoIncoming.AttachQCToScan(ctx, scan.ID, qc.ID); err != nil {
+// 		return err
+// 	}
+
+// 	return nil
+// }
