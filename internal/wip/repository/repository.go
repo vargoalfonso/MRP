@@ -14,7 +14,7 @@ type IWIPRepository interface {
 	Rollback() error
 
 	// WIP
-	FindAllWIPPaginated(ctx context.Context, page, limit int) ([]models.WIP, int64, error)
+	FindAllWIPPaginated(ctx context.Context, page, limit int) ([]models.WIPListResponse, int64, error)
 	FindWIPByID(ctx context.Context, id int64) (*models.WIP, error)
 	CreateWIP(ctx context.Context, req models.CreateWIPRequest) (*models.WIP, error)
 	UpdateWIP(ctx context.Context, id int64, req models.UpdateWIPRequest) (*models.WIP, error)
@@ -54,21 +54,54 @@ func (r *repository) Rollback() error {
 	return r.db.Rollback().Error
 }
 
-func (r *repository) FindAllWIPPaginated(ctx context.Context, page, limit int) ([]models.WIP, int64, error) {
-	var data []models.WIP
+func (r *repository) FindAllWIPPaginated(ctx context.Context, page, limit int) ([]models.WIPListResponse, int64, error) {
+	var data []models.WIPListResponse
 	var total int64
 
 	db := r.db.WithContext(ctx)
 
-	db.Model(&models.WIP{}).Count(&total)
-
+	// count total (pakai join juga biar konsisten)
 	err := db.
+		Table("wips").
+		Joins("JOIN wip_items ON wips.id = wip_items.wip_id").
+		Joins("JOIN work_orders ON wips.wo_id = work_orders.id").
+		Joins("JOIN items ON wip_items.uniq = items.uniq_code").
+		Joins("JOIN kanban_parameters ON wip_items.uniq = kanban_parameters.item_uniq_code").
+		Count(&total).Error
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// ambil data
+	err = db.
+		Table("wips").
+		Select(`
+			wip_items.process_name AS process,
+			wip_items.uniq AS uniq,
+			items.part_number AS part_number,
+			items.part_name AS part_info,
+			work_orders.wo_number AS wo_number,
+			wip_items.stock AS stock,
+			wip_items.packing_number AS kanban_number,
+			wip_items.wip_type AS type,
+			kanban_parameters.kanban_qty AS stock_to_complete_kanban,
+			kanban_parameters.kanban_qty AS kanban
+		`).
+		Joins("JOIN wip_items ON wips.id = wip_items.wip_id").
+		Joins("JOIN work_orders ON wips.wo_id = work_orders.id").
+		Joins("JOIN items ON wip_items.uniq = items.uniq_code").
+		Joins("JOIN kanban_parameters ON wip_items.uniq = kanban_parameters.item_uniq_code").
+		Order("wips.created_at DESC").
 		Offset((page - 1) * limit).
 		Limit(limit).
-		Order("created_at DESC").
-		Find(&data).Error
+		Scan(&data).Error
 
-	return data, total, err
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return data, total, nil
 }
 
 func (r *repository) FindWIPByID(ctx context.Context, id int64) (*models.WIP, error) {

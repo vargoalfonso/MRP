@@ -46,7 +46,7 @@ func (h *HTTPHandler) GetAll(appCtx *app.Context) *app.CostumeResponse {
 		Status:    http.StatusOK,
 		Message:   "Success",
 		Data: map[string]interface{}{
-			"data":  data,
+			"items": data,
 			"total": total,
 			"page":  page,
 			"limit": limit,
