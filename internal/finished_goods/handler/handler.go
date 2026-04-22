@@ -114,6 +114,32 @@ func (h *HTTPHandler) ListFinishedGoods(ctx *app.Context) *app.CostumeResponse {
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/v1/finished-goods/parameterized-summary?uniq_code=...
+// ---------------------------------------------------------------------------
+
+func (h *HTTPHandler) GetParameterizedSummary(ctx *app.Context) *app.CostumeResponse {
+	uniqCode := strings.TrimSpace(ctx.Query("uniq_code"))
+	if uniqCode == "" {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "uniq_code is required",
+		}
+	}
+
+	data, err := h.svc.GetParameterizedSummary(ctx.Request.Context(), uniqCode)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/v1/finished-goods/form-options/uniq
 // ---------------------------------------------------------------------------
 
@@ -193,6 +219,41 @@ func (h *HTTPHandler) CreateFinishedGoods(ctx *app.Context) *app.CostumeResponse
 
 	user := userPkg.MustExtractUserContext(ctx)
 	data, err := h.svc.CreateFinishedGoods(ctx.Request.Context(), req, user.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusCreated,
+		Message:   http.StatusText(http.StatusCreated),
+		Data:      data,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/finished-goods/bulk
+// ---------------------------------------------------------------------------
+
+func (h *HTTPHandler) BulkCreateFinishedGoods(ctx *app.Context) *app.CostumeResponse {
+	var req fgModels.BulkCreateFinishedGoodsRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   err.Error(),
+		}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      errs,
+		}
+	}
+
+	user := userPkg.MustExtractUserContext(ctx)
+	data, err := h.svc.BulkCreateFinishedGoods(ctx.Request.Context(), req, user.UserID)
 	if err != nil {
 		return app.NewError(ctx, err)
 	}

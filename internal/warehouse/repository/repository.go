@@ -2,12 +2,45 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/ganasa18/go-template/internal/warehouse/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
+
+func wrapWarehouseDBError(msg string, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		lowerMsg := strings.ToLower(pgErr.Message)
+
+		// Undefined table (migration not applied).
+		if pgErr.Code == "42P01" && strings.Contains(lowerMsg, "warehouse") {
+			return apperror.BadRequest(
+				"warehouse table is missing in DB; run migration scripts/migrations/0035_create_warehouse_up.sql",
+			)
+		}
+
+		// Undefined column (schema mismatch).
+		if pgErr.Code == "42703" {
+			return apperror.BadRequest(
+				"warehouse table schema is out of date (missing column); run migration scripts/migrations/0046_warehouse_sync_schema_up.sql",
+			)
+		}
+
+		// Unique constraint violation.
+		if pgErr.Code == "23505" {
+			if strings.Contains(pgErr.ConstraintName, "warehouse_name_plant_key") {
+				return apperror.Conflict("warehouse_name already exists for this plant_id")
+			}
+			return apperror.Conflict("duplicate value violates unique constraint")
+		}
+	}
+
+	return apperror.InternalWrap(msg, err)
+}
 
 type IRepository interface {
 	Create(ctx context.Context, warehouse *models.Warehouse) error
@@ -27,7 +60,7 @@ func New(db *gorm.DB) IRepository {
 
 func (r *repository) Create(ctx context.Context, warehouse *models.Warehouse) error {
 	if err := r.db.WithContext(ctx).Create(warehouse).Error; err != nil {
-		return apperror.InternalWrap("create warehouse failed", err)
+		return wrapWarehouseDBError("create warehouse failed", err)
 	}
 	return nil
 }
@@ -38,7 +71,7 @@ func (r *repository) FindByUUID(ctx context.Context, uuid string) (*models.Wareh
 		if err == gorm.ErrRecordNotFound {
 			return nil, apperror.NotFound("warehouse not found")
 		}
-		return nil, apperror.InternalWrap("find warehouse failed", err)
+		return nil, wrapWarehouseDBError("find warehouse failed", err)
 	}
 	return &warehouse, nil
 }
@@ -59,12 +92,12 @@ func (r *repository) List(ctx context.Context, filters models.WarehouseListFilte
 
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, apperror.InternalWrap("count warehouses failed", err)
+		return nil, 0, wrapWarehouseDBError("count warehouses failed", err)
 	}
 
 	var items []models.Warehouse
 	if err := query.Order("created_at DESC").Limit(filters.Limit).Offset(filters.Offset).Find(&items).Error; err != nil {
-		return nil, 0, apperror.InternalWrap("list warehouses failed", err)
+		return nil, 0, wrapWarehouseDBError("list warehouses failed", err)
 	}
 
 	return items, total, nil
@@ -72,14 +105,14 @@ func (r *repository) List(ctx context.Context, filters models.WarehouseListFilte
 
 func (r *repository) Update(ctx context.Context, warehouse *models.Warehouse) error {
 	if err := r.db.WithContext(ctx).Save(warehouse).Error; err != nil {
-		return apperror.InternalWrap("update warehouse failed", err)
+		return wrapWarehouseDBError("update warehouse failed", err)
 	}
 	return nil
 }
 
 func (r *repository) Delete(ctx context.Context, warehouse *models.Warehouse) error {
 	if err := r.db.WithContext(ctx).Delete(warehouse).Error; err != nil {
-		return apperror.InternalWrap("delete warehouse failed", err)
+		return wrapWarehouseDBError("delete warehouse failed", err)
 	}
 	return nil
 }

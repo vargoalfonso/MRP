@@ -36,6 +36,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		uniqBOMGroup.DELETE("/:id", m.base.RunAction(m.handler.DeleteUniqBOM))
 
 		prlGroup := authenticated.Group("/prls")
+		prlGroup.POST("", m.base.RunAction(m.handler.CreatePRL))
 		prlGroup.POST("/bulk", m.base.RunAction(m.handler.BulkCreatePRLs))
 		prlGroup.GET("", m.base.RunAction(m.handler.ListPRLs))
 		prlGroup.GET("/:id", m.base.RunAction(m.handler.GetPRL))

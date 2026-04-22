@@ -12,12 +12,13 @@ type CreateScrapStockRequest struct {
 	Model         *string  `json:"model"`
 	PackingNumber *string  `json:"packing_number"`
 	WONumber      *string  `json:"wo_number"`
-	ScrapType     string   `json:"scrap_type"    validate:"required"`
-	Quantity      float64  `json:"quantity"      validate:"required,gt=0"`
-	UOM           *string  `json:"uom"`
-	WeightKg      *float64 `json:"weight_kg"`
-	DateReceived  *string  `json:"date_received"` // YYYY-MM-DD
-	Remarks       *string  `json:"remarks"`
+	ScrapType      string   `json:"scrap_type"       validate:"required"`
+	DisposalReason *string  `json:"disposal_reason"`
+	Quantity       float64  `json:"quantity"         validate:"required,gt=0"`
+	UOM            *string  `json:"uom"`
+	WeightKg       *float64 `json:"weight_kg"`
+	DateReceived   *string  `json:"date_received"` // YYYY-MM-DD
+	Remarks        *string  `json:"remarks"`
 }
 
 // ---------------------------------------------------------------------------
