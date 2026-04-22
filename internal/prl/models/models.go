@@ -1,7 +1,10 @@
 package models
 
 import (
+	"encoding/json"
+	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,7 +36,7 @@ type UniqBillOfMaterial struct {
 }
 
 type PRL struct {
-	ID             int64          `gorm:"primaryKey;autoIncrement" json:"-"`
+	ID             int64          `gorm:"primaryKey;autoIncrement" json:"row_id"`
 	UUID           string         `gorm:"uniqueIndex;not null" json:"id"`
 	PRLID          string         `gorm:"uniqueIndex;not null" json:"prl_id"`
 	CustomerUUID   string         `gorm:"index;not null" json:"customer_uuid"`
@@ -44,7 +47,7 @@ type PRL struct {
 	ProductModel   string         `gorm:"not null" json:"product_model"`
 	PartName       string         `gorm:"not null" json:"part_name"`
 	PartNumber     string         `gorm:"not null" json:"part_number"`
-	ForecastPeriod string         `gorm:"not null" json:"forecast_period"`
+	ForecastPeriod string         `gorm:"type:text;not null" json:"forecast_period"`
 	Quantity       int64          `gorm:"not null" json:"quantity"`
 	Status         string         `gorm:"not null;default:'pending'" json:"status"`
 	ApprovedAt     *time.Time     `gorm:"default:null" json:"approved_at,omitempty"`
@@ -74,12 +77,76 @@ type ListUniqBOMQuery struct {
 	Limit  int    `form:"limit"`
 }
 
+// CustomerUUIDInput supports either:
+//   - JSON number: 123            (interpreted as customers.id / row id)
+//   - JSON string: "<uuid>"      (interpreted as customers.uuid)
+//   - JSON string: "123"         (also treated as row id for convenience)
+type CustomerUUIDInput struct {
+	UUID  string
+	RowID int64
+	IsInt bool
+}
+
+func (c *CustomerUUIDInput) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		*c = CustomerUUIDInput{}
+		return nil
+	}
+
+	// Prefer string decoding first.
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			*c = CustomerUUIDInput{}
+			return nil
+		}
+		if id, convErr := strconv.ParseInt(s, 10, 64); convErr == nil {
+			c.UUID = ""
+			c.RowID = id
+			c.IsInt = true
+			return nil
+		}
+		c.UUID = s
+		c.RowID = 0
+		c.IsInt = false
+		return nil
+	}
+
+	// Fall back to number decoding.
+	var n json.Number
+	if err := json.Unmarshal(data, &n); err == nil {
+		id, convErr := n.Int64()
+		if convErr != nil {
+			return fmt.Errorf("customer_uuid must be an integer")
+		}
+		c.UUID = ""
+		c.RowID = id
+		c.IsInt = true
+		return nil
+	}
+
+	return fmt.Errorf("customer_uuid must be a string UUID or integer")
+}
+
+type CreatePRLRequest struct {
+	CustomerUUID   CustomerUUIDInput `json:"customer_uuid" validate:"-"`
+	CustomerCode   string            `json:"customer_code" validate:"omitempty,max=32"`
+	UniqCode       string            `json:"uniq_code" validate:"required,max=100"`
+	ProductModel   string            `json:"product_model" validate:"omitempty,max=255"`
+	PartName       string            `json:"part_name" validate:"omitempty,max=255"`
+	PartNumber     string            `json:"part_number" validate:"omitempty,max=150"`
+	ForecastPeriod string            `json:"forecast_period" validate:"required"`
+	Quantity       int64             `json:"quantity" validate:"required,gte=1"`
+}
+
 type CreatePRLEntryRequest struct {
-	CustomerUUID   string `json:"customer_uuid" validate:"omitempty,uuid4"`
-	CustomerCode   string `json:"customer_code" validate:"omitempty,max=32"`
-	UniqCode       string `json:"uniq_code" validate:"required,max=100"`
-	ForecastPeriod string `json:"forecast_period" validate:"required,max=7"`
-	Quantity       int64  `json:"quantity" validate:"required,gte=1"`
+	CustomerUUID   CustomerUUIDInput `json:"customer_uuid" validate:"-"`
+	CustomerCode   string            `json:"customer_code" validate:"omitempty,max=32"`
+	UniqCode       string            `json:"uniq_code" validate:"required,max=100"`
+	ForecastPeriod string            `json:"forecast_period" validate:"required"`
+	Quantity       int64             `json:"quantity" validate:"required,gte=1"`
 }
 
 type BulkCreatePRLRequest struct {
@@ -87,7 +154,7 @@ type BulkCreatePRLRequest struct {
 }
 
 type UpdatePRLRequest struct {
-	ForecastPeriod string `json:"forecast_period" validate:"required,max=7"`
+	ForecastPeriod string `json:"forecast_period" validate:"required"`
 	Quantity       int64  `json:"quantity" validate:"required,gte=1"`
 }
 

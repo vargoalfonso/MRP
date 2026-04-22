@@ -31,6 +31,7 @@ type BomTreeRow struct {
 	UniqCode   string       `json:"uniq_code"`
 	PartName   string       `json:"part_name"`
 	PartNumber *string      `json:"part_number"`
+	Model      *string      `json:"model"`
 	Asset      AssetInfo    `json:"asset"`
 	Level      interface{}  `json:"level"` // "Parent" | 1 | 2 | 3 | 4
 	QPU        *float64     `json:"qpu"`   // nil for parent
@@ -49,8 +50,11 @@ type ListBomResponse struct {
 // ---------------------------------------------------------------------------
 
 type ProcessRouteDetail struct {
+	RouteID       int64           `json:"route_id"`
 	OpSeq         int             `json:"op_seq"`
+	ProcessID     int64           `json:"process_id,omitempty"`
 	ProcessName   string          `json:"process_name"`
+	MachineID     *int64          `json:"machine_id,omitempty"`
 	MachineName   *string         `json:"machine_name"`
 	CycleTimeSec  *float64        `json:"cycle_time_sec"`
 	SetupTimeMin  *float64        `json:"setup_time_min"`
@@ -99,6 +103,9 @@ type BomDetailResponse struct {
 	BomID         int64                `json:"bom_id"`
 	BomVersion    int                  `json:"bom_version"`
 	BomStatus     string               `json:"bom_status"`
+	IsCurrent     bool                 `json:"is_current"`
+	ReadOnly      bool                 `json:"read_only"`
+	ChangeNote    *string              `json:"change_note"`
 	ID            int64                `json:"id"`
 	UniqCode      string               `json:"uniq_code"`
 	PartName      string               `json:"part_name"`
@@ -111,4 +118,53 @@ type BomDetailResponse struct {
 	ProcessRoutes []ProcessRouteDetail `json:"process_routes"`
 	MaterialSpec  *MaterialSpecDetail  `json:"material_spec"`
 	Children      []BomDetailChild     `json:"children"`
+}
+
+type BomVersionOption struct {
+	BomID      int64   `json:"bom_id"`
+	BomVersion int     `json:"bom_version"`
+	Label      string  `json:"label"`
+	BomStatus  string  `json:"bom_status"`
+	IsCurrent  bool    `json:"is_current"`
+	ReadOnly   bool    `json:"read_only"`
+	ChangeNote *string `json:"change_note"`
+	CreatedAt  string  `json:"created_at,omitempty"`
+	CreatedBy  *string `json:"created_by,omitempty"`
+}
+
+type BomVersionsResponse struct {
+	RootItemID     int64              `json:"root_item_id"`
+	RootItemCode   string             `json:"root_item_code"`
+	RootItemName   string             `json:"root_item_name"`
+	CurrentBomID   *int64             `json:"current_bom_id"`
+	CurrentVersion *int               `json:"current_version"`
+	Versions       []BomVersionOption `json:"versions"`
+}
+
+type CreateBomRevisionResponse struct {
+	SourceBomID   int64   `json:"source_bom_id"`
+	SourceVersion int     `json:"source_version"`
+	BomID         int64   `json:"bom_id"`
+	BomVersion    int     `json:"bom_version"`
+	BomStatus     string  `json:"bom_status"`
+	IsCurrent     bool    `json:"is_current"`
+	ReadOnly      bool    `json:"read_only"`
+	ChangeNote    *string `json:"change_note"`
+	Message       string  `json:"message"`
+}
+
+type ProcessRouteMutationResponse struct {
+	RouteID       int64    `json:"route_id"`
+	BomID         int64    `json:"bom_id"`
+	BomVersion    int      `json:"bom_version"`
+	LineID        *int64   `json:"line_id,omitempty"`
+	OpSeq         int      `json:"op_seq"`
+	ProcessID     int64    `json:"process_id"`
+	ProcessName   string   `json:"process_name"`
+	MachineID     *int64   `json:"machine_id"`
+	MachineName   *string  `json:"machine_name"`
+	CycleTimeSec  *float64 `json:"cycle_time_sec"`
+	SetupTimeMin  *float64 `json:"setup_time_min"`
+	MachineStroke *string  `json:"machine_stroke"`
+	ToolingRef    *string  `json:"tooling_ref"`
 }

@@ -9,7 +9,7 @@ import (
 )
 
 type Customer struct {
-	ID                    int64          `gorm:"primaryKey;autoIncrement" json:"-"`
+	ID                    int64          `gorm:"primaryKey;autoIncrement" json:"row_id"`
 	UUID                  string         `gorm:"uniqueIndex;not null" json:"id"`
 	CustomerID            string         `gorm:"uniqueIndex;not null" json:"customer_id"`
 	CustomerName          string         `gorm:"not null" json:"customer_name"`

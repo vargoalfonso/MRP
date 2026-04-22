@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	//"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,8 +11,34 @@ import (
 	customerModels "github.com/ganasa18/go-template/internal/customer/models"
 	"github.com/ganasa18/go-template/internal/prl/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
+
+	//"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
+
+// func wrapPRLPersistError(msg string, err error) error {
+// 	var pgErr *pgconn.PgError
+// 	if errors.As(err, &pgErr) {
+// 		lowerMsg := strings.ToLower(pgErr.Message)
+// 		// Check violation (e.g., old constraint prls_forecast_period_check).
+// 		if pgErr.Code == "23514" && (strings.Contains(pgErr.ConstraintName, "prls_forecast_period_check") || strings.Contains(lowerMsg, "prls_forecast_period_check")) {
+// 			return apperror.BadRequest(
+// 				"forecast_period is now free-text, but DB still enforces quarter format; run migration scripts/migrations/0042_prls_forecast_period_freetext_up.sql",
+// 			)
+// 		}
+// 		// String truncation (e.g., forecast_period is still VARCHAR(7)).
+// 		if pgErr.Code == "22001" {
+// 			// On old schema: message is typically "value too long for type character varying(7)" (no column name).
+// 			if strings.Contains(lowerMsg, "character varying(7)") || strings.Contains(lowerMsg, "varchar(7)") || strings.Contains(lowerMsg, "forecast_period") {
+// 				return apperror.BadRequest(
+// 					"forecast_period is longer than the DB column allows; run migration scripts/migrations/0042_prls_forecast_period_freetext_up.sql",
+// 				)
+// 			}
+// 			return apperror.BadRequest("a field is longer than the DB column allows")
+// 		}
+// 	}
+// 	return apperror.InternalWrap(msg, err)
+// }
 
 type IRepository interface {
 	CreateUniqBOM(ctx context.Context, item *models.UniqBillOfMaterial) error
@@ -31,6 +58,7 @@ type IRepository interface {
 
 	ListCustomers(ctx context.Context, search string) ([]models.CustomerLookup, error)
 	FindCustomerByUUID(ctx context.Context, uuid string) (*customerModels.Customer, error)
+	FindCustomerByRowID(ctx context.Context, id int64) (*customerModels.Customer, error)
 	FindCustomerByCode(ctx context.Context, customerCode string) (*customerModels.Customer, error)
 }
 
@@ -124,7 +152,7 @@ func (r *repository) CreatePRLs(ctx context.Context, items []*models.PRL) error 
 			item.PRLID = fmt.Sprintf("PRL-%d-%03d", year, nextSequence)
 			nextSequence++
 			if err := tx.Create(item).Error; err != nil {
-				return apperror.InternalWrap("create prl failed", err)
+				//return wrapPRLPersistError("create prl failed", err)
 			}
 		}
 
@@ -173,7 +201,7 @@ func (r *repository) ListPRLsForExport(ctx context.Context, filters models.PRLLi
 
 func (r *repository) UpdatePRL(ctx context.Context, item *models.PRL) error {
 	if err := r.db.WithContext(ctx).Save(item).Error; err != nil {
-		return apperror.InternalWrap("update prl failed", err)
+		//return wrapPRLPersistError("update prl failed", err)
 	}
 	return nil
 }
@@ -234,6 +262,18 @@ func (r *repository) ListCustomers(ctx context.Context, search string) ([]models
 func (r *repository) FindCustomerByUUID(ctx context.Context, uuid string) (*customerModels.Customer, error) {
 	var item customerModels.Customer
 	err := r.db.WithContext(ctx).Where("uuid = ?", uuid).First(&item).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, apperror.NotFound("customer not found")
+		}
+		return nil, apperror.InternalWrap("find customer failed", err)
+	}
+	return &item, nil
+}
+
+func (r *repository) FindCustomerByRowID(ctx context.Context, id int64) (*customerModels.Customer, error) {
+	var item customerModels.Customer
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&item).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, apperror.NotFound("customer not found")

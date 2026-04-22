@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strconv"
 
-	authModels "github.com/ganasa18/go-template/internal/auth/models"
 	"github.com/ganasa18/go-template/internal/base/app"
 	"github.com/ganasa18/go-template/internal/billmaterial/models"
 	"github.com/ganasa18/go-template/internal/billmaterial/service"
@@ -83,6 +82,18 @@ func (h *HTTPHandler) GetBomDetail(ctx *app.Context) *app.CostumeResponse {
 	if err != nil {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
 	}
+	versionParam := ctx.Query("version")
+	if versionParam != "" {
+		version, err := strconv.Atoi(versionParam)
+		if err != nil {
+			return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid version"}
+		}
+		result, err := h.svc.GetBomDetailByVersion(ctx.Request.Context(), id, version)
+		if err != nil {
+			return app.NewError(ctx, err)
+		}
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: result}
+	}
 	result, err := h.svc.GetBomDetail(ctx.Request.Context(), id)
 	if err != nil {
 		return app.NewError(ctx, err)
@@ -93,6 +104,98 @@ func (h *HTTPHandler) GetBomDetail(ctx *app.Context) *app.CostumeResponse {
 		Message:   http.StatusText(http.StatusOK),
 		Data:      result,
 	}
+}
+
+func (h *HTTPHandler) GetBomVersions(ctx *app.Context) *app.CostumeResponse {
+	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+	result, err := h.svc.GetBomVersions(ctx.Request.Context(), id)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: result}
+}
+
+func (h *HTTPHandler) CreateBomRevision(ctx *app.Context) *app.CostumeResponse {
+	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+	var req models.CreateBomRevisionRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body"}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+	}
+	result, err := h.svc.CreateBomRevision(ctx.Request.Context(), id, req)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusCreated, Message: http.StatusText(http.StatusCreated), Data: result}
+}
+
+func (h *HTTPHandler) AddProcessRoute(ctx *app.Context) *app.CostumeResponse {
+	bomID, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+	var req models.AddProcessRouteRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body"}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+	}
+	result, err := h.svc.AddProcessRoute(ctx.Request.Context(), bomID, req)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusCreated, Message: http.StatusText(http.StatusCreated), Data: result}
+}
+
+func (h *HTTPHandler) PatchProcessRoute(ctx *app.Context) *app.CostumeResponse {
+	bomID, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+	routeID, err := strconv.ParseInt(ctx.Param("route_id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid route_id"}
+	}
+	var req models.PatchProcessRouteRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body"}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+	}
+	result, err := h.svc.PatchProcessRoute(ctx.Request.Context(), bomID, routeID, req)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: result}
+}
+
+func (h *HTTPHandler) ReleaseBom(ctx *app.Context) *app.CostumeResponse {
+	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+	var req models.ReleaseBomRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body"}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+	}
+	result, err := h.svc.ReleaseBom(ctx.Request.Context(), id, req)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: result}
 }
 
 // UpdateBom  PUT /api/v1/products/bom/:id
@@ -229,41 +332,41 @@ func (h *HTTPHandler) DeleteBomLine(ctx *app.Context) *app.CostumeResponse {
 //
 // Body: { "action": "approve"|"reject", "notes": "..." }
 // The caller must have the role required for the current approval level.
-func (h *HTTPHandler) ApproveBom(ctx *app.Context) *app.CostumeResponse {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
-	}
+// func (h *HTTPHandler) ApproveBom(ctx *app.Context) *app.CostumeResponse {
+// 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+// 	if err != nil {
+// 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+// 	}
 
-	var req models.ApproveBomRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body"}
-	}
-	if errs := validator.Validate(req); errs != nil {
-		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
-	}
+// 	var req models.ApproveBomRequest
+// 	if err := ctx.ShouldBindJSON(&req); err != nil {
+// 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body"}
+// 	}
+// 	if errs := validator.Validate(req); errs != nil {
+// 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+// 	}
 
-	// extract caller's user ID and roles from JWT claims
-	var userID string
-	var userRoles []string
-	if raw, exists := ctx.Get("claims"); exists {
-		if claims, ok := raw.(*authModels.Claims); ok && claims != nil {
-			userID = claims.UserID
-			userRoles = claims.Roles
-		}
-	}
-	if userID == "" {
-		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnauthorized, Message: "unauthorized"}
-	}
+// 	// extract caller's user ID and roles from JWT claims
+// 	var userID string
+// 	var userRoles []string
+// 	if raw, exists := ctx.Get("claims"); exists {
+// 		if claims, ok := raw.(*authModels.Claims); ok && claims != nil {
+// 			userID = claims.UserID
+// 			userRoles = claims.Roles
+// 		}
+// 	}
+// 	if userID == "" {
+// 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnauthorized, Message: "unauthorized"}
+// 	}
 
-	result, err := h.svc.ApproveBom(ctx.Request.Context(), id, userID, userRoles, req)
-	if err != nil {
-		return app.NewError(ctx, err)
-	}
-	return &app.CostumeResponse{
-		RequestID: ctx.APIReqID,
-		Status:    http.StatusOK,
-		Message:   http.StatusText(http.StatusOK),
-		Data:      result,
-	}
-}
+// 	result, err := h.svc.ApproveBom(ctx.Request.Context(), id, userID, userRoles, req)
+// 	if err != nil {
+// 		return app.NewError(ctx, err)
+// 	}
+// 	return &app.CostumeResponse{
+// 		RequestID: ctx.APIReqID,
+// 		Status:    http.StatusOK,
+// 		Message:   http.StatusText(http.StatusOK),
+// 		Data:      result,
+// 	}
+// }

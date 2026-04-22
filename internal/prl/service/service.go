@@ -27,6 +27,7 @@ type Service interface {
 	UpdateUniqBOM(ctx context.Context, uuid string, req models.UpdateUniqBOMRequest) (*models.UniqBillOfMaterial, error)
 	DeleteUniqBOM(ctx context.Context, uuid string) error
 
+	CreatePRL(ctx context.Context, req models.CreatePRLRequest) (*models.PRL, error)
 	BulkCreatePRLs(ctx context.Context, req models.BulkCreatePRLRequest) (*models.BulkCreatePRLResponse, error)
 	GetPRLByUUID(ctx context.Context, uuid string) (*models.PRL, error)
 	ListPRLs(ctx context.Context, query models.ListPRLQuery) (*models.PRLListResult, error)
@@ -106,6 +107,87 @@ func (s *service) DeleteUniqBOM(ctx context.Context, uuid string) error {
 		return err
 	}
 	return s.repo.DeleteUniqBOM(ctx, item)
+}
+
+func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest) (*models.PRL, error) {
+	period, err := normalizeForecastPeriod(req.ForecastPeriod)
+	if err != nil {
+		return nil, err
+	}
+	if req.Quantity < 1 {
+		return nil, apperror.BadRequest("quantity must be greater than 0")
+	}
+
+	customer, err := s.resolveCustomer(ctx, req.CustomerUUID, req.CustomerCode)
+	if err != nil {
+		return nil, err
+	}
+
+	uniqCode := strings.ToUpper(models.Trimmed(req.UniqCode))
+	bom, err := s.repo.FindUniqBOMByUniqCode(ctx, uniqCode)
+	if err != nil {
+		if appErr, ok := apperror.As(err); ok && appErr.Code == apperror.CodeNotFound {
+			productModel := models.Trimmed(req.ProductModel)
+			partName := models.Trimmed(req.PartName)
+			partNumber := strings.ToUpper(models.Trimmed(req.PartNumber))
+			if productModel == "" {
+				return nil, apperror.BadRequest("product_model is required when uniq_code is new")
+			}
+			if partName == "" {
+				return nil, apperror.BadRequest("part_name is required when uniq_code is new")
+			}
+			if partNumber == "" {
+				return nil, apperror.BadRequest("part_number is required when uniq_code is new")
+			}
+
+			newBOM := &models.UniqBillOfMaterial{
+				UUID:         uuid.NewString(),
+				UniqCode:     uniqCode,
+				ProductModel: productModel,
+				PartName:     partName,
+				PartNumber:   partNumber,
+			}
+			if createErr := s.repo.CreateUniqBOM(ctx, newBOM); createErr != nil {
+				return nil, createErr
+			}
+			bom = newBOM
+		} else {
+			return nil, err
+		}
+	}
+
+	// Optional mismatch guard: if client supplies BOM fields, they must match the existing UNIQ BOM.
+	if models.Trimmed(req.ProductModel) != "" && models.Trimmed(req.ProductModel) != bom.ProductModel {
+		return nil, apperror.BadRequest("product_model does not match existing uniq bom")
+	}
+	if models.Trimmed(req.PartName) != "" && models.Trimmed(req.PartName) != bom.PartName {
+		return nil, apperror.BadRequest("part_name does not match existing uniq bom")
+	}
+	if models.Trimmed(req.PartNumber) != "" && strings.ToUpper(models.Trimmed(req.PartNumber)) != bom.PartNumber {
+		return nil, apperror.BadRequest("part_number does not match existing uniq bom")
+	}
+
+	item := &models.PRL{
+		UUID:           uuid.NewString(),
+		PRLID:          "PENDING",
+		CustomerUUID:   customer.UUID,
+		CustomerCode:   customer.CustomerID,
+		CustomerName:   customer.CustomerName,
+		UniqBOMUUID:    bom.UUID,
+		UniqCode:       bom.UniqCode,
+		ProductModel:   bom.ProductModel,
+		PartName:       bom.PartName,
+		PartNumber:     bom.PartNumber,
+		ForecastPeriod: period,
+		Quantity:       req.Quantity,
+		Status:         models.PRLStatusPending,
+	}
+
+	if err := s.repo.CreatePRLs(ctx, []*models.PRL{item}); err != nil {
+		return nil, err
+	}
+
+	return item, nil
 }
 
 func (s *service) BulkCreatePRLs(ctx context.Context, req models.BulkCreatePRLRequest) (*models.BulkCreatePRLResponse, error) {
@@ -358,17 +440,32 @@ func (s *service) buildPRLFromEntry(ctx context.Context, entry models.CreatePRLE
 	}, nil
 }
 
-func (s *service) resolveCustomer(ctx context.Context, customerUUID, customerCode string) (*struct {
+func (s *service) resolveCustomer(ctx context.Context, customerUUID models.CustomerUUIDInput, customerCode string) (*struct {
 	UUID         string
 	CustomerID   string
 	CustomerName string
 }, error) {
-	if strings.TrimSpace(customerUUID) == "" && strings.TrimSpace(customerCode) == "" {
+	if (!customerUUID.IsInt && strings.TrimSpace(customerUUID.UUID) == "") && (!customerUUID.IsInt || customerUUID.RowID <= 0) && strings.TrimSpace(customerCode) == "" {
 		return nil, apperror.BadRequest("customer_uuid or customer_code is required")
 	}
 
-	if strings.TrimSpace(customerUUID) != "" {
-		customer, err := s.repo.FindCustomerByUUID(ctx, customerUUID)
+	if customerUUID.IsInt {
+		if customerUUID.RowID <= 0 {
+			return nil, apperror.BadRequest("customer_uuid must be greater than 0")
+		}
+		customer, err := s.repo.FindCustomerByRowID(ctx, customerUUID.RowID)
+		if err != nil {
+			return nil, err
+		}
+		return &struct {
+			UUID         string
+			CustomerID   string
+			CustomerName string
+		}{UUID: customer.UUID, CustomerID: customer.CustomerID, CustomerName: customer.CustomerName}, nil
+	}
+
+	if strings.TrimSpace(customerUUID.UUID) != "" {
+		customer, err := s.repo.FindCustomerByUUID(ctx, customerUUID.UUID)
 		if err != nil {
 			return nil, err
 		}
@@ -426,11 +523,12 @@ func normalizePageLimit(page, limit int) (int, int) {
 }
 
 func normalizeForecastPeriod(value string) (string, error) {
-	cleaned := strings.ToUpper(strings.TrimSpace(value))
-	if !forecastPeriodPattern.MatchString(cleaned) {
-		return "", apperror.BadRequest("forecast_period must use format YYYY-Q1 until YYYY-Q4")
+	// Free-text: accept any non-empty value and store it as-is.
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", apperror.BadRequest("forecast_period is required")
 	}
-	return cleaned, nil
+	return trimmed, nil
 }
 
 func normalizeOptionalForecastPeriod(value string) (*string, error) {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"math"
 	"strings"
 	"time"
 
@@ -791,91 +792,188 @@ const (
 )
 
 func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error) {
-	// 1. Load only the persistent stock data from raw_materials.
-	//    Derived/computed columns (safety_stock_qty, kanban_standard_qty, daily_usage_qty,
-	//    status, stock_days, buy_not_buy) are intentionally NOT read here because they
-	//    will be dropped — all values are computed from the parameter tables below.
+	const inventoryType = "raw_material"
+
+	// 1. Load stock data from raw_materials.
 	rm, err := s.repo.GetRawMaterialByUniqCode(ctx, uniqCode)
 	if err != nil {
-		// Item not found — return a zero summary so the frontend row still renders.
 		return &invModels.KanbanSummary{
 			UniqCode:  uniqCode,
 			Status:    "normal",
 			BuyNotBuy: "n/a",
 		}, nil
 	}
-
 	stockQty := rm.StockQty
 
-	// 2. Kanban pcs per package — from supplier_item.pcs_per_kanban, fallback to 50.
+	// 2. Kanban pcs per package (for total_kanban and round-up).
 	kanbanPkgQty := kanbanDefaultPkgQty
 	if pkgQty, err := s.repo.GetKanbanPkgQty(ctx, uniqCode); err == nil && pkgQty > 0 {
 		kanbanPkgQty = pkgQty
 	}
+	// Kanban standard qty for buy-qty round-up (prefer kanban_standard_qty from rm; fallback to pkg qty).
+	kanbanStdQty := kanbanPkgQty
+	if rm.KanbanStandardQty != nil && *rm.KanbanStandardQty > 0 {
+		kanbanStdQty = *rm.KanbanStandardQty
+	}
 	kanbanPkgF := float64(kanbanPkgQty)
+	kanbanStdF := float64(kanbanStdQty)
 
-	// 3. Resolve daily_usage and safety_stock — two paths, pick one:
-	//
-	//   PATH A — safety_stock_parameter is active for this item:
-	//     daily_usage  = (PRL + PO) / working_days
-	//     safety_stock = daily_usage × constanta
-	//
-	//   PATH B — no parameter configured:
-	//     daily_usage  = forecasted_usage_per_day from forecast_results (historical)
-	//     safety_stock = 0  (no threshold → no buy recommendation yet)
+	// 3. Resolve active_periode from global_parameters.
+	activePeriode, _ := s.repo.GetGlobalActivePeriode(ctx)
 
-	safetyStockQty := 0.0
-	var dailyUsage float64
+	// 4. Demand snapshot: try the new table first, then fall back to legacy PRL-only path.
+	var (
+		totalDemandSum         float64
+		prlSum                 float64
+		poCustomerSum          float64
+		workingDays            int
+		workingDaysPeriodeUsed string
+		snapshotDate           string
+		fromSnapshot           bool
 
-	param, paramErr := s.repo.GetSafetyStockParam(ctx, uniqCode)
-	if paramErr == nil && param != nil {
-		// PATH A: parameter active — derive daily usage from PRL + PO demand.
-		workingDays, _ := s.repo.GetActiveWorkingDays(ctx)
-		if workingDays <= 0 {
-			workingDays = 20
+		// stockdays / safety-stock snapshot values (may override per-item param lookup below).
+		snapshotSDCalcType  *string
+		snapshotSDConstanta *float64
+		snapshotSSCalcType  *string
+		snapshotSSConstanta *float64
+	)
+
+	if activePeriode != "" {
+		if snap, found, _ := s.repo.GetDemandSnapshot(ctx, activePeriode, uniqCode); found {
+			prlSum = snap.PRLSum
+			poCustomerSum = snap.POCustomerSum
+			totalDemandSum = snap.TotalDemandSum
+			workingDays = snap.WorkingDaysUsed
+			workingDaysPeriodeUsed = snap.WorkingDaysPeriodeUsed
+			snapshotDate = snap.SnapshotDate
+			fromSnapshot = true
+			snapshotSDCalcType = snap.StockdaysCalcTypeActive
+			snapshotSDConstanta = snap.StockdaysConstantaActive
+			snapshotSSCalcType = snap.SafetyStockCalcTypeActive
+			snapshotSSConstanta = snap.SafetyStockConstantaActive
 		}
-		prl, _ := s.repo.GetPRLQtyByUniqCode(ctx, uniqCode)
-		po, _ := s.repo.GetActivePOQtyByUniqCode(ctx, uniqCode)
-		dailyUsage = (prl + po) / float64(workingDays)
-		safetyStockQty = dailyUsage * param.Constanta
-	} else {
-		// PATH B: no parameter — fall back to historical forecast per day.
-		dailyUsage, _ = s.repo.GetForecastDailyUsage(ctx, uniqCode)
 	}
 
-	// 4. Kanban metrics.
-	totalKanban := int64(stockQty / kanbanPkgF)
-
-	deficit := safetyStockQty - stockQty
-	var kanbansNeeded int64
-	var stockToComplete float64
-	if deficit > 0 {
-		kanbansNeeded = int64((deficit + kanbanPkgF - 1) / kanbanPkgF) // ceil
-		stockToComplete = float64(kanbansNeeded) * kanbanPkgF
+	// Fallback path: no snapshot — query PRL and PO Customer live.
+	if !fromSnapshot {
+		if activePeriode == "" {
+			// last resort: per-item latest approved PRL period
+			activePeriode, _ = s.repo.GetLatestApprovedPRLPeriodByCode(ctx, uniqCode)
+		}
+		if activePeriode != "" {
+			workingDays, workingDaysPeriodeUsed, _ = s.repo.GetWorkingDaysWithFallback(ctx, activePeriode)
+			if cached, hit, _ := s.repo.GetPRLTotalFromCache(ctx, activePeriode, uniqCode); hit {
+				prlSum = cached
+			} else {
+				prlSum, _ = s.repo.GetPRLTotalByPeriodAndCode(ctx, activePeriode, uniqCode)
+			}
+			poCustomerSum, _ = s.repo.GetPOCustomerSumByPeriodeAndCode(ctx, activePeriode, uniqCode)
+			totalDemandSum = prlSum + poCustomerSum
+		}
+	}
+	if workingDays <= 0 {
+		workingDays = 20
 	}
 
-	// 5. Status.
+	// 5. Base daily usage = total_demand_sum / working_days.
+	baseDailyUsage := 0.0
+	if workingDays > 0 {
+		baseDailyUsage = totalDemandSum / float64(workingDays)
+	}
+
+	var warnings []string
+
+	// 6. Effective daily usage via stockdays parameter.
+	effectiveDailyUsage := baseDailyUsage
+	var sdCalcType string
+	var sdConstanta float64
+
+	// Prefer snapshot values; fall back to live param lookup.
+	if fromSnapshot && snapshotSDCalcType != nil {
+		sdCalcType = normalizeCalcType(*snapshotSDCalcType)
+		if snapshotSDConstanta != nil {
+			sdConstanta = *snapshotSDConstanta
+		}
+	} else if sdParam, err := s.repo.GetStockdaysParam(ctx, inventoryType, uniqCode); err == nil && sdParam != nil {
+		sdCalcType = normalizeCalcType(sdParam.CalculationType)
+		sdConstanta = sdParam.Constanta
+	}
+	switch sdCalcType {
+	case "days":
+		effectiveDailyUsage = baseDailyUsage * sdConstanta
+	case "percentage":
+		effectiveDailyUsage = baseDailyUsage * (sdConstanta / 100)
+	case "forecast", "machine_pattern":
+		warnings = append(warnings, "stockdays calc_type '"+sdCalcType+"' not yet implemented; effective_daily_usage defaulted to base_daily_usage")
+	}
+
+	// 7. Stock days = floor(stock / max(1, effective_daily_usage)).
+	var stockDays *int
+	var stockDaysRaw float64
+	if effectiveDailyUsage > 0 {
+		stockDaysRaw = stockQty / math.Max(1, effectiveDailyUsage)
+		d := int(stockDaysRaw)
+		stockDays = &d
+	}
+
+	// 8. Safety stock qty via safety_stock parameter.
+	safetyStockQty := 0.0
+	var ssCalcType string
+	var ssConstanta float64
+
+	if fromSnapshot && snapshotSSCalcType != nil {
+		ssCalcType = normalizeCalcType(*snapshotSSCalcType)
+		if snapshotSSConstanta != nil {
+			ssConstanta = *snapshotSSConstanta
+		}
+	} else if ssParam, err := s.repo.GetSafetyStockParamByType(ctx, inventoryType, uniqCode); err == nil && ssParam != nil {
+		ssCalcType = normalizeCalcType(ssParam.CalculationType)
+		ssConstanta = ssParam.Constanta
+	}
+	switch ssCalcType {
+	case "days":
+		safetyStockQty = baseDailyUsage * ssConstanta
+	case "percentage":
+		safetyStockQty = baseDailyUsage * (ssConstanta / 100)
+	case "forecast", "machine_pattern":
+		warnings = append(warnings, "safety_stock calc_type '"+ssCalcType+"' not yet implemented; safety_stock_qty defaulted to 0")
+	}
+
+	// 9. Cycle pengiriman from supplier_item.customer_cycle (default 1).
+	cyclePengiriman, _ := s.repo.GetCyclePengiriman(ctx, uniqCode)
+	if cyclePengiriman <= 0 {
+		cyclePengiriman = 1
+	}
+
+	// 10. Threshold = safety_stock_qty × cycle_pengiriman.
+	threshold := safetyStockQty * float64(cyclePengiriman)
+
+	// 11. Status.
 	status := "normal"
-	if stockQty < safetyStockQty {
+	if safetyStockQty > 0 && stockQty < safetyStockQty {
 		status = "low_on_stock"
 	} else if safetyStockQty > 0 && stockQty > safetyStockQty*kanbanHighRatio {
 		status = "overstock"
 	}
 
-	// 6. Buy / Not Buy.
+	// 12. Buy / Not Buy: SSP items are always n/a; others use threshold rule.
 	buyNotBuy := "not_buy"
 	if rm.RawMaterialType == "ssp" {
 		buyNotBuy = "n/a"
-	} else if stockQty < safetyStockQty {
+	} else if stockQty <= threshold {
 		buyNotBuy = "buy"
 	}
 
-	// 7. Stock days = floor(stock / max(1, daily_usage)).
-	//    max(1, ...) prevents division-by-zero when no demand data exists.
-	var stockDays *int
-	if dailyUsage > 0 {
-		d := int(stockQty / dailyUsage)
-		stockDays = &d
+	// 13. Kanban metrics.
+	totalKanban := int64(stockQty / kanbanPkgF)
+
+	// Raw buy qty = max(0, threshold - stock), rounded up to nearest kanban standard.
+	rawBuyQty := math.Max(0, threshold-stockQty)
+	var kanbansNeeded int64
+	var stockToComplete float64
+	if rawBuyQty > 0 && kanbanStdF > 0 {
+		kanbansNeeded = int64(math.Ceil(rawBuyQty / kanbanStdF))
+		stockToComplete = float64(kanbansNeeded) * kanbanStdF
 	}
 
 	return &invModels.KanbanSummary{
@@ -889,7 +987,47 @@ func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invMo
 		Status:          status,
 		BuyNotBuy:       buyNotBuy,
 		StockDays:       stockDays,
+		CalcContext: invModels.KanbanCalcContext{
+			ForecastPeriod:         activePeriode,
+			WorkingDays:            workingDays,
+			PRLTotal:               totalDemandSum,
+			PRLFromCache:           fromSnapshot,
+			BaseDailyUsage:         baseDailyUsage,
+			StockdaysCalcType:      sdCalcType,
+			StockdaysConstanta:     sdConstanta,
+			EffectiveDailyUsage:    effectiveDailyUsage,
+			SafetyStockCalcType:    ssCalcType,
+			SafetyStockConstanta:   ssConstanta,
+			StockDaysRaw:           stockDaysRaw,
+			ActivePeriode:          activePeriode,
+			SnapshotDate:           snapshotDate,
+			WorkingDaysPeriodeUsed: workingDaysPeriodeUsed,
+			PRLSum:                 prlSum,
+			POCustomerSum:          poCustomerSum,
+			TotalDemandSum:         totalDemandSum,
+			CyclePengiriman:        cyclePengiriman,
+			Threshold:              threshold,
+			Warnings:               warnings,
+		},
 	}, nil
+}
+
+// normalizeCalcType maps the UI label stored in DB to a short internal code.
+// Rules per BRD "Normalisasi calculation_type".
+func normalizeCalcType(label string) string {
+	lower := strings.ToLower(label)
+	switch {
+	case strings.Contains(lower, "percentage"):
+		return "percentage"
+	case strings.Contains(lower, "forecast") || strings.Contains(lower, "demand forecasting"):
+		return "forecast"
+	case strings.Contains(lower, "machine pattern"):
+		return "machine_pattern"
+	case strings.Contains(lower, "days"):
+		return "days"
+	default:
+		return "days"
+	}
 }
 
 // ---------------------------------------------------------------------------
