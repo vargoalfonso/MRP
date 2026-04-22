@@ -611,6 +611,44 @@ func InventoryIncomingPagination(c *app.Context) InventoryIncomingPaginationInpu
 // Helpers
 // ---------------------------------------------------------------------------
 
+// SupplierPerformancePaginationInput holds filters for GET /suppliers/performance.
+//
+// Query params:
+//
+//	?period_type=monthly&period_value=2026-04&search=PT&status=excellent&page=1&limit=20&sort_by=otd_percentage&sort_direction=desc
+type SupplierPerformancePaginationInput struct {
+	Limit         int
+	Page          int
+	Search        string
+	PeriodType    string
+	PeriodValue   string
+	Status        string
+	SortBy        string
+	SortDirection string
+}
+
+func (p SupplierPerformancePaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// SupplierPerformancePagination parses supplier performance list query params.
+func SupplierPerformancePagination(c *app.Context) SupplierPerformancePaginationInput {
+	base := Pagination(c)
+	return SupplierPerformancePaginationInput{
+		Limit:         base.Limit,
+		Page:          base.Page,
+		Search:        base.Search,
+		PeriodType:    c.Query("period_type"),
+		PeriodValue:   c.Query("period_value"),
+		Status:        c.Query("status"),
+		SortBy:        c.Query("sort_by"),
+		SortDirection: c.Query("sort_direction"),
+	}
+}
+
 func clampLimit(n int) int {
 	if n < 1 {
 		return 20

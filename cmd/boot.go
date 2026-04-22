@@ -131,6 +131,10 @@ import (
 	supplierItemHandler "github.com/ganasa18/go-template/internal/supplier_item/handler"
 	supplierItemRepository "github.com/ganasa18/go-template/internal/supplier_item/repository"
 	supplierItemService "github.com/ganasa18/go-template/internal/supplier_item/service"
+	spModule "github.com/ganasa18/go-template/internal/supplier_performance"
+	spHandler "github.com/ganasa18/go-template/internal/supplier_performance/handler"
+	spRepository "github.com/ganasa18/go-template/internal/supplier_performance/repository"
+	spService "github.com/ganasa18/go-template/internal/supplier_performance/service"
 	typeParameterModule "github.com/ganasa18/go-template/internal/type_parameter"
 	typeParameterHandler "github.com/ganasa18/go-template/internal/type_parameter/handler"
 	typeParameterRepository "github.com/ganasa18/go-template/internal/type_parameter/repository"
@@ -331,6 +335,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	dscSvc := dscService.New(dscRepo, db)
 	dscHTTPHandler := dscHandler.New(dscSvc)
 
+	// Supplier Performance module
+	spRepo := spRepository.New(db)
+	spSvc := spService.New(spRepo)
+	spHTTPHandler := spHandler.New(spSvc)
 	wipRepo := wipRepository.New(db)
 	wipSvc := wipService.New(wipRepo)
 	wipHTTPHandler := wipHandler.New(wipSvc)
@@ -374,6 +382,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		adminJobsModule.NewHTTPModule(cfg, baseHTTPHandler, adminJobsHTTPHandler, adminJobsSvc),
 		coModule.NewHTTPModule(cfg, baseHTTPHandler, coHTTPHandler, authSvc, roleSvc, coSvc),
 		dscModule.NewHTTPModule(baseHTTPHandler, dscHTTPHandler, authSvc, roleSvc, dscSvc),
+		spModule.NewHTTPModule(baseHTTPHandler, spHTTPHandler, authSvc, roleSvc),
 	}
 
 	// --- Server ---

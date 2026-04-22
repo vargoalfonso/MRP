@@ -32,10 +32,11 @@ type IService interface {
 	GetBomDetailByVersion(ctx context.Context, bomID int64, version int) (*models.BomDetailResponse, error)
 	GetBomVersions(ctx context.Context, bomID int64) (*models.BomVersionsResponse, error)
 	CreateBomRevision(ctx context.Context, bomID int64, req models.CreateBomRevisionRequest) (*models.CreateBomRevisionResponse, error)
-	AddProcessRoute(ctx context.Context, bomID int64, req models.AddProcessRouteRequest) (*models.ProcessRouteMutationResponse, error)
-	PatchProcessRoute(ctx context.Context, bomID, routeID int64, req models.PatchProcessRouteRequest) (*models.ProcessRouteMutationResponse, error)
-	ReleaseBom(ctx context.Context, bomID int64, req models.ReleaseBomRequest) (*models.BomDetailResponse, error)
+	// ActivateBomVersion sets a specific BOM version as current without creating a new version.
+	ActivateBomVersion(ctx context.Context, bomID int64) (*models.BomDetailResponse, error)
 
+	AddProcessRoute(ctx context.Context, bomID int64, req []models.AddProcessRouteRequest) ([]models.ProcessRouteMutationResponse, error)
+	PatchProcessRoute(ctx context.Context, bomID, routeID int64, req models.PatchProcessRouteRequest) (*models.ProcessRouteMutationResponse, error)
 	// Update BOM header and parent item fields (partial update)
 	UpdateBom(ctx context.Context, bomID int64, req models.UpdateBomRequest) (*models.BomDetailResponse, error)
 
@@ -286,7 +287,7 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 		ItemID:             parent.ID,
 		RootItemRevisionID: &rev.ID,
 		Version:            1,
-		Status:             "Draft",
+		Status:             "Released",
 		Description:        req.Description,
 		ChangeNote:         req.Description,
 		IsCurrent:          true,
@@ -709,15 +710,23 @@ func (s *service) CreateBomRevision(ctx context.Context, bomID int64, req models
 	if err := s.cloneRoutingForRevision(ctx, sourceBom.ItemID, sourceRev.ID, newRev.ID); err != nil {
 		return nil, err
 	}
+	for i := range versions {
+		if versions[i].IsCurrent {
+			versions[i].IsCurrent = false
+			if err := s.repo.UpdateBomItem(ctx, &versions[i]); err != nil {
+				return nil, err
+			}
+		}
+	}
 	newBom := &models.BomItem{
 		ItemID:             sourceBom.ItemID,
 		RootItemRevisionID: &newRev.ID,
 		CopiedFromBomID:    &sourceBom.ID,
 		Version:            nextVersion,
-		Status:             "Draft",
+		Status:             "Released",
 		Description:        sourceBom.Description,
 		ChangeNote:         req.ChangeNote,
-		IsCurrent:          false,
+		IsCurrent:          true,
 	}
 	if err := s.repo.CreateBomItem(ctx, newBom); err != nil {
 		return nil, err
@@ -741,7 +750,7 @@ func (s *service) CreateBomRevision(ctx context.Context, bomID int64, req models
 		BomVersion:    newBom.Version,
 		BomStatus:     newBom.Status,
 		IsCurrent:     newBom.IsCurrent,
-		ReadOnly:      false,
+		ReadOnly:      newBom.Status != "Draft",
 		ChangeNote:    newBom.ChangeNote,
 		Message:       fmt.Sprintf("BOM revision created from v%d", sourceBom.Version),
 	}, nil
@@ -853,76 +862,187 @@ func (s *service) cloneRoutingForRevision(ctx context.Context, itemID, sourceRev
 	return nil
 }
 
-func (s *service) ReleaseBom(ctx context.Context, bomID int64, req models.ReleaseBomRequest) (*models.BomDetailResponse, error) {
+func (s *service) ActivateBomVersion(ctx context.Context, bomID int64) (*models.BomDetailResponse, error) {
 	bom, err := s.repo.GetBomByID(ctx, bomID)
 	if err != nil {
-		return nil, err
-	}
-	if err := s.ensureDraftBom(bom); err != nil {
 		return nil, err
 	}
 	versions, err := s.repo.GetBomVersionsByItemID(ctx, bom.ItemID)
 	if err != nil {
 		return nil, err
 	}
-	for _, version := range versions {
-		if version.IsCurrent {
-			version.IsCurrent = false
-			if err := s.repo.UpdateBomItem(ctx, &version); err != nil {
+	for i := range versions {
+		if versions[i].ID == bomID {
+			continue
+		}
+		if versions[i].IsCurrent {
+			versions[i].IsCurrent = false
+			if err := s.repo.UpdateBomItem(ctx, &versions[i]); err != nil {
 				return nil, err
 			}
 		}
 	}
-	bom.Status = "Released"
 	bom.IsCurrent = true
-	if req.Notes != nil && *req.Notes != "" {
-		bom.ChangeNote = req.Notes
-	}
 	if err := s.repo.UpdateBomItem(ctx, bom); err != nil {
 		return nil, err
 	}
 	return s.GetBomDetail(ctx, bomID)
 }
 
-func (s *service) AddProcessRoute(ctx context.Context, bomID int64, req models.AddProcessRouteRequest) (*models.ProcessRouteMutationResponse, error) {
+func (s *service) AddProcessRoute(ctx context.Context, bomID int64, reqs []models.AddProcessRouteRequest) ([]models.ProcessRouteMutationResponse, error) {
 	bom, err := s.repo.GetBomByID(ctx, bomID)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureDraftBom(bom); err != nil {
-		return nil, err
-	}
-	targetItemID, targetRevisionID, lineID, err := s.resolveRouteTarget(ctx, bom, req.LineID)
+	versions, err := s.repo.GetBomVersionsByItemID(ctx, bom.ItemID)
 	if err != nil {
 		return nil, err
 	}
-	header, err := s.repo.GetRoutingHeaderByRevisionID(ctx, targetRevisionID)
-	if err != nil {
-		return nil, err
+
+	// Find the latest version (highest bom_version number)
+	var latest *models.BomItem
+	for i := range versions {
+		if latest == nil || versions[i].Version > latest.Version {
+			latest = &versions[i]
+		}
 	}
-	if header == nil {
-		header = &models.RoutingHeader{ItemID: targetItemID, ItemRevisionID: &targetRevisionID, Version: 1, Status: "Draft"}
-		if err := s.repo.CreateRoutingHeader(ctx, header); err != nil {
+	if latest == nil {
+		return nil, apperror.NotFound("no bom versions found")
+	}
+
+	// Only the latest version is editable; older versions are read-only
+	if bomID != latest.ID {
+		return nil, apperror.Conflict("version is read-only")
+	}
+
+	// If latest is Released, create a new Draft revision from it
+	workingBom := latest
+	if latest.Status != "Draft" {
+		workingBom, err = s.createDraftRevisionFrom(ctx, latest, versions)
+		if err != nil {
 			return nil, err
 		}
 	}
-	op := &models.RoutingOperation{
-		RoutingHeaderID: header.ID,
-		OpSeq:           req.OpSeq,
-		ProcessID:       req.ProcessID,
-		MachineID:       req.MachineID,
-		CycleTimeSec:    req.CycleTimeSec,
-		SetupTimeMin:    req.SetupTimeMin,
-		MachineStroke:   req.MachineStroke,
-		Notes:           req.ToolingRef,
+
+	// Add routes to the working bom
+	results := make([]models.ProcessRouteMutationResponse, 0, len(reqs))
+	for _, req := range reqs {
+		targetItemID, targetRevisionID, lineID, err := s.resolveRouteTarget(ctx, workingBom, req.LineID)
+		if err != nil {
+			return nil, err
+		}
+		header, err := s.repo.GetRoutingHeaderByRevisionID(ctx, targetRevisionID)
+		if err != nil {
+			return nil, err
+		}
+		if header == nil {
+			header = &models.RoutingHeader{ItemID: targetItemID, ItemRevisionID: &targetRevisionID, Version: 1, Status: "Draft"}
+			if err := s.repo.CreateRoutingHeader(ctx, header); err != nil {
+				return nil, err
+			}
+		}
+		op := &models.RoutingOperation{
+			RoutingHeaderID: header.ID,
+			OpSeq:           req.OpSeq,
+			ProcessID:       req.ProcessID,
+			MachineID:       req.MachineID,
+			CycleTimeSec:    req.CycleTimeSec,
+			SetupTimeMin:    req.SetupTimeMin,
+			MachineStroke:   req.MachineStroke,
+			Notes:           req.ToolingRef,
+		}
+		if err := s.repo.CreateOperation(ctx, op); err != nil {
+			return nil, err
+		}
+		if err := s.repo.ReplaceToolings(ctx, op.ID, req.Toolings); err != nil {
+			return nil, err
+		}
+		res, err := s.buildProcessRouteMutationResponse(ctx, workingBom, lineID, op)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, *res)
 	}
-	if err := s.repo.CreateOperation(ctx, op); err != nil {
+
+	// Auto-release: unset IsCurrent on all versions, set workingBom as Released + IsCurrent
+	for i := range versions {
+		if versions[i].ID == workingBom.ID {
+			continue
+		}
+		if versions[i].IsCurrent {
+			versions[i].IsCurrent = false
+			if err := s.repo.UpdateBomItem(ctx, &versions[i]); err != nil {
+				return nil, err
+			}
+		}
+	}
+	workingBom.Status = "Released"
+	workingBom.IsCurrent = true
+	if err := s.repo.UpdateBomItem(ctx, workingBom); err != nil {
 		return nil, err
 	}
-	if err := s.repo.ReplaceToolings(ctx, op.ID, req.Toolings); err != nil {
+
+	return results, nil
+}
+
+// createDraftRevisionFrom creates a new Draft BomItem by cloning sourceBom (routing + spec + lines).
+func (s *service) createDraftRevisionFrom(ctx context.Context, sourceBom *models.BomItem, versions []models.BomItem) (*models.BomItem, error) {
+	nextVersion := sourceBom.Version + 1
+	for _, v := range versions {
+		if v.Version >= nextVersion {
+			nextVersion = v.Version + 1
+		}
+	}
+	sourceRev, err := s.resolveBomRootRevision(ctx, sourceBom)
+	if err != nil {
 		return nil, err
 	}
-	return s.buildProcessRouteMutationResponse(ctx, bom, lineID, op)
+	if sourceRev == nil {
+		return nil, apperror.NotFound("source item revision not found")
+	}
+	newRev, err := s.createNextItemRevision(ctx, sourceBom.ItemID, nextVersion, nil)
+	if err != nil {
+		return nil, err
+	}
+	rootItem, err := s.repo.GetItemByID(ctx, sourceBom.ItemID)
+	if err != nil {
+		return nil, err
+	}
+	newRevLabel := newRev.Revision
+	rootItem.CurrentRevision = &newRevLabel
+	_ = s.repo.UpdateItem(ctx, rootItem)
+
+	if spec, err := s.repo.GetMaterialSpec(ctx, sourceRev.ID); err == nil && spec != nil {
+		copySpec := *spec
+		copySpec.ItemRevisionID = newRev.ID
+		_ = s.repo.UpsertMaterialSpec(ctx, &copySpec)
+	}
+	if err := s.cloneRoutingForRevision(ctx, sourceBom.ItemID, sourceRev.ID, newRev.ID); err != nil {
+		return nil, err
+	}
+	newBom := &models.BomItem{
+		ItemID:             sourceBom.ItemID,
+		RootItemRevisionID: &newRev.ID,
+		CopiedFromBomID:    &sourceBom.ID,
+		Version:            nextVersion,
+		Status:             "Draft",
+		Description:        sourceBom.Description,
+		IsCurrent:          false,
+	}
+	if err := s.repo.CreateBomItem(ctx, newBom); err != nil {
+		return nil, err
+	}
+	lines, err := s.repo.GetBomLines(ctx, sourceBom.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, line := range lines {
+		clone := line
+		clone.ID = 0
+		clone.BomItemID = newBom.ID
+		_ = s.repo.CreateBomLine(ctx, &clone)
+	}
+	return newBom, nil
 }
 
 func (s *service) PatchProcessRoute(ctx context.Context, bomID, routeID int64, req models.PatchProcessRouteRequest) (*models.ProcessRouteMutationResponse, error) {

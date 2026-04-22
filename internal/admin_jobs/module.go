@@ -36,10 +36,12 @@ func NewHTTPModule(
 // RegisterRoutes registers admin job endpoints.
 // Base: /api/v1/admin/jobs
 //
-//	POST /rebuild-prl-period-summaries   rebuild inventory_demand_periode_summaries
+//	POST /rebuild-prl-period-summaries              rebuild inventory_demand_periode_summaries
+//	POST /supplier-performance/recompute            recompute supplier performance snapshots
 func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	g := r.Group("/api/v1/admin/jobs")
 	g.Use(authMiddleware.BasicAuthMiddleware(m.adminJobUser, m.adminJobPass))
 
 	g.POST("/rebuild-prl-period-summaries", m.base.RunAction(m.handler.RebuildPRLPeriodSummaries))
+	g.POST("/supplier-performance/recompute", m.base.RunAction(m.handler.RecomputeSupplierPerformance))
 }
