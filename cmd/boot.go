@@ -16,6 +16,7 @@ import (
 	adminJobsService "github.com/ganasa18/go-template/internal/admin_jobs/service"
 	actionUIModule "github.com/ganasa18/go-template/internal/action_ui"
 	actionUIHandler "github.com/ganasa18/go-template/internal/action_ui/handler"
+	actionUIIncomingRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
 	actionUIProductionRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
 	actionUIRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
 	actionUIService "github.com/ganasa18/go-template/internal/action_ui/service"
@@ -150,6 +151,10 @@ import (
 	warehouseHandler "github.com/ganasa18/go-template/internal/warehouse/handler"
 	warehouseRepository "github.com/ganasa18/go-template/internal/warehouse/repository"
 	warehouseService "github.com/ganasa18/go-template/internal/warehouse/service"
+	wipModule "github.com/ganasa18/go-template/internal/wip"
+	wipHandler "github.com/ganasa18/go-template/internal/wip/handler"
+	wipRepository "github.com/ganasa18/go-template/internal/wip/repository"
+	wipService "github.com/ganasa18/go-template/internal/wip/service"
 	workOrderModule "github.com/ganasa18/go-template/internal/work_order"
 	workOrderHandler "github.com/ganasa18/go-template/internal/work_order/handler"
 	workOrderRepository "github.com/ganasa18/go-template/internal/work_order/repository"
@@ -238,7 +243,8 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	// Action UI module (incoming scans)
 	actionRepo := actionUIRepo.New(db)
 	actionUIProductionRepo := actionUIProductionRepo.NewProductionRepository(db)
-	actionSvc := actionUIService.New(actionRepo, actionUIProductionRepo)
+	actionUIIncomingRepo := actionUIIncomingRepo.NewIncomingRepository(db)
+	actionSvc := actionUIService.New(actionRepo, actionUIProductionRepo, actionUIIncomingRepo)
 	actionHTTPHandler := actionUIHandler.New(actionSvc)
 
 	// QC module (task list + approve/reject)
@@ -333,6 +339,9 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	spRepo := spRepository.New(db)
 	spSvc := spService.New(spRepo)
 	spHTTPHandler := spHandler.New(spSvc)
+	wipRepo := wipRepository.New(db)
+	wipSvc := wipService.New(wipRepo)
+	wipHTTPHandler := wipHandler.New(wipSvc)
 
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
@@ -368,6 +377,8 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		outgoingModule.NewHTTPModule(cfg, baseHTTPHandler, outgoingHTTPHandler, authSvc, roleSvc, outgoingSvc),
 		scrapModule.NewHTTPModule(cfg, baseHTTPHandler, scrapHTTPHandler, authSvc, roleSvc, scrapSvc),
 		finishedGoodsModule.NewHTTPModule(cfg, baseHTTPHandler, fgHTTPHandler, authSvc, roleSvc, fgSvc),
+		warehouseModule.NewHTTPModule(cfg, baseHTTPHandler, warehouseHTTPHandler, authSvc),
+		wipModule.NewHTTPModule(cfg, baseHTTPHandler, wipHTTPHandler, authSvc, roleSvc, wipSvc),
 		adminJobsModule.NewHTTPModule(cfg, baseHTTPHandler, adminJobsHTTPHandler, adminJobsSvc),
 		coModule.NewHTTPModule(cfg, baseHTTPHandler, coHTTPHandler, authSvc, roleSvc, coSvc),
 		dscModule.NewHTTPModule(baseHTTPHandler, dscHTTPHandler, authSvc, roleSvc, dscSvc),

@@ -168,3 +168,27 @@ type MasterMachine struct {
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
+
+type DeliveryNoteItem struct {
+	ID             int64      `json:"id" gorm:"primaryKey;column:id"`
+	DNID           int64      `json:"dn_id" gorm:"column:dn_id;index"`             //foreign key ke delivery note
+	ItemUniqCode   string     `json:"item_uniq_code" gorm:"column:item_uniq_code"` //request, diambil dari item_uniq_code di purchase order items bedasarkan po_id
+	Quantity       int64      `json:"quantity" gorm:"column:quantity"`             //request, diambil dari ordered_qty di purchase order items bedasarkan po_id dan item_uniq_code
+	UOM            string     `json:"uom" gorm:"column:uom"`                       //request, diambil dari uom di purchase order items bedasarkan po_id dan item_uniq_code
+	Weight         int64      `json:"weight" gorm:"column:weight"`                 //request, diambil dari weight di purchase order items bedasarkan po_id dan item_uniq_code
+	KanbanID       int64      `json:"kanban_id" gorm:"column:kanban_id"`           //request, diambil dari table kanban_parameter bedasarkan item_uniq_code
+	QR             string     `json:"qr" gorm:"column:qr"`                         //hasil generate qr code yang berisi dn_number dan item_uniq_code, format datanya dn_number-item_uniq_code
+	CreatedAt      time.Time  `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt      time.Time  `json:"updated_at" gorm:"column:updated_at"`
+	OrderQty       int64      `json:"order_qty" gorm:"column:order_qty"`             //request, diambil dari ordered_qty di purchase order items bedasarkan po_id dan item_uniq_code
+	DateIncoming   *time.Time `json:"date_incoming" gorm:"column:date_incoming"`     //request, diisi ketika barang diterima
+	QtyStated      int64      `json:"qty_stated" gorm:"column:qty_stated"`           //request, diisi ketika barang diterima, diambil dari quantity di delivery note item
+	QtyReceived    int64      `json:"qty_received" gorm:"column:qty_received"`       //request, diisi ketika barang diterima, diambil dari quantity yang diterima di lapangan, bisa lebih kecil atau lebih besar dari qty_stated
+	WeightReceived float64    `json:"weight_received" gorm:"column:weight_received"` //request, diisi ketika barang diterima, diambil dari weight yang diterima di lapangan, bisa lebih kecil atau lebih besar dari weight di delivery note item
+	QualityStatus  string     `json:"quality_status" gorm:"column:quality_status"`   //request, diisi ketika barang diterima, bisa bernilai "good" atau "damaged"
+	PcsPerKanban   int64      `json:"pcs_per_kanban" gorm:"column:pcs_per_kanban"`   //request, diambil dari pcs_per_kanban di purchase order items bedasarkan po_id dan item_uniq_code
+	ReceivedAt     *time.Time `json:"received_at" gorm:"column:received_at"`         //request, diisi ketika barang diterima, berisi tanggal dan jam ketika barang diterima
+	PackingNumber  string     `json:"packing_number" gorm:"column:packing_number"`   //request, diambil dari kanban number di kanban parameter bedasarkan item_uniq_code
+	Check          string     `json:"check" gorm:"check"`                            //field untuk menampung nilai check ketika menerima barang,
+	QtySent        int64      `json:"qty_sent" gorm:"qty_sent"`
+}
