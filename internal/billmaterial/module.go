@@ -66,7 +66,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		g.GET("/:id", roleMiddleware.RequirePermission(m.roleService, "bom", "view"), m.base.RunAction(m.handler.GetBomDetail))
 		g.GET("/:id/versions", roleMiddleware.RequirePermission(m.roleService, "bom", "view"), m.base.RunAction(m.handler.GetBomVersions))
 		g.POST("/:id/revisions", roleMiddleware.RequirePermission(m.roleService, "bom", "create"), m.base.RunAction(m.handler.CreateBomRevision))
-		g.POST("/:id/release", roleMiddleware.RequirePermission(m.roleService, "bom", "update"), m.base.RunAction(m.handler.ReleaseBom))
+		g.POST("/:id/activate", roleMiddleware.RequirePermission(m.roleService, "bom", "update"), m.base.RunAction(m.handler.ActivateBomVersion))
 		g.PUT("/:id", roleMiddleware.RequirePermission(m.roleService, "bom", "update"), m.base.RunAction(m.handler.UpdateBom))
 		g.PUT("/:id/lines/:line_id", roleMiddleware.RequirePermission(m.roleService, "bom", "update"), m.base.RunAction(m.handler.UpdateBomChild))
 		g.POST("/:id/process-routes", roleMiddleware.RequirePermission(m.roleService, "bom", "update"), m.base.RunAction(m.handler.AddProcessRoute))
