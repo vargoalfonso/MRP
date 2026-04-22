@@ -127,6 +127,10 @@ import (
 	warehouseHandler "github.com/ganasa18/go-template/internal/warehouse/handler"
 	warehouseRepository "github.com/ganasa18/go-template/internal/warehouse/repository"
 	warehouseService "github.com/ganasa18/go-template/internal/warehouse/service"
+	wipModule "github.com/ganasa18/go-template/internal/wip"
+	wipHandler "github.com/ganasa18/go-template/internal/wip/handler"
+	wipRepository "github.com/ganasa18/go-template/internal/wip/repository"
+	wipService "github.com/ganasa18/go-template/internal/wip/service"
 	workOrderModule "github.com/ganasa18/go-template/internal/work_order"
 	workOrderHandler "github.com/ganasa18/go-template/internal/work_order/handler"
 	workOrderRepository "github.com/ganasa18/go-template/internal/work_order/repository"
@@ -286,6 +290,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	warehouseSvc := warehouseService.New(warehouseRepo)
 	warehouseHTTPHandler := warehouseHandler.New(warehouseSvc)
 
+	wipRepo := wipRepository.New(db)
+	wipSvc := wipService.New(wipRepo)
+	wipHTTPHandler := wipHandler.New(wipSvc)
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -318,6 +326,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		scrapModule.NewHTTPModule(cfg, baseHTTPHandler, scrapHTTPHandler, authSvc, roleSvc, scrapSvc),
 		finishedGoodsModule.NewHTTPModule(cfg, baseHTTPHandler, fgHTTPHandler, authSvc, roleSvc, fgSvc),
 		warehouseModule.NewHTTPModule(cfg, baseHTTPHandler, warehouseHTTPHandler, authSvc),
+		wipModule.NewHTTPModule(cfg, baseHTTPHandler, wipHTTPHandler, authSvc, roleSvc, wipSvc),
 	}
 
 	// --- Server ---
