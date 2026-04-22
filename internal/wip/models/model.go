@@ -65,3 +65,16 @@ type WIPLog struct {
 func (WIPLog) TableName() string {
 	return "wip_logs"
 }
+
+type WIPListResponse struct {
+	Process               string `json:"process"`
+	Uniq                  string `json:"uniq"`
+	PartNumber            string `json:"part_number"`
+	PartInfo              string `json:"part_info"`
+	WONumber              string `json:"wo_number"`
+	Stock                 int    `json:"stock"`
+	KanbanNumber          string `json:"kanban_number"`
+	Type                  string `json:"type"`
+	StockToCompleteKanban int    `json:"stock_to_complete_kanban"`
+	Kanban                int    `json:"kanban"`
+}
