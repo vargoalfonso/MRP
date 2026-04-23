@@ -114,21 +114,3 @@ func (h *HTTPHandler) Override(ctx *app.Context) *app.CostumeResponse {
 		Message:   http.StatusText(http.StatusOK),
 	}
 }
-
-// AuditLogs handles GET /api/v1/suppliers/performance/:supplier_id/audit-logs
-func (h *HTTPHandler) AuditLogs(ctx *app.Context) *app.CostumeResponse {
-	supplierUUID := ctx.Param("supplier_id")
-	periodType := ctx.Query("period_type")
-	periodValue := ctx.Query("period_value")
-
-	logs, err := h.svc.AuditLogs(ctx.Request.Context(), supplierUUID, periodType, periodValue)
-	if err != nil {
-		return app.NewError(ctx, err)
-	}
-	return &app.CostumeResponse{
-		RequestID: ctx.APIReqID,
-		Status:    http.StatusOK,
-		Message:   http.StatusText(http.StatusOK),
-		Data:      map[string]interface{}{"items": logs},
-	}
-}

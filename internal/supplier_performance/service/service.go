@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -16,7 +15,6 @@ type IService interface {
 	Summary(ctx context.Context, periodType, periodValue string) (*models.SummaryResponse, error)
 	Charts(ctx context.Context, periodType, periodValue string) (*models.ChartsResponse, error)
 	Override(ctx context.Context, req models.OverrideRequest, actor string) error
-	AuditLogs(ctx context.Context, supplierUUID, periodType, periodValue string) ([]models.AuditLog, error)
 	Export(ctx context.Context, p pagination.SupplierPerformancePaginationInput) (*models.ExportResponse, error)
 }
 
@@ -28,6 +26,12 @@ func New(repo repository.IRepository) IService { return &service{repo: repo} }
 
 func (s *service) List(ctx context.Context, p pagination.SupplierPerformancePaginationInput) (*models.ListResponse, error) {
 	p = normalizeInput(p)
+	resolvedPeriodValue, err := s.resolvePeriodValue(ctx, p.PeriodType, p.PeriodValue)
+	if err != nil {
+		return nil, err
+	}
+	p.PeriodValue = resolvedPeriodValue
+
 	rows, total, err := s.repo.ListSnapshots(ctx, p)
 	if err != nil {
 		return nil, err
@@ -55,29 +59,34 @@ func (s *service) List(ctx context.Context, p pagination.SupplierPerformancePagi
 }
 
 func (s *service) Summary(ctx context.Context, periodType, periodValue string) (*models.SummaryResponse, error) {
-	if periodValue == "" {
-		periodValue = resolvePeriodValue(periodType)
+	periodType = normalizePeriodType(periodType)
+	resolvedPeriodValue, err := s.resolvePeriodValue(ctx, periodType, periodValue)
+	if err != nil {
+		return nil, err
 	}
-	return s.repo.GetSummary(ctx, periodType, periodValue)
+	return s.repo.GetSummary(ctx, periodType, resolvedPeriodValue)
 }
 
 func (s *service) Charts(ctx context.Context, periodType, periodValue string) (*models.ChartsResponse, error) {
-	if periodValue == "" {
-		periodValue = resolvePeriodValue(periodType)
+	periodType = normalizePeriodType(periodType)
+	resolvedPeriodValue, err := s.resolvePeriodValue(ctx, periodType, periodValue)
+	if err != nil {
+		return nil, err
 	}
-	return s.repo.GetCharts(ctx, periodType, periodValue)
+	return s.repo.GetCharts(ctx, periodType, resolvedPeriodValue)
 }
 
 func (s *service) Override(ctx context.Context, req models.OverrideRequest, actor string) error {
-	return s.repo.ApplyOverride(ctx, req.SupplierUUID, req.PeriodType, req.PeriodValue, req.OverrideGrade, req.Remarks, actor)
-}
-
-func (s *service) AuditLogs(ctx context.Context, supplierUUID, periodType, periodValue string) ([]models.AuditLog, error) {
-	return s.repo.ListAuditLogs(ctx, supplierUUID, periodType, periodValue)
+	return s.repo.ApplyOverride(ctx, req.SupplierUUID, toStoragePeriodType(req.PeriodType), req.PeriodValue, req.OverrideGrade, req.Remarks, actor)
 }
 
 func (s *service) Export(ctx context.Context, p pagination.SupplierPerformancePaginationInput) (*models.ExportResponse, error) {
 	p = normalizeInput(p)
+	resolvedPeriodValue, err := s.resolvePeriodValue(ctx, p.PeriodType, p.PeriodValue)
+	if err != nil {
+		return nil, err
+	}
+	p.PeriodValue = resolvedPeriodValue
 	p.Limit = 10000
 	p.Page = 1
 
@@ -108,17 +117,11 @@ func (s *service) Export(ctx context.Context, p pagination.SupplierPerformancePa
 
 // --- helpers ---
 
-func resolvePeriodValue(periodType string) string {
-	now := time.Now().UTC()
-	switch strings.ToLower(periodType) {
-	case "quarterly":
-		q := (int(now.Month())-1)/3 + 1
-		return fmt.Sprintf("%d-Q%d", now.Year(), q)
-	case "yearly":
-		return fmt.Sprintf("%d", now.Year())
-	default:
-		return now.Format("2006-01")
+func (s *service) resolvePeriodValue(ctx context.Context, periodType, periodValue string) (string, error) {
+	if strings.TrimSpace(periodValue) != "" {
+		return strings.TrimSpace(periodValue), nil
 	}
+	return s.repo.ResolveLatestPeriodValue(ctx, normalizePeriodType(periodType))
 }
 
 func statusLabelFromGrade(grade string) string {
@@ -133,6 +136,7 @@ func statusLabelFromGrade(grade string) string {
 }
 
 func normalizeInput(p pagination.SupplierPerformancePaginationInput) pagination.SupplierPerformancePaginationInput {
+	p.PeriodType = normalizePeriodType(p.PeriodType)
 	if p.Page <= 0 {
 		p.Page = 1
 	}
@@ -143,6 +147,24 @@ func normalizeInput(p pagination.SupplierPerformancePaginationInput) pagination.
 		p.Limit = 200
 	}
 	return p
+}
+
+func normalizePeriodType(periodType string) string {
+	switch strings.ToLower(strings.TrimSpace(periodType)) {
+	case "date":
+		return "date"
+	case "yearly":
+		return "yearly"
+	default:
+		return "monthly"
+	}
+}
+
+func toStoragePeriodType(periodType string) string {
+	if normalizePeriodType(periodType) == "date" {
+		return "daily"
+	}
+	return normalizePeriodType(periodType)
 }
 
 func toResponse(s models.Snapshot) models.SnapshotResponse {

@@ -17,8 +17,8 @@ type IRepository interface {
 	// using the given active_periode and resolved working-days values.
 	RebuildDemandPeriodeSummaries(ctx context.Context, activePeriode string, workingDays int, workingDaysPeriodeUsed string) (int64, error)
 	// ListSupplierPerformanceAggregates reads delivery, QC, and PO data per active supplier
-	// for the given period and returns one aggregate row per supplier.
-	ListSupplierPerformanceAggregates(ctx context.Context, periodType, periodValue string) ([]SupplierPerformanceAggregateRow, error)
+	// for one snapshot date and returns one aggregate row per supplier.
+	ListSupplierPerformanceAggregates(ctx context.Context, snapshotDate string) ([]SupplierPerformanceAggregateRow, error)
 	// UpsertSupplierPerformanceSnapshots inserts or updates computed snapshot rows.
 	UpsertSupplierPerformanceSnapshots(ctx context.Context, rows []SupplierPerformanceSnapshotRow) (int64, error)
 }

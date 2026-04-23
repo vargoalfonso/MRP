@@ -12,7 +12,7 @@ import (
 //
 // Request body:
 //
-//	{ "period_type": "monthly", "period_value": "2026-04", "logic_version": "v1", ... }
+//	{ "snapshot_date": "2026-04-23" }
 func (h *HTTPHandler) RecomputeSupplierPerformance(ctx *app.Context) *app.CostumeResponse {
 	var req service.RecomputeSupplierPerformanceRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -22,14 +22,6 @@ func (h *HTTPHandler) RecomputeSupplierPerformance(ctx *app.Context) *app.Costum
 			Message:   "invalid request body",
 		}
 	}
-	if req.PeriodType == "" {
-		return &app.CostumeResponse{
-			RequestID: ctx.APIReqID,
-			Status:    http.StatusUnprocessableEntity,
-			Message:   "period_type is required",
-		}
-	}
-
 	n, err := h.svc.RecomputeSupplierPerformance(ctx.Request.Context(), req)
 	if err != nil {
 		return &app.CostumeResponse{
@@ -39,13 +31,19 @@ func (h *HTTPHandler) RecomputeSupplierPerformance(ctx *app.Context) *app.Costum
 		}
 	}
 
+	snapshotDate := req.SnapshotDate
+	if snapshotDate == "" {
+		snapshotDate = time.Now().UTC().Format("2006-01-02")
+	}
+
 	return &app.CostumeResponse{
 		RequestID: ctx.APIReqID,
 		Status:    http.StatusAccepted,
 		Message:   "Supplier performance recompute queued",
 		Data: map[string]interface{}{
 			"rows_upserted": n,
-			"period_type":   req.PeriodType,
+			"period_type":   "daily",
+			"snapshot_date": snapshotDate,
 		},
 	}
 }

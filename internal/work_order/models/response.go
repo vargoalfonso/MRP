@@ -182,6 +182,57 @@ type UniqOptionsResponse struct {
 	Items []UniqOptionItem `json:"items"`
 }
 
+type BulkDocumentOptionItem struct {
+	DocumentID     string `json:"document_id"`
+	DocumentNumber string `json:"document_number"`
+	DocumentType   string `json:"document_type"`
+	DocumentDate   string `json:"document_date"`
+	CustomerName   string `json:"customer_name"`
+	ItemCount      int    `json:"item_count"`
+}
+
+type BulkDocumentOptionsResponse struct {
+	Items []BulkDocumentOptionItem `json:"items"`
+}
+
+type BulkDocumentMeta struct {
+	DocumentID     string `json:"document_id"`
+	DocumentNumber string `json:"document_number"`
+	DocumentType   string `json:"document_type"`
+	DocumentDate   string `json:"document_date"`
+	CustomerName   string `json:"customer_name"`
+}
+
+type BulkDocumentItem struct {
+	SourceLineID string  `json:"source_line_id"`
+	ItemUniqCode string  `json:"item_uniq_code"`
+	PartName     string  `json:"part_name"`
+	PartNumber   string  `json:"part_number"`
+	UOM          string  `json:"uom"`
+	Quantity     float64 `json:"quantity"`
+	KanbanQty    *int    `json:"kanban_qty"`
+	KanbanCount  int     `json:"kanban_count"`
+	TargetDate   *string `json:"target_date"`
+	ProcessName  *string `json:"process_name,omitempty"`
+}
+
+type BulkDocumentItemsResponse struct {
+	Document BulkDocumentMeta   `json:"document"`
+	Items    []BulkDocumentItem `json:"items"`
+}
+
+type CreateBulkWorkOrderResponse struct {
+	ID                 string                     `json:"id"`
+	WoID               string                     `json:"wo_id"`
+	WoNumber           string                     `json:"wo_number"`
+	WOKind             string                     `json:"wo_kind"`
+	ApprovalStatus     string                     `json:"approval_status"`
+	SourceDocumentID   string                     `json:"source_document_id"`
+	SourceDocumentType string                     `json:"source_document_type"`
+	QRDataURL          *string                    `json:"qr_data_url"`
+	Items              []CreateWorkOrderItemBrief `json:"items"`
+}
+
 type RMProcessingWorkOrderCreateResponse struct {
 	ID                 string  `json:"id"`
 	WoID               string  `json:"wo_id"`

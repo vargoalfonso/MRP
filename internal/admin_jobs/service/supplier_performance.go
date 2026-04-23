@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/ganasa18/go-template/internal/admin_jobs/repository"
@@ -20,12 +19,12 @@ const (
 )
 
 // RecomputeSupplierPerformanceRequest is the minimal payload for the recompute job.
-// period_value is auto-resolved from the current date based on period_type.
+// snapshot_date is optional and defaults to the current UTC date.
 type RecomputeSupplierPerformanceRequest struct {
-	PeriodType string `json:"period_type"`
+	PeriodType   string `json:"period_type,omitempty"`
+	SnapshotDate string `json:"snapshot_date,omitempty"`
 }
 
-// supplierPerformanceAggregateRow is the internal service representation of aggregated data.
 type supplierPerformanceAggregateRow struct {
 	SupplierUUID           string
 	SupplierCode           string
@@ -39,7 +38,6 @@ type supplierPerformanceAggregateRow struct {
 	RejectedQuantity       float64
 }
 
-// supplierPerformanceSnapshotRow is the fully-computed row before mapping to repository type.
 type supplierPerformanceSnapshotRow struct {
 	SnapshotUUID            string
 	SupplierUUID            string
@@ -74,9 +72,12 @@ type supplierPerformanceSnapshotRow struct {
 }
 
 func (s *service) RecomputeSupplierPerformance(ctx context.Context, req RecomputeSupplierPerformanceRequest) (int64, error) {
-	periodValue := resolvePeriodValue(req.PeriodType)
+	snapshotDate, err := resolveSnapshotDate(req.SnapshotDate)
+	if err != nil {
+		return 0, err
+	}
 
-	repoRows, err := s.repo.ListSupplierPerformanceAggregates(ctx, req.PeriodType, periodValue)
+	repoRows, err := s.repo.ListSupplierPerformanceAggregates(ctx, snapshotDate)
 	if err != nil {
 		return 0, err
 	}
@@ -95,29 +96,24 @@ func (s *service) RecomputeSupplierPerformance(ctx context.Context, req Recomput
 			AcceptedQuantity:       r.AcceptedQuantity,
 			RejectedQuantity:       r.RejectedQuantity,
 		}
-		snap := buildSupplierPerformanceSnapshot(agg, req.PeriodType, periodValue)
+		snap := buildSupplierPerformanceSnapshot(agg, snapshotDate)
 		snapshots = append(snapshots, toRepositorySnapshotRow(snap))
 	}
 
 	return s.repo.UpsertSupplierPerformanceSnapshots(ctx, snapshots)
 }
 
-// resolvePeriodValue derives the period_value string from the current date.
-// monthly → "2026-04", quarterly → "2026-Q2", yearly → "2026"
-func resolvePeriodValue(periodType string) string {
-	now := time.Now().UTC()
-	switch strings.ToLower(periodType) {
-	case "quarterly":
-		q := (int(now.Month())-1)/3 + 1
-		return fmt.Sprintf("%d-Q%d", now.Year(), q)
-	case "yearly":
-		return fmt.Sprintf("%d", now.Year())
-	default: // monthly
-		return now.Format("2006-01")
+func resolveSnapshotDate(snapshotDate string) (string, error) {
+	if snapshotDate == "" {
+		return time.Now().UTC().Format("2006-01-02"), nil
 	}
+	if _, err := time.Parse("2006-01-02", snapshotDate); err != nil {
+		return "", fmt.Errorf("invalid snapshot_date %q: %w", snapshotDate, err)
+	}
+	return snapshotDate, nil
 }
 
-func buildSupplierPerformanceSnapshot(row supplierPerformanceAggregateRow, periodType, periodValue string) supplierPerformanceSnapshotRow {
+func buildSupplierPerformanceSnapshot(row supplierPerformanceAggregateRow, snapshotDate string) supplierPerformanceSnapshotRow {
 	total := row.OnTimeDeliveries + row.LateDeliveries
 
 	var otdPct float64
@@ -143,23 +139,15 @@ func buildSupplierPerformanceSnapshot(row supplierPerformanceAggregateRow, perio
 		grade = "B"
 	}
 
-	statusLabel := spGradeToStatusLabel(grade)
-
-	logicVersion := defaultLogicVersion
-	formulaOTD := defaultFormulaOTD
-	formulaQuality := defaultFormulaQuality
-	formulaGrade := defaultFormulaGrade
-	formulaNotes := defaultFormulaNotes
-
-	evalDate := periodEndDate(periodType, periodValue)
+	evalDate, _ := time.Parse("2006-01-02", snapshotDate)
 
 	return supplierPerformanceSnapshotRow{
 		SnapshotUUID:            uuid.New().String(),
 		SupplierUUID:            row.SupplierUUID,
 		SupplierCode:            row.SupplierCode,
 		SupplierName:            row.SupplierName,
-		EvaluationPeriodType:    periodType,
-		EvaluationPeriodValue:   periodValue,
+		EvaluationPeriodType:    "daily",
+		EvaluationPeriodValue:   snapshotDate,
 		EvaluationDate:          evalDate,
 		TotalDeliveries:         total,
 		OnTimeDeliveries:        row.OnTimeDeliveries,
@@ -175,15 +163,15 @@ func buildSupplierPerformanceSnapshot(row supplierPerformanceAggregateRow, perio
 		ComputedScore:           score,
 		SystemGrade:             grade,
 		FinalGrade:              grade,
-		StatusLabel:             statusLabel,
+		StatusLabel:             spGradeToStatusLabel(grade),
 		PoorDeliveryPerformance: otdPct < 80,
 		QCAlert:                 qualityPct < 90,
 		SupplierReviewRequired:  grade == "C",
-		LogicVersion:            logicVersion,
-		FormulaOTD:              formulaOTD,
-		FormulaQuality:          formulaQuality,
-		FormulaGrade:            formulaGrade,
-		FormulaNotes:            formulaNotes,
+		LogicVersion:            defaultLogicVersion,
+		FormulaOTD:              defaultFormulaOTD,
+		FormulaQuality:          defaultFormulaQuality,
+		FormulaGrade:            defaultFormulaGrade,
+		FormulaNotes:            defaultFormulaNotes,
 	}
 }
 
@@ -223,7 +211,7 @@ func toRepositorySnapshotRow(s supplierPerformanceSnapshotRow) repository.Suppli
 }
 
 func spGradeToStatusLabel(grade string) string {
-	switch strings.ToUpper(grade) {
+	switch grade {
 	case "A":
 		return "Excellent"
 	case "B":
@@ -235,30 +223,4 @@ func spGradeToStatusLabel(grade string) string {
 
 func round2sp(v float64) float64 {
 	return math.Round(v*100) / 100
-}
-
-// periodEndDate returns the last day of the period as time.Time.
-func periodEndDate(periodType, periodValue string) time.Time {
-	switch strings.ToLower(periodType) {
-	case "monthly":
-		t, err := time.Parse("2006-01", periodValue)
-		if err != nil {
-			return time.Now().UTC()
-		}
-		return time.Date(t.Year(), t.Month()+1, 0, 0, 0, 0, 0, time.UTC)
-	case "quarterly":
-		var year, quarter int
-		if _, err := fmt.Sscanf(periodValue, "%d-Q%d", &year, &quarter); err != nil {
-			return time.Now().UTC()
-		}
-		endMonth := time.Month(quarter * 3)
-		return time.Date(year, endMonth+1, 0, 0, 0, 0, 0, time.UTC)
-	case "yearly":
-		t, err := time.Parse("2006", periodValue)
-		if err != nil {
-			return time.Now().UTC()
-		}
-		return time.Date(t.Year(), 12, 31, 0, 0, 0, 0, time.UTC)
-	}
-	return time.Now().UTC()
 }

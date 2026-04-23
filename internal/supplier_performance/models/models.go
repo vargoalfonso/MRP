@@ -115,21 +115,10 @@ type SummaryResponse struct {
 	ComputedAt              time.Time `json:"computed_at"`
 }
 
-// AuditLog is one entry in GET /:supplier_id/audit-logs.
-type AuditLog struct {
-	Action                string    `gorm:"column:action" json:"action"`
-	OldGrade              *string   `gorm:"column:old_grade" json:"old_grade,omitempty"`
-	NewGrade              *string   `gorm:"column:new_grade" json:"new_grade,omitempty"`
-	Remarks               *string   `gorm:"column:remarks" json:"remarks,omitempty"`
-	LogicVersion          *string   `gorm:"column:logic_version" json:"logic_version,omitempty"`
-	Actor                 *string   `gorm:"column:actor" json:"actor,omitempty"`
-	OccurredAt            time.Time `gorm:"column:occurred_at" json:"occurred_at"`
-}
-
 // OverrideRequest is the POST /:supplier_id/override body.
 type OverrideRequest struct {
 	SupplierUUID  string `json:"-"`
-	PeriodType    string `json:"period_type" validate:"required,oneof=monthly quarterly yearly"`
+	PeriodType    string `json:"period_type" validate:"required,oneof=date"`
 	PeriodValue   string `json:"period_value" validate:"required"`
 	OverrideGrade string `json:"override_grade" validate:"required,oneof=A B C"`
 	Remarks       string `json:"override_remarks" validate:"required"`
@@ -137,10 +126,12 @@ type OverrideRequest struct {
 
 // ChartsResponse is returned by GET /charts.
 type ChartsResponse struct {
-	Trend   []ChartTrendPoint   `json:"trend"`
-	Scatter []ChartScatterPoint `json:"scatter"`
-	Top5    []ChartRankPoint    `json:"top_5"`
-	Bottom5 []ChartRankPoint    `json:"bottom_5"`
+	Trend         []ChartTrendPoint   `json:"trend"`
+	Scatter       []ChartScatterPoint `json:"scatter"`
+	Top5          []ChartRankPoint    `json:"top_5"`
+	Bottom5       []ChartRankPoint    `json:"bottom_5"`
+	Top5Latest    []ChartRankPoint    `json:"top_5_latest"`
+	Bottom5Latest []ChartRankPoint    `json:"bottom_5_latest"`
 }
 
 // ChartTrendPoint is one period in the trend line.

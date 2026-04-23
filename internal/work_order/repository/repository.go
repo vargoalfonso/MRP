@@ -25,12 +25,42 @@ type IRepository interface {
 	GetSummary(ctx context.Context) (*SummaryRow, error)
 	GetSummaryByKind(ctx context.Context, woKind string) (*SummaryRow, error)
 	GetItemsByWOIDs(ctx context.Context, woIDs []int64) ([]woModels.WorkOrderItem, error)
+	ListBulkSourceDocuments(ctx context.Context, documentType, q, targetDate string, limit int) ([]BulkSourceDocumentRow, error)
+	GetBulkSourceDocument(ctx context.Context, documentUUID string) (*BulkSourceDocumentHeaderRow, error)
+	ListBulkSourceDocumentItems(ctx context.Context, documentUUID string) ([]BulkSourceDocumentItemRow, error)
 
 	ListWorkOrders(ctx context.Context, f ListFilter) ([]WorkOrderRow, int64, error)
 }
 
 type repository struct {
 	db *gorm.DB
+}
+
+type BulkSourceDocumentRow struct {
+	DocumentUUID   string `gorm:"column:document_uuid"`
+	DocumentNumber string `gorm:"column:document_number"`
+	DocumentType   string `gorm:"column:document_type"`
+	DocumentDate   string `gorm:"column:document_date"`
+	CustomerName   string `gorm:"column:customer_name"`
+	ItemCount      int    `gorm:"column:item_count"`
+}
+
+type BulkSourceDocumentHeaderRow struct {
+	DocumentUUID   string `gorm:"column:document_uuid"`
+	DocumentNumber string `gorm:"column:document_number"`
+	DocumentType   string `gorm:"column:document_type"`
+	DocumentDate   string `gorm:"column:document_date"`
+	CustomerName   string `gorm:"column:customer_name"`
+}
+
+type BulkSourceDocumentItemRow struct {
+	SourceLineUUID string  `gorm:"column:source_line_uuid"`
+	ItemUniqCode   string  `gorm:"column:item_uniq_code"`
+	PartName       string  `gorm:"column:part_name"`
+	PartNumber     string  `gorm:"column:part_number"`
+	UOM            string  `gorm:"column:uom"`
+	Quantity       float64 `gorm:"column:quantity"`
+	TargetDate     *string `gorm:"column:target_date"`
 }
 
 func New(db *gorm.DB) IRepository { return &repository{db: db} }
@@ -442,4 +472,95 @@ func (r *repository) GetItemsByWOIDs(ctx context.Context, woIDs []int64) ([]woMo
 		return nil, apperror.InternalWrap("failed to load work order items", err)
 	}
 	return items, nil
+}
+
+func (r *repository) ListBulkSourceDocuments(ctx context.Context, documentType, q, targetDate string, limit int) ([]BulkSourceDocumentRow, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	var rows []BulkSourceDocumentRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			cod.uuid AS document_uuid,
+			cod.document_number,
+			cod.document_type,
+			to_char(cod.document_date, 'YYYY-MM-DD') AS document_date,
+			cod.customer_name_snapshot AS customer_name,
+			COUNT(codi.id) AS item_count
+		FROM customer_order_documents cod
+		JOIN customer_order_document_items codi ON codi.document_id = cod.id
+		WHERE cod.deleted_at IS NULL
+		  AND (? = '' OR cod.document_type = ?)
+		  AND (cod.document_type = 'DN' AND cod.status = 'active'
+		       OR cod.document_type IN ('SO','PO') AND cod.status <> 'cancelled')
+		  AND (? = '' OR cod.document_number ILIKE '%' || ? || '%' OR cod.customer_name_snapshot ILIKE '%' || ? || '%')
+		  AND (? = '' OR EXISTS (
+			SELECT 1
+			FROM customer_order_document_items codi2
+			WHERE codi2.document_id = cod.id
+			  AND to_char(COALESCE(codi2.delivery_date, cod.document_date), 'YYYY-MM-DD') = ?
+		  ))
+		GROUP BY cod.id, cod.uuid, cod.document_number, cod.document_type, cod.document_date, cod.customer_name_snapshot
+		ORDER BY cod.document_date DESC, cod.document_number DESC
+		LIMIT ?
+	`, documentType, documentType, q, q, q, targetDate, targetDate, limit).Scan(&rows).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("failed to list bulk source documents", err)
+	}
+	return rows, nil
+}
+
+func (r *repository) GetBulkSourceDocument(ctx context.Context, documentUUID string) (*BulkSourceDocumentHeaderRow, error) {
+	var row BulkSourceDocumentHeaderRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			cod.uuid AS document_uuid,
+			cod.document_number,
+			cod.document_type,
+			to_char(cod.document_date, 'YYYY-MM-DD') AS document_date,
+			cod.customer_name_snapshot AS customer_name
+		FROM customer_order_documents cod
+		WHERE cod.deleted_at IS NULL
+		  AND cod.uuid = ?
+		  AND cod.document_type IN ('SO','PO','DN')
+		  AND (cod.document_type = 'DN' AND cod.status = 'active'
+		       OR cod.document_type IN ('SO','PO') AND cod.status <> 'cancelled')
+		LIMIT 1
+	`, documentUUID).Scan(&row).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("failed to load bulk source document", err)
+	}
+	if strings.TrimSpace(row.DocumentUUID) == "" {
+		return nil, apperror.NotFound("source document not found")
+	}
+	return &row, nil
+}
+
+func (r *repository) ListBulkSourceDocumentItems(ctx context.Context, documentUUID string) ([]BulkSourceDocumentItemRow, error) {
+	var rows []BulkSourceDocumentItemRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			codi.uuid AS source_line_uuid,
+			codi.item_uniq_code,
+			codi.part_name,
+			codi.part_number,
+			codi.uom,
+			codi.quantity,
+			to_char(codi.delivery_date, 'YYYY-MM-DD') AS target_date
+		FROM customer_order_document_items codi
+		JOIN customer_order_documents cod ON cod.id = codi.document_id
+		WHERE cod.deleted_at IS NULL
+		  AND cod.uuid = ?
+		  AND cod.document_type IN ('SO','PO','DN')
+		  AND (cod.document_type = 'DN' AND cod.status = 'active'
+		       OR cod.document_type IN ('SO','PO') AND cod.status <> 'cancelled')
+		ORDER BY codi.line_no ASC, codi.id ASC
+	`, documentUUID).Scan(&rows).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("failed to list bulk source document items", err)
+	}
+	return rows, nil
 }
