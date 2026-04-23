@@ -15,7 +15,7 @@ type IWIPRepository interface {
 
 	// WIP
 	FindAllWIPPaginated(ctx context.Context, page, limit int) ([]models.WIPListResponse, int64, error)
-	FindWIPByID(ctx context.Context, id int64) (*models.WIP, error)
+	FindWIPByID(ctx context.Context, id int64) (*models.WIPDetailResponse, error)
 	CreateWIP(ctx context.Context, req models.CreateWIPRequest) (*models.WIP, error)
 	UpdateWIP(ctx context.Context, id int64, req models.UpdateWIPRequest) (*models.WIP, error)
 	DeleteWIP(ctx context.Context, id int64) error
@@ -104,17 +104,60 @@ func (r *repository) FindAllWIPPaginated(ctx context.Context, page, limit int) (
 	return data, total, nil
 }
 
-func (r *repository) FindWIPByID(ctx context.Context, id int64) (*models.WIP, error) {
-	var data models.WIP
+func (r *repository) FindWIPByID(ctx context.Context, id int64) (*models.WIPDetailResponse, error) {
+	var rows []struct {
+		ID         int64
+		WONumber   string
+		Uniq       string
+		PartNumber string
+		PartName   string
+		Process    string
+		Stock      int
+	}
 
 	err := r.db.WithContext(ctx).
-		First(&data, id).Error
+		Table("wips").
+		Select(`
+			wips.id,
+			work_orders.wo_number,
+			wip_items.uniq,
+			items.part_number,
+			items.part_name,
+			wip_items.process_name AS process,
+			wip_items.stock
+		`).
+		Joins("JOIN wip_items ON wips.id = wip_items.wip_id").
+		Joins("JOIN work_orders ON wips.wo_id = work_orders.id").
+		Joins("JOIN items ON wip_items.uniq = items.uniq_code").
+		Where("wips.id = ?", id).
+		Scan(&rows).Error
 
 	if err != nil {
 		return nil, err
 	}
 
-	return &data, nil
+	if len(rows) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	// build response
+	res := &models.WIPDetailResponse{
+		ID:         rows[0].ID,
+		WONumber:   rows[0].WONumber,
+		Uniq:       rows[0].Uniq,
+		PartNumber: rows[0].PartNumber,
+		PartName:   rows[0].PartName,
+		Processes:  []models.WIPProcess{},
+	}
+
+	for _, row := range rows {
+		res.Processes = append(res.Processes, models.WIPProcess{
+			Process: row.Process,
+			Stock:   row.Stock,
+		})
+	}
+
+	return res, nil
 }
 
 func (r *repository) CreateWIP(ctx context.Context, req models.CreateWIPRequest) (*models.WIP, error) {
