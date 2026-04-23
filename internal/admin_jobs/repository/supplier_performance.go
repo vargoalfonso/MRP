@@ -3,7 +3,6 @@ package repository
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -55,25 +54,25 @@ type SupplierPerformanceSnapshotRow struct {
 	FormulaNotes            string
 }
 
-func (r *repo) ListSupplierPerformanceAggregates(ctx context.Context, periodType, periodValue string) ([]SupplierPerformanceAggregateRow, error) {
-	periodStart, periodEnd, err := periodDateRange(periodType, periodValue)
+func (r *repo) ListSupplierPerformanceAggregates(ctx context.Context, snapshotDate string) ([]SupplierPerformanceAggregateRow, error) {
+	targetDate, err := time.Parse("2006-01-02", snapshotDate)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid snapshot_date %q: %w", snapshotDate, err)
 	}
 
 	var rows []SupplierPerformanceAggregateRow
 	queryErr := r.db.WithContext(ctx).Raw(`
 		SELECT
-			s.uuid                                                                                  AS supplier_uuid,
+			s.uuid                                                      AS supplier_uuid,
 			s.supplier_code,
 			s.supplier_name,
-			COALESCE(del.on_time_deliveries, 0)                                                     AS on_time_deliveries,
-			COALESCE(del.late_deliveries, 0)                                                        AS late_deliveries,
-			COALESCE(del.average_delay_days, 0)                                                     AS average_delay_days,
-			COALESCE(qc.quality_inspection_count, 0)                                                AS quality_inspection_count,
-			COALESCE(qc.accepted_quantity, 0)                                                       AS accepted_quantity,
-			COALESCE(qc.rejected_quantity, 0)                                                       AS rejected_quantity,
-			COALESCE(po.total_purchase_value, 0)                                                    AS total_purchase_value
+			COALESCE(del.on_time_deliveries, 0)                         AS on_time_deliveries,
+			COALESCE(del.late_deliveries, 0)                            AS late_deliveries,
+			COALESCE(del.average_delay_days, 0)                         AS average_delay_days,
+			COALESCE(qc.quality_inspection_count, 0)                    AS quality_inspection_count,
+			COALESCE(qc.accepted_quantity, 0)                           AS accepted_quantity,
+			COALESCE(qc.rejected_quantity, 0)                           AS rejected_quantity,
+			COALESCE(po.total_purchase_value, 0)                        AS total_purchase_value
 		FROM suppliers s
 		LEFT JOIN (
 			SELECT
@@ -84,9 +83,7 @@ func (r *repo) ListSupplierPerformanceAggregates(ctx context.Context, periodType
 			FROM delivery_notes dn
 			JOIN delivery_note_items dni ON dni.dn_id = dn.id
 			WHERE dn.supplier_id IS NOT NULL
-			  AND dni.date_incoming IS NOT NULL
-			  AND dni.date_incoming >= ?
-			  AND dni.date_incoming <= ?
+			  AND dni.date_incoming = ?
 			  AND dn.status NOT IN ('draft', 'cancelled')
 			GROUP BY dn.supplier_id
 		) del ON del.supplier_id = s.id
@@ -100,9 +97,7 @@ func (r *repo) ListSupplierPerformanceAggregates(ctx context.Context, periodType
 			JOIN delivery_note_items dni ON dni.id = qt.incoming_dn_item_id
 			JOIN delivery_notes dn ON dn.id = dni.dn_id
 			WHERE qt.status = 'approved'
-			  AND qt.date_checked IS NOT NULL
-			  AND qt.date_checked >= ?
-			  AND qt.date_checked <= ?
+			  AND qt.date_checked = ?
 			  AND dn.supplier_id IS NOT NULL
 			GROUP BY dn.supplier_id
 		) qc ON qc.supplier_id = s.id
@@ -112,13 +107,13 @@ func (r *repo) ListSupplierPerformanceAggregates(ctx context.Context, periodType
 				COALESCE(SUM(po.total_amount), 0) AS total_purchase_value
 			FROM purchase_orders po
 			WHERE po.supplier_id IS NOT NULL
-			  AND po.period = ?
+			  AND COALESCE(po.po_date, DATE(po.created_at)) = ?
 			  AND po.status NOT IN ('draft', 'cancelled')
 			GROUP BY po.supplier_id
 		) po ON po.supplier_id = s.id
 		WHERE s.deleted_at IS NULL
 		  AND s.status = 'Active'
-	`, periodStart, periodEnd, periodStart, periodEnd, periodValue).Scan(&rows).Error
+	`, targetDate, targetDate, targetDate).Scan(&rows).Error
 
 	return rows, queryErr
 }
@@ -189,40 +184,4 @@ func (r *repo) UpsertSupplierPerformanceSnapshots(ctx context.Context, rows []Su
 		affected++
 	}
 	return affected, nil
-}
-
-// periodDateRange returns (start, end time.Time) for the given period.
-// monthly: "2026-04" → 2026-04-01 .. 2026-04-30
-// quarterly: "2026-Q1" → 2026-01-01 .. 2026-03-31
-// yearly: "2026" → 2026-01-01 .. 2026-12-31
-func periodDateRange(periodType, periodValue string) (time.Time, time.Time, error) {
-	switch strings.ToLower(periodType) {
-	case "monthly":
-		t, err := time.Parse("2006-01", periodValue)
-		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("invalid period_value %q for monthly: %w", periodValue, err)
-		}
-		start := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
-		end := start.AddDate(0, 1, -1)
-		return start, end, nil
-	case "quarterly":
-		var year, quarter int
-		if _, err := fmt.Sscanf(periodValue, "%d-Q%d", &year, &quarter); err != nil || quarter < 1 || quarter > 4 {
-			return time.Time{}, time.Time{}, fmt.Errorf("invalid period_value %q for quarterly, expected YYYY-QN", periodValue)
-		}
-		startMonth := time.Month((quarter-1)*3 + 1)
-		start := time.Date(year, startMonth, 1, 0, 0, 0, 0, time.UTC)
-		end := start.AddDate(0, 3, -1)
-		return start, end, nil
-	case "yearly":
-		t, err := time.Parse("2006", periodValue)
-		if err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("invalid period_value %q for yearly: %w", periodValue, err)
-		}
-		start := time.Date(t.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
-		end := time.Date(t.Year(), 12, 31, 0, 0, 0, 0, time.UTC)
-		return start, end, nil
-	default:
-		return time.Time{}, time.Time{}, fmt.Errorf("unsupported period_type %q", periodType)
-	}
 }

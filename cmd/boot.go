@@ -377,7 +377,6 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		outgoingModule.NewHTTPModule(cfg, baseHTTPHandler, outgoingHTTPHandler, authSvc, roleSvc, outgoingSvc),
 		scrapModule.NewHTTPModule(cfg, baseHTTPHandler, scrapHTTPHandler, authSvc, roleSvc, scrapSvc),
 		finishedGoodsModule.NewHTTPModule(cfg, baseHTTPHandler, fgHTTPHandler, authSvc, roleSvc, fgSvc),
-		warehouseModule.NewHTTPModule(cfg, baseHTTPHandler, warehouseHTTPHandler, authSvc),
 		wipModule.NewHTTPModule(cfg, baseHTTPHandler, wipHTTPHandler, authSvc, roleSvc, wipSvc),
 		adminJobsModule.NewHTTPModule(cfg, baseHTTPHandler, adminJobsHTTPHandler, adminJobsSvc),
 		coModule.NewHTTPModule(cfg, baseHTTPHandler, coHTTPHandler, authSvc, roleSvc, coSvc),

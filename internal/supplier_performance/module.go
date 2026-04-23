@@ -40,7 +40,6 @@ func NewHTTPModule(
 //	GET    /api/v1/suppliers/performance/summary               summary cards
 //	GET    /api/v1/suppliers/performance/export                export dataset
 //	POST   /api/v1/suppliers/performance/:supplier_id/override override grade
-//	GET    /api/v1/suppliers/performance/:supplier_id/audit-logs audit trail
 func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	v1 := r.Group("/api/v1")
 	g := v1.Group("/suppliers/performance")
@@ -51,6 +50,5 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		g.GET("/charts", roleMiddleware.RequirePermission(m.roleService, "supplier-performance", "view"), m.base.RunAction(m.handler.Charts))
 		g.GET("/export", roleMiddleware.RequirePermission(m.roleService, "supplier-performance", "view"), m.base.RunAction(m.handler.Export))
 		g.POST("/:supplier_id/override", roleMiddleware.RequirePermission(m.roleService, "supplier-performance", "update"), m.base.RunAction(m.handler.Override))
-		g.GET("/:supplier_id/audit-logs", roleMiddleware.RequirePermission(m.roleService, "supplier-performance", "view"), m.base.RunAction(m.handler.AuditLogs))
 	}
 }
