@@ -45,10 +45,10 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	g := v1.Group("/suppliers/performance")
 	g.Use(authMiddleware.JWTMiddleware(m.authenticator))
 	{
-		g.GET("", roleMiddleware.RequirePermission(m.roleService, "supplier-performance", "view"), m.base.RunAction(m.handler.List))
-		g.GET("/summary", roleMiddleware.RequirePermission(m.roleService, "supplier-performance", "view"), m.base.RunAction(m.handler.Summary))
-		g.GET("/charts", roleMiddleware.RequirePermission(m.roleService, "supplier-performance", "view"), m.base.RunAction(m.handler.Charts))
-		g.GET("/export", roleMiddleware.RequirePermission(m.roleService, "supplier-performance", "view"), m.base.RunAction(m.handler.Export))
-		g.POST("/:supplier_id/override", roleMiddleware.RequirePermission(m.roleService, "supplier-performance", "update"), m.base.RunAction(m.handler.Override))
+		g.GET("", roleMiddleware.RequirePermission(m.roleService, "supplier_performance", "view"), m.base.RunAction(m.handler.List))
+		g.GET("/summary", roleMiddleware.RequirePermission(m.roleService, "supplier_performance", "view"), m.base.RunAction(m.handler.Summary))
+		g.GET("/charts", roleMiddleware.RequirePermission(m.roleService, "supplier_performance", "view"), m.base.RunAction(m.handler.Charts))
+		g.GET("/export", roleMiddleware.RequirePermission(m.roleService, "supplier_performance", "view"), m.base.RunAction(m.handler.Export))
+		g.POST("/:supplier_id/override", roleMiddleware.RequirePermission(m.roleService, "supplier_performance", "update"), m.base.RunAction(m.handler.Override))
 	}
 }
