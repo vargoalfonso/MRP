@@ -10,8 +10,14 @@ import (
 	userHandler "github.com/ganasa18/go-template/internal/access_control/handler"
 	userRepository "github.com/ganasa18/go-template/internal/access_control/repository"
 	userService "github.com/ganasa18/go-template/internal/access_control/service"
+	adminJobsModule "github.com/ganasa18/go-template/internal/admin_jobs"
+	adminJobsHandler "github.com/ganasa18/go-template/internal/admin_jobs/handler"
+	adminJobsRepo "github.com/ganasa18/go-template/internal/admin_jobs/repository"
+	adminJobsService "github.com/ganasa18/go-template/internal/admin_jobs/service"
 	actionUIModule "github.com/ganasa18/go-template/internal/action_ui"
 	actionUIHandler "github.com/ganasa18/go-template/internal/action_ui/handler"
+	actionUIIncomingRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
+	actionUIProductionRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
 	actionUIRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
 	actionUIService "github.com/ganasa18/go-template/internal/action_ui/service"
 	approvalWorkflowModule "github.com/ganasa18/go-template/internal/approval_workflow"
@@ -73,6 +79,14 @@ import (
 	poSplitSettingHandler "github.com/ganasa18/go-template/internal/po_split_setting/handler"
 	poSplitSettingRepository "github.com/ganasa18/go-template/internal/po_split_setting/repository"
 	poSplitSettingService "github.com/ganasa18/go-template/internal/po_split_setting/service"
+	coModule "github.com/ganasa18/go-template/internal/customer_order"
+	coHandler "github.com/ganasa18/go-template/internal/customer_order/handler"
+	coRepository "github.com/ganasa18/go-template/internal/customer_order/repository"
+	coService "github.com/ganasa18/go-template/internal/customer_order/service"
+	dscModule "github.com/ganasa18/go-template/internal/delivery_scheduling_customer"
+	dscHandler "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/handler"
+	dscRepository "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/repository"
+	dscService "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/service"
 	prlModule "github.com/ganasa18/go-template/internal/prl"
 	prlHandler "github.com/ganasa18/go-template/internal/prl/handler"
 	prlRepository "github.com/ganasa18/go-template/internal/prl/repository"
@@ -101,6 +115,10 @@ import (
 	safetyStockHandler "github.com/ganasa18/go-template/internal/safety_stock_parameter/handler"
 	safetyStockRepo "github.com/ganasa18/go-template/internal/safety_stock_parameter/repository"
 	safetyStockService "github.com/ganasa18/go-template/internal/safety_stock_parameter/service"
+	outgoingModule "github.com/ganasa18/go-template/internal/outgoing_material"
+	outgoingHandler "github.com/ganasa18/go-template/internal/outgoing_material/handler"
+	outgoingRepo "github.com/ganasa18/go-template/internal/outgoing_material/repository"
+	outgoingService "github.com/ganasa18/go-template/internal/outgoing_material/service"
 	scrapModule "github.com/ganasa18/go-template/internal/scrap_stock"
 	scrapHandler "github.com/ganasa18/go-template/internal/scrap_stock/handler"
 	scrapRepo "github.com/ganasa18/go-template/internal/scrap_stock/repository"
@@ -109,6 +127,14 @@ import (
 	supplierHandler "github.com/ganasa18/go-template/internal/supplier/handler"
 	supplierRepository "github.com/ganasa18/go-template/internal/supplier/repository"
 	supplierService "github.com/ganasa18/go-template/internal/supplier/service"
+	supplierItemModule "github.com/ganasa18/go-template/internal/supplier_item"
+	supplierItemHandler "github.com/ganasa18/go-template/internal/supplier_item/handler"
+	supplierItemRepository "github.com/ganasa18/go-template/internal/supplier_item/repository"
+	supplierItemService "github.com/ganasa18/go-template/internal/supplier_item/service"
+	spModule "github.com/ganasa18/go-template/internal/supplier_performance"
+	spHandler "github.com/ganasa18/go-template/internal/supplier_performance/handler"
+	spRepository "github.com/ganasa18/go-template/internal/supplier_performance/repository"
+	spService "github.com/ganasa18/go-template/internal/supplier_performance/service"
 	typeParameterModule "github.com/ganasa18/go-template/internal/type_parameter"
 	typeParameterHandler "github.com/ganasa18/go-template/internal/type_parameter/handler"
 	typeParameterRepository "github.com/ganasa18/go-template/internal/type_parameter/repository"
@@ -121,6 +147,14 @@ import (
 	uploadHandler "github.com/ganasa18/go-template/internal/upload/handler"
 	uploadRepository "github.com/ganasa18/go-template/internal/upload/repository"
 	uploadService "github.com/ganasa18/go-template/internal/upload/service"
+	warehouseModule "github.com/ganasa18/go-template/internal/warehouse"
+	warehouseHandler "github.com/ganasa18/go-template/internal/warehouse/handler"
+	warehouseRepository "github.com/ganasa18/go-template/internal/warehouse/repository"
+	warehouseService "github.com/ganasa18/go-template/internal/warehouse/service"
+	wipModule "github.com/ganasa18/go-template/internal/wip"
+	wipHandler "github.com/ganasa18/go-template/internal/wip/handler"
+	wipRepository "github.com/ganasa18/go-template/internal/wip/repository"
+	wipService "github.com/ganasa18/go-template/internal/wip/service"
 	workOrderModule "github.com/ganasa18/go-template/internal/work_order"
 	workOrderHandler "github.com/ganasa18/go-template/internal/work_order/handler"
 	workOrderRepository "github.com/ganasa18/go-template/internal/work_order/repository"
@@ -170,6 +204,12 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	supplierRepo := supplierRepository.New(db)
 	supplierSvc := supplierService.New(supplierRepo)
 	supplierHTTPHandler := supplierHandler.New(supplierSvc)
+	supplierItemRepo := supplierItemRepository.New(db)
+	supplierItemSvc := supplierItemService.New(supplierItemRepo)
+	supplierItemHTTPHandler := supplierItemHandler.New(supplierItemSvc)
+	warehouseRepo := warehouseRepository.New(db)
+	warehouseSvc := warehouseService.New(warehouseRepo)
+	warehouseHTTPHandler := warehouseHandler.New(warehouseSvc)
 	roleHTTPHandler := roleHandler.New(roleSvc)
 
 	employeeRepo := employeeRepository.New(db)
@@ -202,7 +242,9 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 
 	// Action UI module (incoming scans)
 	actionRepo := actionUIRepo.New(db)
-	actionSvc := actionUIService.New(actionRepo)
+	actionUIProductionRepo := actionUIProductionRepo.NewProductionRepository(db)
+	actionUIIncomingRepo := actionUIIncomingRepo.NewIncomingRepository(db)
+	actionSvc := actionUIService.New(actionRepo, actionUIProductionRepo, actionUIIncomingRepo)
 	actionHTTPHandler := actionUIHandler.New(actionSvc)
 
 	// QC module (task list + approve/reject)
@@ -264,15 +306,42 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	productionSvc := productionService.New(productionRepo)
 	productionHTTPHandler := productionHandler.New(productionSvc)
 
+	// Customer Order module (PO / DN / SO)
+	coRepo := coRepository.New(db)
+	coSvc := coService.New(coRepo)
+	coHTTPHandler := coHandler.New(coSvc)
+
+	// Admin Jobs module
+	adminJobsRepository := adminJobsRepo.New(db)
+	adminJobsSvc := adminJobsService.New(adminJobsRepository)
+	adminJobsHTTPHandler := adminJobsHandler.New(adminJobsSvc)
+
 	// Finished Goods module
 	fgRepository := finishedGoodsRepo.New(db)
 	fgSvc := finishedGoodsService.New(fgRepository, db)
 	fgHTTPHandler := finishedGoodsHandler.New(fgSvc)
 
 	// Scrap Stock module
+	outgoingRepository := outgoingRepo.New(db)
+	outgoingSvc := outgoingService.New(outgoingRepository, db)
+	outgoingHTTPHandler := outgoingHandler.New(outgoingSvc)
+
 	scrapRepository := scrapRepo.New(db)
 	scrapSvc := scrapService.New(scrapRepository, db)
 	scrapHTTPHandler := scrapHandler.New(scrapSvc)
+
+	// Delivery Scheduling Customer module (outbound customer delivery)
+	dscRepo := dscRepository.New(db)
+	dscSvc := dscService.New(dscRepo, db)
+	dscHTTPHandler := dscHandler.New(dscSvc)
+
+	// Supplier Performance module
+	spRepo := spRepository.New(db)
+	spSvc := spService.New(spRepo)
+	spHTTPHandler := spHandler.New(spSvc)
+	wipRepo := wipRepository.New(db)
+	wipSvc := wipService.New(wipRepo)
+	wipHTTPHandler := wipHandler.New(wipSvc)
 
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
@@ -280,9 +349,11 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		customerModule.NewHTTPModule(cfg, baseHTTPHandler, customerHTTPHandler, authSvc),
 		prlModule.NewHTTPModule(cfg, baseHTTPHandler, prlHTTPHandler, authSvc),
 		supplierModule.NewHTTPModule(cfg, baseHTTPHandler, supplierHTTPHandler, authSvc),
+		supplierItemModule.NewHTTPModule(cfg, baseHTTPHandler, supplierItemHTTPHandler, authSvc),
 		bomModule.NewHTTPModule(cfg, baseHTTPHandler, bomHTTPHandler, authSvc, roleSvc, bomSvc),
 		uploadModule.NewHTTPModule(baseHTTPHandler, uploadHTTPHandler, uploadSvc, authSvc, roleSvc),
 		roleModule.NewHTTPModule(cfg, baseHTTPHandler, roleHTTPHandler, authSvc, roleSvc),
+		warehouseModule.NewHTTPModule(cfg, baseHTTPHandler, warehouseHTTPHandler, authSvc),
 		departementModule.NewHTTPModule(cfg, baseHTTPHandler, departementHTTPHandler, authSvc, roleSvc, departementSvc),
 		employeeModule.NewHTTPModule(cfg, baseHTTPHandler, employeeHTTPHandler, authSvc, roleSvc, employeeSvc),
 		userModule.NewHTTPModule(cfg, baseHTTPHandler, userHTTPHandler, authSvc, roleSvc, userSvc),
@@ -303,8 +374,14 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		kanbanModule.NewHTTPModule(cfg, baseHTTPHandler, kanbanHTTPHandler, authSvc, roleSvc, kanbanSvc),
 		deliveryNoteModule.NewHTTPModule(cfg, baseHTTPHandler, deliveryNoteHTTPHandler, authSvc, roleSvc, deliveryNoteSvc),
 		productionModule.NewHTTPModule(cfg, baseHTTPHandler, productionHTTPHandler, authSvc, roleSvc, productionSvc),
+		outgoingModule.NewHTTPModule(cfg, baseHTTPHandler, outgoingHTTPHandler, authSvc, roleSvc, outgoingSvc),
 		scrapModule.NewHTTPModule(cfg, baseHTTPHandler, scrapHTTPHandler, authSvc, roleSvc, scrapSvc),
 		finishedGoodsModule.NewHTTPModule(cfg, baseHTTPHandler, fgHTTPHandler, authSvc, roleSvc, fgSvc),
+		wipModule.NewHTTPModule(cfg, baseHTTPHandler, wipHTTPHandler, authSvc, roleSvc, wipSvc),
+		adminJobsModule.NewHTTPModule(cfg, baseHTTPHandler, adminJobsHTTPHandler, adminJobsSvc),
+		coModule.NewHTTPModule(cfg, baseHTTPHandler, coHTTPHandler, authSvc, roleSvc, coSvc),
+		dscModule.NewHTTPModule(baseHTTPHandler, dscHTTPHandler, authSvc, roleSvc, dscSvc),
+		spModule.NewHTTPModule(baseHTTPHandler, spHTTPHandler, authSvc, roleSvc),
 	}
 
 	// --- Server ---

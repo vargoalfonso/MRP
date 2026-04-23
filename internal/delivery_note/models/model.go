@@ -2,6 +2,8 @@ package models
 
 import (
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type DeliveryNote struct {
@@ -81,6 +83,7 @@ type DeliveryNoteItem struct {
 	ReceivedAt     *time.Time      `json:"received_at" gorm:"column:received_at"`         //request, diisi ketika barang diterima, berisi tanggal dan jam ketika barang diterima
 	PackingNumber  string          `json:"packing_number" gorm:"column:packing_number"`   //request, diambil dari kanban number di kanban parameter bedasarkan item_uniq_code
 	Check          string          `json:"check" gorm:"check"`                            //field untuk menampung nilai check ketika menerima barang,
+	QtySent        int64           `json:"qty_sent" gorm:"qty_sent"`
 }
 
 type KanbanParameter struct {
@@ -138,4 +141,149 @@ type PurchaseOrderItem struct {
 	CreatedAt       time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at" db:"updated_at"`
 	PoBudgetEntryID int64     `json:"po_budget_entry_id" db:"po_budget_entry_id"`
+}
+
+type DeliveryNoteLog struct {
+	ID            int64     `json:"id" gorm:"primaryKey;column:id"`
+	DNID          int64     `json:"dn_id" gorm:"column:dn_id;not null;index"`
+	DNItemID      int64     `json:"dn_item_id" gorm:"column:dn_item_id;not null;index"`
+	ItemUniqCode  string    `json:"item_uniq_code" gorm:"column:item_uniq_code;type:varchar(100);not null"`
+	PackingNumber string    `json:"packing_number" gorm:"column:packing_number;type:varchar(100);index"`
+	ScanType      string    `json:"scan_type" gorm:"column:scan_type;type:varchar(20);not null"` // outgoing | incoming
+	Qty           float64   `json:"qty" gorm:"column:qty;type:numeric(15,2);not null"`
+	FromLocation  string    `json:"from_location" gorm:"column:from_location;type:varchar(50)"`
+	ToLocation    string    `json:"to_location" gorm:"column:to_location;type:varchar(50)"`
+	CreatedAt     time.Time `json:"created_at" gorm:"column:created_at;autoCreateTime"`
+}
+
+type DeliveryNoteSupplier struct {
+	ID           int64  `gorm:"primaryKey"`
+	UUID         string `gorm:"type:uuid;default:gen_random_uuid()"`
+	DNNumber     string `gorm:"column:dn_number;unique;not null"`
+	KanbanNumber string `gorm:"column:kanban_number"`
+
+	CustomerID *int64 `gorm:"column:customer_id"`
+
+	Status string `gorm:"column:status;default:draft"`
+
+	TotalQty float64 `gorm:"column:total_qty;type:numeric(15,4)"`
+
+	ScannedBy string     `gorm:"column:scanned_by"`
+	ScannedAt *time.Time `gorm:"column:scanned_at"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+
+	Items []DeliveryNoteSupplierItem `gorm:"foreignKey:DNID"`
+}
+
+func (DeliveryNoteSupplier) TableName() string {
+	return "delivery_note_suppliers"
+}
+
+type DeliveryNoteSupplierItem struct {
+	ID int64 `gorm:"primaryKey"`
+
+	DNID int64 `gorm:"column:dn_id"`
+
+	KanbanNumber string `gorm:"column:kanban_number"`
+	ItemUniqCode string `gorm:"column:item_uniq_code"`
+
+	Qty float64 `gorm:"column:qty;type:numeric(15,4)"`
+
+	CreatedAt time.Time
+}
+
+func (DeliveryNoteSupplierItem) TableName() string {
+	return "delivery_note_supplier_items"
+}
+
+type FinishedGoods struct {
+	ID                    int64
+	UUID                  string
+	UniqCode              string
+	ItemID                int64
+	PartNumber            string
+	PartName              string
+	Model                 string
+	WONumber              string
+	WarehouseLocation     string
+	StockQty              float64
+	UOM                   string
+	KanbanCount           int
+	KanbanStandardQty     float64
+	MinThreshold          float64
+	MaxThreshold          float64
+	SafetyStockQty        float64
+	StockToCompleteKanban float64
+	Status                string
+	CreatedBy             string
+	CreatedAt             time.Time
+	UpdatedBy             string
+	UpdatedAt             time.Time
+	DeletedAt             *time.Time
+}
+
+type DeliveryScheduleCustomer struct {
+	ID                      int64      `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	UUID                    string     `gorm:"column:uuid;type:uuid;not null" json:"uuid"`
+	ScheduleNumber          string     `gorm:"column:schedule_number;size:64;not null" json:"schedule_number"`
+	CustomerOrderDocumentID *int64     `gorm:"column:customer_order_document_id" json:"customer_order_document_id"`
+	CustomerOrderReference  string     `gorm:"column:customer_order_reference;size:128" json:"customer_order_reference"`
+	CustomerID              int64      `gorm:"column:customer_id;not null" json:"customer_id"`
+	CustomerNameSnapshot    string     `gorm:"column:customer_name_snapshot;size:255" json:"customer_name_snapshot"`
+	CustomerContactPerson   string     `gorm:"column:customer_contact_person;size:255" json:"customer_contact_person"`
+	CustomerPhoneNumber     string     `gorm:"column:customer_phone_number;size:64" json:"customer_phone_number"`
+	DeliveryAddress         string     `gorm:"column:delivery_address;type:text" json:"delivery_address"`
+	ScheduleDate            time.Time  `gorm:"column:schedule_date;type:date;not null" json:"schedule_date"`
+	Priority                string     `gorm:"column:priority;size:16" json:"priority"`
+	TransportCompany        string     `gorm:"column:transport_company;size:255" json:"transport_company"`
+	VehicleNumber           string     `gorm:"column:vehicle_number;size:64" json:"vehicle_number"`
+	DriverName              string     `gorm:"column:driver_name;size:255" json:"driver_name"`
+	DriverContact           string     `gorm:"column:driver_contact;size:64" json:"driver_contact"`
+	DepartureAt             *time.Time `gorm:"column:departure_at" json:"departure_at"`
+	ArrivalAt               *time.Time `gorm:"column:arrival_at" json:"arrival_at"`
+	Cycle                   string     `gorm:"column:cycle;size:64" json:"cycle"`
+	Status                  string     `gorm:"column:status;size:32;not null" json:"status"`
+	ApprovalStatus          string     `gorm:"column:approval_status;size:32;not null" json:"approval_status"`
+	DeliveryInstructions    string     `gorm:"column:delivery_instructions;type:text" json:"delivery_instructions"`
+	Remarks                 string     `gorm:"column:remarks;type:text" json:"remarks"`
+	CreatedBy               string     `gorm:"column:created_by;size:255" json:"created_by"`
+	ApprovedBy              string     `gorm:"column:approved_by;size:255" json:"approved_by"`
+	ApprovedAt              *time.Time `gorm:"column:approved_at" json:"approved_at"`
+	CreatedAt               time.Time  `gorm:"column:created_at;autoCreateTime" json:"created_at"`
+	UpdatedAt               time.Time  `gorm:"column:updated_at;autoUpdateTime" json:"updated_at"`
+	DeletedAt               *time.Time `gorm:"column:deleted_at" json:"deleted_at"`
+	// 🔥 RELATION
+	Items []DeliveryScheduleItemCustomer `gorm:"foreignKey:ScheduleID" json:"items"`
+}
+
+func (DeliveryScheduleCustomer) TableName() string {
+	return "delivery_schedules_customer"
+}
+
+type DeliveryScheduleItemCustomer struct {
+	ID                          int64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	UUID                        string    `gorm:"column:uuid;type:uuid;not null" json:"uuid"`
+	ScheduleID                  int64     `gorm:"column:schedule_id;not null;index" json:"schedule_id"`
+	CustomerOrderDocumentItemID *int64    `gorm:"column:customer_order_document_item_id" json:"customer_order_document_item_id"`
+	LineNo                      int       `gorm:"column:line_no;not null" json:"line_no"`
+	ItemUniqCode                string    `gorm:"column:item_uniq_code;size:100;not null" json:"item_uniq_code"`
+	Model                       string    `gorm:"column:model;size:255" json:"model"`
+	PartName                    string    `gorm:"column:part_name;size:255;not null" json:"part_name"`
+	PartNumber                  string    `gorm:"column:part_number;size:128;not null" json:"part_number"`
+	TotalOrderQty               float64   `gorm:"column:total_order_qty;type:numeric(15,4);not null" json:"total_order_qty"`
+	TotalDeliveryQty            float64   `gorm:"column:total_delivery_qty;type:numeric(15,4);not null" json:"total_delivery_qty"`
+	UOM                         string    `gorm:"column:uom;size:32;not null" json:"uom"`
+	Cycle                       string    `gorm:"column:cycle;size:64" json:"cycle"`
+	DNNumber                    string    `gorm:"column:dn_number;size:64" json:"dn_number"`
+	Status                      string    `gorm:"column:status;size:32;not null" json:"status"`
+	FGReadinessStatus           string    `gorm:"column:fg_readiness_status;size:32;not null" json:"fg_readiness_status"`
+	CreatedAt                   time.Time `gorm:"column:created_at;autoCreateTime" json:"created_at"`
+	UpdatedAt                   time.Time `gorm:"column:updated_at;autoUpdateTime" json:"updated_at"`
+}
+
+func (DeliveryScheduleItemCustomer) TableName() string {
+	return "delivery_schedule_items_customer"
 }

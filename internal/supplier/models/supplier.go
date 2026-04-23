@@ -29,7 +29,7 @@ var AllowedSupplierStatuses = []string{
 }
 
 type Supplier struct {
-	ID                   int64          `gorm:"primaryKey;autoIncrement" json:"-"`
+	ID                   int64          `gorm:"primaryKey;autoIncrement" json:"row_id"`
 	UUID                 string         `gorm:"uniqueIndex;not null" json:"id"`
 	SupplierCode         string         `gorm:"uniqueIndex;not null" json:"supplier_code"`
 	SupplierName         string         `gorm:"not null" json:"supplier_name"`

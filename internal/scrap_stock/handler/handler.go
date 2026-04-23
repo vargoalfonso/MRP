@@ -251,6 +251,31 @@ func (h *HTTPHandler) GetScrapReleaseByID(ctx *app.Context) *app.CostumeResponse
 	}
 }
 
+// ListScrapMovements returns the in/out history log for a scrap stock record.
+//
+//	GET /api/v1/scrap-stocks/:id/history-logs?page=1&limit=20
+func (h *HTTPHandler) ListScrapMovements(ctx *app.Context) *app.CostumeResponse {
+	id, ok := parseID(ctx)
+	if !ok {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid id",
+		}
+	}
+	p := pagination.Pagination(ctx)
+	data, err := h.svc.ListScrapMovements(ctx.Request.Context(), id, p.Page, p.Limit)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
 // CreateScrapRelease creates a new release request (Sell or Dump). Starts as Pending.
 //
 //	POST /api/v1/scrap-releases

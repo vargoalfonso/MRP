@@ -57,6 +57,9 @@ type IRepository interface {
 	GetScrapReleaseByID(ctx context.Context, id int64) (*scrapModels.ScrapRelease, error)
 	CreateScrapRelease(ctx context.Context, r *scrapModels.ScrapRelease) error
 	ApproveRelease(ctx context.Context, id int64, action, approvedBy string, remarks *string) error
+
+	// Movement History
+	ListScrapMovements(ctx context.Context, scrapStockID int64, limit, offset int) ([]scrapModels.ScrapMovementRow, int64, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -252,6 +255,32 @@ func (r *repository) CreateScrapRelease(ctx context.Context, rel *scrapModels.Sc
 		}
 		return nil
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Movement History
+// ---------------------------------------------------------------------------
+
+func (r *repository) ListScrapMovements(ctx context.Context, scrapStockID int64, limit, offset int) ([]scrapModels.ScrapMovementRow, int64, error) {
+	q := r.db.WithContext(ctx).
+		Table("inventory_movement_logs iml").
+		Joins("LEFT JOIN scrap_stocks ss ON ss.id = iml.entity_id").
+		Where("iml.movement_category = 'scrap' AND iml.entity_id = ?", scrapStockID)
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, apperror.Internal("count scrap movements: " + err.Error())
+	}
+
+	var rows []scrapModels.ScrapMovementRow
+	err := q.Select("iml.id, iml.uniq_code, ss.packing_number AS packing_list, iml.qty_change, iml.source_flag, iml.reference_id, iml.notes, iml.logged_by, iml.logged_at").
+		Order("iml.logged_at DESC").
+		Limit(limit).Offset(offset).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, 0, apperror.Internal("list scrap movements: " + err.Error())
+	}
+	return rows, total, nil
 }
 
 // ApproveRelease transitions a release to Completed/Rejected and, when Completed,

@@ -125,6 +125,38 @@ type UpdateBomChildRequest struct {
 	MaterialSpec  *MaterialSpecInput   `json:"material_spec"`
 }
 
+type CreateBomRevisionRequest struct {
+	SourceVersion *int    `json:"source_version"`
+	ChangeNote    *string `json:"change_note" validate:"omitempty,max=2000"`
+}
+
+type AddProcessRouteRequest struct {
+	LineID        *int64         `json:"line_id"`
+	OpSeq         int            `json:"op_seq" validate:"required,min=10"`
+	ProcessID     int64          `json:"process_id" validate:"required"`
+	MachineID     *int64         `json:"machine_id"`
+	CycleTimeSec  *float64       `json:"cycle_time_sec"`
+	SetupTimeMin  *float64       `json:"setup_time_min"`
+	MachineStroke *string        `json:"machine_stroke"`
+	ToolingRef    *string        `json:"tooling_ref" validate:"omitempty,max=500"`
+	Toolings      []ToolingInput `json:"toolings"`
+}
+
+type PatchProcessRouteRequest struct {
+	OpSeq         *int            `json:"op_seq" validate:"omitempty,min=10"`
+	ProcessID     *int64          `json:"process_id"`
+	MachineID     *int64          `json:"machine_id"`
+	CycleTimeSec  *float64        `json:"cycle_time_sec"`
+	SetupTimeMin  *float64        `json:"setup_time_min"`
+	MachineStroke *string         `json:"machine_stroke"`
+	ToolingRef    *string         `json:"tooling_ref" validate:"omitempty,max=500"`
+	Toolings      *[]ToolingInput `json:"toolings"`
+}
+
+type ReleaseBomRequest struct {
+	Notes *string `json:"notes" validate:"omitempty,max=2000"`
+}
+
 // ---------------------------------------------------------------------------
 // List / query params
 // ---------------------------------------------------------------------------
@@ -144,7 +176,7 @@ type ListBomQuery struct {
 // POST /api/v1/products/bom/:id/approval
 // ---------------------------------------------------------------------------
 
-type ApproveBomRequest struct {
-	Action string  `json:"action" validate:"required,oneof=approve reject"`
-	Notes  *string `json:"notes"`
-}
+// type ApproveBomRequest struct {
+// 	Action string  `json:"action" validate:"required,oneof=approve reject"`
+// 	Notes  *string `json:"notes"`
+// }

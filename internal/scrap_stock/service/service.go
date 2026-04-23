@@ -6,10 +6,12 @@ import (
 	"math"
 	"time"
 
+	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	scrapModels "github.com/ganasa18/go-template/internal/scrap_stock/models"
 	"github.com/ganasa18/go-template/internal/scrap_stock/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/ganasa18/go-template/pkg/creatorresolver"
+	"github.com/ganasa18/go-template/pkg/inventoryconst"
 	"gorm.io/gorm"
 )
 
@@ -34,6 +36,9 @@ type IService interface {
 	GetScrapReleaseByID(ctx context.Context, id int64) (*scrapModels.ScrapReleaseItem, error)
 	CreateScrapRelease(ctx context.Context, req scrapModels.CreateScrapReleaseRequest, createdBy string) (*scrapModels.ScrapReleaseItem, error)
 	ApproveScrapRelease(ctx context.Context, id int64, req scrapModels.ApproveScrapReleaseRequest, approvedBy string) error
+
+	// History Log
+	ListScrapMovements(ctx context.Context, scrapStockID int64, page, limit int) (*scrapModels.ScrapMovementListResponse, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -61,8 +66,9 @@ func toStockItem(s *scrapModels.ScrapStock) *scrapModels.ScrapStockItem {
 		Model:         s.Model,
 		PackingNumber: s.PackingNumber,
 		WONumber:      s.WONumber,
-		ScrapType:     s.ScrapType,
-		Quantity:      s.Quantity,
+		ScrapType:      s.ScrapType,
+		DisposalReason: s.DisposalReason,
+		Quantity:       s.Quantity,
 		UOM:           s.UOM,
 		WeightKg:      s.WeightKg,
 		DateReceived:  s.DateReceived,
@@ -182,26 +188,37 @@ func (sv *service) CreateScrapStock(ctx context.Context, req scrapModels.CreateS
 	}
 
 	s := &scrapModels.ScrapStock{
-		UniqCode:      req.UniqCode,
-		PartNumber:    req.PartNumber,
-		PartName:      req.PartName,
-		Model:         req.Model,
-		PackingNumber: req.PackingNumber,
-		WONumber:      req.WONumber,
-		ScrapType:     req.ScrapType,
-		Quantity:      req.Quantity,
-		UOM:           req.UOM,
-		WeightKg:      req.WeightKg,
-		DateReceived:  parseDate(req.DateReceived),
-		Validator:     creatorName,
-		Remarks:       req.Remarks,
-		Status:        scrapModels.StockStatusActive,
-		CreatedBy:     creatorName,
-		UpdatedBy:     creatorName,
+		UniqCode:       req.UniqCode,
+		PartNumber:     req.PartNumber,
+		PartName:       req.PartName,
+		Model:          req.Model,
+		PackingNumber:  req.PackingNumber,
+		WONumber:       req.WONumber,
+		ScrapType:      req.ScrapType,
+		DisposalReason: req.DisposalReason,
+		Quantity:       req.Quantity,
+		UOM:            req.UOM,
+		WeightKg:       req.WeightKg,
+		DateReceived:   parseDate(req.DateReceived),
+		Validator:      creatorName,
+		Remarks:        req.Remarks,
+		Status:         scrapModels.StockStatusActive,
+		CreatedBy:      creatorName,
+		UpdatedBy:      creatorName,
 	}
 	if err := sv.repo.CreateScrapStock(ctx, s); err != nil {
 		return nil, err
 	}
+	sv.appendMovementLog(ctx, invModels.InventoryMovementLog{
+		MovementCategory: string(inventoryconst.CategoryScrap),
+		MovementType:     string(inventoryconst.MovementIncoming),
+		UniqCode:         s.UniqCode,
+		EntityID:         &s.ID,
+		QtyChange:        s.Quantity,
+		SourceFlag:       ptrStr(string(inventoryconst.SourceScrapManual)),
+		Notes:            s.Remarks,
+		LoggedBy:         s.CreatedBy,
+	})
 	return toStockItem(s), nil
 }
 
@@ -235,6 +252,15 @@ func (sv *service) CreateIncomingScrap(ctx context.Context, req scrapModels.Inco
 	if err := sv.repo.CreateScrapStock(ctx, s); err != nil {
 		return nil, err
 	}
+	sv.appendMovementLog(ctx, invModels.InventoryMovementLog{
+		MovementCategory: string(inventoryconst.CategoryScrap),
+		MovementType:     string(inventoryconst.MovementIncoming),
+		UniqCode:         s.UniqCode,
+		EntityID:         &s.ID,
+		QtyChange:        s.Quantity,
+		SourceFlag:       ptrStr(string(inventoryconst.SourceScrapIncomingScan)),
+		LoggedBy:         s.CreatedBy,
+	})
 	return toStockItem(s), nil
 }
 
@@ -320,6 +346,23 @@ func (sv *service) CreateScrapRelease(ctx context.Context, req scrapModels.Creat
 	if err := sv.repo.CreateScrapRelease(ctx, rel); err != nil {
 		return nil, err
 	}
+
+	sourceFlag := inventoryconst.SourceScrapReleaseSell
+	if req.ReleaseType == scrapModels.ReleaseTypeDump {
+		sourceFlag = inventoryconst.SourceScrapReleaseDump
+	}
+	sv.appendMovementLog(ctx, invModels.InventoryMovementLog{
+		MovementCategory: string(inventoryconst.CategoryScrap),
+		MovementType:     string(inventoryconst.MovementOutgoing),
+		UniqCode:         stock.UniqCode,
+		EntityID:         &rel.ScrapStockID,
+		QtyChange:        -req.ReleaseQty,
+		SourceFlag:       ptrStr(string(sourceFlag)),
+		ReferenceID:      &rel.ReleaseNumber,
+		Notes:            req.Remarks,
+		LoggedBy:         creatorName,
+	})
+
 	return toReleaseItem(rel), nil
 }
 
@@ -328,4 +371,76 @@ func (sv *service) ApproveScrapRelease(ctx context.Context, id int64, req scrapM
 		return apperror.UnprocessableEntity("action must be Completed or Rejected")
 	}
 	return sv.repo.ApproveRelease(ctx, id, req.Action, approvedBy, req.Remarks)
+}
+
+// ---------------------------------------------------------------------------
+// History Log
+// ---------------------------------------------------------------------------
+
+func (sv *service) ListScrapMovements(ctx context.Context, scrapStockID int64, page, limit int) (*scrapModels.ScrapMovementListResponse, error) {
+	if page < 1 {
+		page = 1
+	}
+	offset := (page - 1) * limit
+
+	stock, err := sv.repo.GetScrapStockByID(ctx, scrapStockID)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, total, err := sv.repo.ListScrapMovements(ctx, scrapStockID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]scrapModels.ScrapMovementItem, 0, len(rows))
+	for i := range rows {
+		items = append(items, scrapModels.ScrapMovementItem{
+			ID:           rows[i].ID,
+			UniqCode:     rows[i].UniqCode,
+			PackingList:  rows[i].PackingList,
+			QtyChange:    rows[i].Delta,
+			CurrentStock: stock.Quantity,
+			Reason:       sourceFlagToReason(rows[i].SourceFlag),
+			ReferenceID:  rows[i].ReferenceID,
+			LoggedBy:     rows[i].LoggedBy,
+			LoggedAt:     rows[i].LoggedAt,
+		})
+	}
+	return &scrapModels.ScrapMovementListResponse{
+		Items: items,
+		Pagination: scrapModels.ScrapPagination{
+			Total:      total,
+			Page:       page,
+			Limit:      limit,
+			TotalPages: calcTotalPages(total, limit),
+		},
+	}, nil
+}
+
+func ptrStr(s string) *string { return &s }
+
+func sourceFlagToReason(flag *string) string {
+	if flag == nil {
+		return "Manual"
+	}
+	switch inventoryconst.SourceFlag(*flag) {
+	case inventoryconst.SourceScrapManual:
+		return "Manual Add"
+	case inventoryconst.SourceScrapIncomingScan:
+		return "Scan"
+	case inventoryconst.SourceScrapReleaseSell:
+		return "Release Sell"
+	case inventoryconst.SourceScrapReleaseDump:
+		return "Release Dump"
+	default:
+		return *flag
+	}
+}
+
+// appendMovementLog writes one row to inventory_movement_logs. Errors are swallowed
+// so a log failure never breaks the main transaction.
+func (sv *service) appendMovementLog(ctx context.Context, entry invModels.InventoryMovementLog) {
+	entry.LoggedAt = time.Now()
+	_ = sv.db.WithContext(ctx).Create(&entry).Error
 }

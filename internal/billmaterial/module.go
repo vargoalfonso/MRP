@@ -46,8 +46,13 @@ func NewHTTPModule(
 //	GET    /api/v1/products/bom                         list (expandable tree)
 //	POST   /api/v1/products/bom                         create wizard
 //	GET    /api/v1/products/bom/:id                     detail
-//	PUT    /api/v1/products/bom/:id                     update parent BOM header (partial)
+//	GET    /api/v1/products/bom/:id/versions            version dropdown/history
+//	POST   /api/v1/products/bom/:id/revisions           create draft revision from selected version
+//	POST   /api/v1/products/bom/:id/release             release draft and mark active version
+//	PUT    /api/v1/products/bom/:id                     update parent BOM header (partial, draft only)
 //	PUT    /api/v1/products/bom/:id/lines/:line_id      update child node (line + item, partial)
+//	POST   /api/v1/products/bom/:id/process-routes      add one process route to parent or child
+//	PATCH  /api/v1/products/bom/:id/process-routes/:route_id update one process route
 //	DELETE /api/v1/products/bom/:id                     delete parent BOM + all lines
 //	DELETE /api/v1/products/bom/:id/children/:child_id  delete selected child subtree only
 //	DELETE /api/v1/products/bom/:id/lines/:line_id      delete selected node subtree by line id
@@ -59,11 +64,16 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		g.GET("", roleMiddleware.RequirePermission(m.roleService, "bom", "view"), m.base.RunAction(m.handler.ListBom))
 		g.POST("", roleMiddleware.RequirePermission(m.roleService, "bom", "create"), m.base.RunAction(m.handler.CreateBom))
 		g.GET("/:id", roleMiddleware.RequirePermission(m.roleService, "bom", "view"), m.base.RunAction(m.handler.GetBomDetail))
+		g.GET("/:id/versions", roleMiddleware.RequirePermission(m.roleService, "bom", "view"), m.base.RunAction(m.handler.GetBomVersions))
+		g.POST("/:id/revisions", roleMiddleware.RequirePermission(m.roleService, "bom", "create"), m.base.RunAction(m.handler.CreateBomRevision))
+		g.POST("/:id/activate", roleMiddleware.RequirePermission(m.roleService, "bom", "update"), m.base.RunAction(m.handler.ActivateBomVersion))
 		g.PUT("/:id", roleMiddleware.RequirePermission(m.roleService, "bom", "update"), m.base.RunAction(m.handler.UpdateBom))
 		g.PUT("/:id/lines/:line_id", roleMiddleware.RequirePermission(m.roleService, "bom", "update"), m.base.RunAction(m.handler.UpdateBomChild))
+		g.POST("/:id/process-routes", roleMiddleware.RequirePermission(m.roleService, "bom", "update"), m.base.RunAction(m.handler.AddProcessRoute))
+		g.PATCH("/:id/process-routes/:route_id", roleMiddleware.RequirePermission(m.roleService, "bom", "update"), m.base.RunAction(m.handler.PatchProcessRoute))
 		g.DELETE("/:id", roleMiddleware.RequirePermission(m.roleService, "bom", "delete"), m.base.RunAction(m.handler.DeleteBom))
 		g.DELETE("/:id/children/:child_id", roleMiddleware.RequirePermission(m.roleService, "bom", "delete"), m.base.RunAction(m.handler.DeleteBomChild))
 		g.DELETE("/:id/lines/:line_id", roleMiddleware.RequirePermission(m.roleService, "bom", "delete"), m.base.RunAction(m.handler.DeleteBomLine))
-		g.POST("/:id/approval", roleMiddleware.RequirePermission(m.roleService, "bom", "update"), m.base.RunAction(m.handler.ApproveBom))
+		//g.POST("/:id/approval", roleMiddleware.RequirePermission(m.roleService, "bom", "update"), m.base.RunAction(m.handler.ApproveBom))
 	}
 }

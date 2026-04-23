@@ -2,10 +2,8 @@ package models
 
 type CreateDNRequest struct {
 	PONumber string `json:"po_number" validate:"required"`
-	// CustomerID    int64  `json:"customer_id"`
-	// ContactPerson string `json:"contact_person"`
-	Period string `json:"period" validate:"required"`
-	Type   string `json:"type" validate:"required"`
+	Period   string `json:"period" validate:"required"`
+	Type     string `json:"type" validate:"required"`
 
 	Items []CreateDNItemRequest `json:"items" validate:"required,dive"`
 }
@@ -59,5 +57,36 @@ type PreviewDNItemRespons struct {
 }
 
 type QRPayload struct {
-	Packing string `json:"packing"`
+	Packing  string `json:"packing"`
+	Quantity int    `json:"qty"`
+}
+
+type Pagination struct {
+	Total      int64 `json:"total"`
+	Page       int   `json:"page"`
+	Limit      int   `json:"limit"`
+	TotalPages int   `json:"total_pages"`
+}
+
+type ScanDeliveryRequest struct {
+	DNNumber     string  `json:"dn_number"`
+	KanbanNumber string  `json:"kanban_number"`
+	Qty          float64 `json:"qty"`
+	ScannedBy    string  `json:"scanned_by"`
+}
+
+type SubmitDeliveryRequest struct {
+	CustomerID int64  `json:"customer_id"`
+	Cycle      string `json:"cycle"`
+	Date       string `json:"date"`
+	CreatedBy  string `json:"created_by"`
+	Priority   string `json:"priority"`
+
+	Items []DeliveryItemRequest `json:"items"`
+}
+
+type DeliveryItemRequest struct {
+	ItemUniqCode string  `json:"item_uniq_code"`
+	Qty          float64 `json:"qty"`
+	UOM          string  `json:"uom"`
 }

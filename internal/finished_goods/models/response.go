@@ -59,6 +59,22 @@ type FGStatusMonitoringResponse struct {
 // Finished Goods item (list + detail)
 // ---------------------------------------------------------------------------
 
+// FinishedGoodsListItem is the lightweight row shape for the FG inventory list.
+// Dynamic stock/kanban/status metrics are fetched via parameterized-summary per row.
+type FinishedGoodsListItem struct {
+	ID                int64     `json:"id"`
+	UUID              string    `json:"uuid"`
+	UniqCode          string    `json:"uniq_code"`
+	PartNumber        *string   `json:"part_number"`
+	PartName          *string   `json:"part_name"`
+	Model             *string   `json:"model"`
+	WONumber          *string   `json:"wo_number"`
+	WarehouseLocation *string   `json:"warehouse_location"`
+	UOM               *string   `json:"uom"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
 // FinishedGoodsItem is the per-row shape for list and detail responses.
 // kanban_progress is computed on-the-fly and NOT stored in DB.
 type FinishedGoodsItem struct {
@@ -71,13 +87,19 @@ type FinishedGoodsItem struct {
 	WONumber              *string   `json:"wo_number"`
 	WarehouseLocation     *string   `json:"warehouse_location"`
 	StockQty              float64   `json:"stock_qty"`
+	TargetStockQty        *float64  `json:"target_stock_qty"`
 	UOM                   *string   `json:"uom"`
 	KanbanCount           *int      `json:"kanban_count"`
+	CurrentKanban         *int      `json:"current_kanban"`
 	KanbanStandardQty     *int      `json:"kanban_standard_qty"`
 	SafetyStockQty        *float64  `json:"safety_stock_qty"`
 	MinThreshold          *float64  `json:"min_threshold"`
 	MaxThreshold          *float64  `json:"max_threshold"`
 	StockToCompleteKanban *float64  `json:"stock_to_complete_kanban"`
+	StockGapToTarget      *float64  `json:"stock_gap_to_target"`
+	KanbanNeed            *int      `json:"kanban_need"`
+	StockToKanbanPCS      *float64  `json:"stock_to_kanban_pcs"`
+	StockAfterReplenish   *float64  `json:"stock_after_replenish"`
 	KanbanProgress        int       `json:"kanban_progress"` // floor(stock/safety*100), computed
 	Status                string    `json:"status"`
 	CreatedBy             *string   `json:"created_by,omitempty"`
@@ -87,8 +109,8 @@ type FinishedGoodsItem struct {
 
 // FinishedGoodsListResponse is the list envelope for GET /finished-goods.
 type FinishedGoodsListResponse struct {
-	Items      []FinishedGoodsItem `json:"items"`
-	Pagination FGPagination        `json:"pagination"`
+	Items      []FinishedGoodsListItem `json:"items"`
+	Pagination FGPagination            `json:"pagination"`
 }
 
 // FGCreateUniqOptionItem is one option row for create-form uniq autocomplete.
@@ -106,4 +128,45 @@ type FGCreateUniqOptionItem struct {
 // FGCreateUniqOptionsResponse is response for create-form uniq autocomplete endpoint.
 type FGCreateUniqOptionsResponse struct {
 	Items []FGCreateUniqOptionItem `json:"items"`
+}
+
+// FGBulkCreateResult is the result for one item in a bulk create operation.
+type FGBulkCreateResult struct {
+	Index     int     `json:"index"`
+	UniqCode  string  `json:"uniq_code"`
+	Status    string  `json:"status"` // "created" | "failed"
+	ID        *int64  `json:"id,omitempty"`
+	UUID      *string `json:"uuid,omitempty"`
+	Error     *string `json:"error,omitempty"`
+}
+
+// FGBulkCreateResponse is returned by POST /api/v1/finished-goods/bulk.
+type FGBulkCreateResponse struct {
+	Created int                  `json:"created"`
+	Failed  int                  `json:"failed"`
+	Results []FGBulkCreateResult `json:"results"`
+}
+
+// FGParameterizedSummary is a dynamic per-item summary for row-level UI refresh.
+// Values are computed fresh from finished_goods + kanban_parameters on each request.
+type FGParameterizedSummary struct {
+	UniqCode            string   `json:"uniq_code"`
+	PartNumber          *string  `json:"part_number"`
+	PartName            *string  `json:"part_name"`
+	Model               *string  `json:"model"`
+	WONumber            *string  `json:"wo_number"`
+	WarehouseLocation   *string  `json:"warehouse_location"`
+	StockQty            float64  `json:"stock_qty"`
+	UOM                 *string  `json:"uom"`
+	KanbanStandardQty   *int     `json:"kanban_standard_qty"`
+	MinThreshold        *float64 `json:"min_threshold"`
+	MaxThreshold        *float64 `json:"max_threshold"`
+	TargetStockQty      *float64 `json:"target_stock_qty"`
+	CurrentKanban       *int     `json:"current_kanban"`
+	StockGapToTarget    *float64 `json:"stock_gap_to_target"`
+	KanbanNeed          *int     `json:"kanban_need"`
+	StockToKanbanPCS    *float64 `json:"stock_to_kanban_pcs"`
+	StockAfterReplenish *float64 `json:"stock_after_replenish"`
+	Status              string   `json:"status"`
+	ParameterSource     string   `json:"parameter_source"`
 }

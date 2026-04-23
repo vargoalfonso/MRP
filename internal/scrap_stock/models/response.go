@@ -36,8 +36,9 @@ type ScrapStockItem struct {
 	Model         *string    `json:"model"`
 	PackingNumber *string    `json:"packing_number"`
 	WONumber      *string    `json:"wo_number"`
-	ScrapType     string     `json:"scrap_type"`
-	Quantity      float64    `json:"quantity"`
+	ScrapType      string  `json:"scrap_type"`
+	DisposalReason *string `json:"disposal_reason"`
+	Quantity       float64 `json:"quantity"`
 	UOM           *string    `json:"uom"`
 	WeightKg      *float64   `json:"weight_kg"`
 	DateReceived  *time.Time `json:"date_received"`
@@ -88,4 +89,27 @@ type ScrapReleaseItem struct {
 type ScrapReleaseListResponse struct {
 	Items      []ScrapReleaseItem `json:"items"`
 	Pagination ScrapPagination    `json:"pagination"`
+}
+
+// ---------------------------------------------------------------------------
+// Scrap Movement History (History Log tab)
+// ---------------------------------------------------------------------------
+
+// ScrapMovementItem is one row in the History Log tab.
+type ScrapMovementItem struct {
+	ID           int64     `json:"id"`
+	UniqCode     string    `json:"uniq"`
+	PackingList  *string   `json:"packing_list"`
+	QtyChange    float64   `json:"qty_change"`    // signed: +6 masuk, -10 keluar
+	CurrentStock float64   `json:"current_stock"` // live balance from scrap_stocks.quantity
+	Reason       string    `json:"reason"`        // human-readable label
+	ReferenceID  *string   `json:"reference_id"`
+	LoggedBy     *string   `json:"logged_by"`
+	LoggedAt     time.Time `json:"logged_at"`
+}
+
+// ScrapMovementListResponse is the list envelope for GET /scrap-stocks/:id/history-logs.
+type ScrapMovementListResponse struct {
+	Items      []ScrapMovementItem `json:"items"`
+	Pagination ScrapPagination     `json:"pagination"`
 }

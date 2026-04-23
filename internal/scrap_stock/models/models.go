@@ -61,7 +61,8 @@ type ScrapStock struct {
 	WONumber *string `gorm:"size:128;index"` // reference to work order
 
 	// Scrap classification (setting_machine_scrap | process_scrap | product_return_scrap)
-	ScrapType string `gorm:"not null;size:64;index"`
+	ScrapType      string  `gorm:"not null;size:64;index"`
+	DisposalReason *string `gorm:"size:128"`
 
 	// Stock balance
 	Quantity float64  `gorm:"type:numeric(15,4);not null;default:0"`
@@ -134,3 +135,19 @@ type ScrapRelease struct {
 }
 
 func (ScrapRelease) TableName() string { return "scrap_releases" }
+
+// ---------------------------------------------------------------------------
+// ScrapMovementRow — query result for history log (from inventory_movement_logs).
+// ---------------------------------------------------------------------------
+
+type ScrapMovementRow struct {
+	ID          int64     `gorm:"column:id"`
+	UniqCode    string    `gorm:"column:uniq_code"`
+	PackingList *string   `gorm:"column:packing_list"`
+	Delta       float64   `gorm:"column:qty_change"`
+	SourceFlag  *string   `gorm:"column:source_flag"`
+	ReferenceID *string   `gorm:"column:reference_id"`
+	Notes       *string   `gorm:"column:notes"`
+	LoggedBy    *string   `gorm:"column:logged_by"`
+	LoggedAt    time.Time `gorm:"column:logged_at"`
+}

@@ -21,7 +21,19 @@ func New(service deliveryNoteService.IDeliveryNoteService) *HTTPHandler {
 }
 
 func (h *HTTPHandler) GetDeliveryNotes(appCtx *app.Context) *app.CostumeResponse {
-	data, err := h.service.GetAll(appCtx.Request.Context())
+	query := appCtx.Request.URL.Query()
+
+	page, _ := strconv.Atoi(query.Get("page"))
+	limit, _ := strconv.Atoi(query.Get("limit"))
+
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	data, pagination, err := h.service.GetAll(appCtx.Request.Context(), page, limit)
 	if err != nil {
 		return app.NewError(appCtx, err)
 	}
@@ -30,7 +42,10 @@ func (h *HTTPHandler) GetDeliveryNotes(appCtx *app.Context) *app.CostumeResponse
 		RequestID: appCtx.APIReqID,
 		Status:    http.StatusOK,
 		Message:   http.StatusText(http.StatusOK),
-		Data:      data,
+		Data: map[string]interface{}{
+			"data":       data,
+			"pagination": pagination,
+		},
 	}
 }
 
@@ -126,7 +141,7 @@ func (h *HTTPHandler) ScanDeliveryNoteItem(appCtx *app.Context) *app.CostumeResp
 		}
 	}
 
-	response, err := h.service.ScanAndUpdate(appCtx.Request.Context(), req)
+	response, err := h.service.Scan(appCtx.Request.Context(), req)
 	if err != nil {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
@@ -218,5 +233,69 @@ func (h *HTTPHandler) PreviewItem(appCtx *app.Context) *app.CostumeResponse {
 		Status:    http.StatusOK,
 		Message:   "success",
 		Data:      data,
+	}
+}
+
+func (h *HTTPHandler) ScanDelivery(appCtx *app.Context) *app.CostumeResponse {
+	var req models.ScanDeliveryRequest
+
+	// =============================
+	// 📥 BIND JSON
+	// =============================
+	if err := appCtx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body",
+		}
+	}
+
+	// =============================
+	// 🚀 CALL SERVICE
+	// =============================
+	err := h.service.ScanDelivery(appCtx.Request.Context(), req)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	// =============================
+	// ✅ RESPONSE
+	// =============================
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "scan delivery supplier success",
+	}
+}
+
+func (h *HTTPHandler) SubmitDelivery(appCtx *app.Context) *app.CostumeResponse {
+	var req models.SubmitDeliveryRequest
+
+	// =============================
+	// 📥 BIND JSON
+	// =============================
+	if err := appCtx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body",
+		}
+	}
+
+	// =============================
+	// 🚀 CALL SERVICE
+	// =============================
+	err := h.service.SubmitDelivery(appCtx.Request.Context(), req)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	// =============================
+	// ✅ RESPONSE
+	// =============================
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "scan delivery customer success",
 	}
 }

@@ -45,21 +45,32 @@ func NewHTTPModule(
 }
 
 func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
+	auth := authMiddleware.JWTMiddleware(m.authenticator)
+
 	v1 := r.Group("/api/v1")
-
-	// 🔓 PUBLIC (NO JWT)
-	deliveryNotePublic := v1.Group("/delivery-notes")
-	deliveryNotePublic.POST("/scan", m.base.RunAction(m.handler.ScanDeliveryNoteItem))
-	deliveryNotePublic.POST("/preview-item", m.base.RunAction(m.handler.PreviewItem))
-
+	v1.Use(auth)
 	// 🔐 PRIVATE (JWT)
 	deliveryNotePrivate := v1.Group("/delivery-notes")
-	deliveryNotePrivate.Use(authMiddleware.JWTMiddleware(m.authenticator))
 
 	{
+		deliveryNotePrivate.POST("/scan", m.base.RunAction(m.handler.ScanDeliveryNoteItem))
+		deliveryNotePrivate.POST("/preview-item", m.base.RunAction(m.handler.PreviewItem))
+
 		deliveryNotePrivate.GET("", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.GetDeliveryNotes))
-		deliveryNotePrivate.POST("/preview", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.PreviewDN))
 		deliveryNotePrivate.POST("", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "create"), m.base.RunAction(m.handler.CreateDeliveryNote))
+		deliveryNotePrivate.POST("/preview", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.PreviewDN))
 		deliveryNotePrivate.GET("/:id", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.GetDeliveryNoteByID))
+	}
+
+	actionUI := v1.Group("/action-ui")
+
+	deliverySupplier := actionUI.Group("/delivery-supplier")
+	{
+		deliverySupplier.POST("/scan", m.base.RunAction(m.handler.ScanDelivery))
+	}
+
+	deliveryCustomer := actionUI.Group("/delivery-customer")
+	{
+		deliveryCustomer.POST("/scan", m.base.RunAction(m.handler.SubmitDelivery))
 	}
 }

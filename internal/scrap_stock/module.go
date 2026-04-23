@@ -72,6 +72,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	// NOTE: /stats must be registered before /:id
 	ss.GET("/stats", perm("scrap", "view"), m.base.RunAction(m.handler.GetStats))
 	ss.GET("/:id", perm("scrap", "view"), m.base.RunAction(m.handler.GetScrapStockByID))
+	ss.GET("/:id/history-logs", perm("scrap", "view"), m.base.RunAction(m.handler.ListScrapMovements))
 
 	// --- Scrap Release ---
 	sr := r.Group("/api/v1/scrap-releases")
