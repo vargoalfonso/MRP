@@ -868,3 +868,39 @@ func OutgoingRMPagination(c *app.Context) OutgoingRMPaginationInput {
 		WorkOrderNo:    c.Query("work_order_no"),
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Stock Opname
+// ---------------------------------------------------------------------------
+
+// StockOpnamePaginationInput holds filters for GET /stock-opname-sessions.
+type StockOpnamePaginationInput struct {
+	Limit          int
+	Page           int
+	OrderBy        string
+	OrderDirection string
+	Type           string
+	Status         string
+	Period         string
+}
+
+func (p StockOpnamePaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// StockOpnamePagination parses stock-opname-specific pagination params.
+func StockOpnamePagination(c *app.Context) StockOpnamePaginationInput {
+	base := Pagination(c)
+	return StockOpnamePaginationInput{
+		Limit:          base.Limit,
+		Page:           base.Page,
+		OrderBy:        base.OrderBy,
+		OrderDirection: base.OrderDirection,
+		Type:           c.Query("type"),
+		Status:         c.Query("status"),
+		Period:         c.Query("period"),
+	}
+}

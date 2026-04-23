@@ -11,6 +11,7 @@ import (
 	"github.com/ganasa18/go-template/pkg/inventoryconst"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 // ---------------------------------------------------------------------------
@@ -52,6 +53,7 @@ type IService interface {
 
 	// Work Order consumption — deducts stock and writes outgoing movement logs for each WO item.
 	ConsumeStockForWorkOrder(ctx context.Context, items []ConsumeItem, woNumber string, performedBy string) error
+	AppendMovementLog(ctx context.Context, tx *gorm.DB, input MovementLogInput) error
 }
 
 // ---------------------------------------------------------------------------
@@ -1377,4 +1379,30 @@ func (s *service) writeMovementLog(ctx context.Context, input MovementLogInput) 
 		Notes:            input.Notes,
 		LoggedBy:         &lb,
 	})
+}
+
+func (s *service) AppendMovementLog(ctx context.Context, tx *gorm.DB, input MovementLogInput) error {
+	sf := input.SourceFlag
+	lb := input.LoggedBy
+	log := &invModels.InventoryMovementLog{
+		MovementCategory: input.Category,
+		MovementType:     input.MovementType,
+		UniqCode:         input.UniqCode,
+		EntityID:         input.EntityID,
+		QtyChange:        input.QtyChange,
+		WeightChange:     input.WeightChange,
+		SourceFlag:       &sf,
+		ReferenceID:      input.ReferenceID,
+		DNNumber:         input.DNNumber,
+		Notes:            input.Notes,
+		LoggedBy:         &lb,
+	}
+	if tx != nil {
+		if err := tx.WithContext(ctx).Create(log).Error; err != nil {
+			return err
+		}
+		return nil
+	}
+	s.writeMovementLog(ctx, input)
+	return nil
 }
