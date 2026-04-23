@@ -78,3 +78,17 @@ type WIPListResponse struct {
 	StockToCompleteKanban int    `json:"stock_to_complete_kanban"`
 	Kanban                int    `json:"kanban"`
 }
+
+type WIPProcess struct {
+	Process string `json:"process"`
+	Stock   int    `json:"stock"`
+}
+
+type WIPDetailResponse struct {
+	ID         int64        `json:"id"`
+	WONumber   string       `json:"wo_number"`
+	Uniq       string       `json:"uniq"`
+	PartNumber string       `json:"part_number"`
+	PartName   string       `json:"part_name"`
+	Processes  []WIPProcess `json:"processes"`
+}

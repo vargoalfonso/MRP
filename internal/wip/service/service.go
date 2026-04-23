@@ -12,7 +12,7 @@ import (
 type IWIPService interface {
 	// WIP
 	GetAll(ctx context.Context, page, limit int) ([]models.WIPListResponse, int64, error)
-	GetByID(ctx context.Context, id int64) (*models.WIP, error)
+	GetByID(ctx context.Context, id int64) (*models.WIPDetailResponse, error)
 	Create(ctx context.Context, req models.CreateWIPRequest) (*models.WIP, error)
 	Update(ctx context.Context, id int64, req models.UpdateWIPRequest) (*models.WIP, error)
 	Delete(ctx context.Context, id int64) error
@@ -37,7 +37,7 @@ func (s *service) GetAll(ctx context.Context, page, limit int) ([]models.WIPList
 	return s.repo.FindAllWIPPaginated(ctx, page, limit)
 }
 
-func (s *service) GetByID(ctx context.Context, id int64) (*models.WIP, error) {
+func (s *service) GetByID(ctx context.Context, id int64) (*models.WIPDetailResponse, error) {
 	if id == 0 {
 		return nil, fmt.Errorf("invalid id")
 	}
