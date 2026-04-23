@@ -127,6 +127,10 @@ import (
 	shopFloorHandler "github.com/ganasa18/go-template/internal/shop_floor/handler"
 	shopFloorRepository "github.com/ganasa18/go-template/internal/shop_floor/repository"
 	shopFloorService "github.com/ganasa18/go-template/internal/shop_floor/service"
+	stockOpnameModule "github.com/ganasa18/go-template/internal/stock_opname"
+	stockOpnameHandler "github.com/ganasa18/go-template/internal/stock_opname/handler"
+	stockOpnameRepo "github.com/ganasa18/go-template/internal/stock_opname/repository"
+	stockOpnameService "github.com/ganasa18/go-template/internal/stock_opname/service"
 	supplierModule "github.com/ganasa18/go-template/internal/supplier"
 	supplierHandler "github.com/ganasa18/go-template/internal/supplier/handler"
 	supplierRepository "github.com/ganasa18/go-template/internal/supplier/repository"
@@ -337,6 +341,9 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	scrapRepository := scrapRepo.New(db)
 	scrapSvc := scrapService.New(scrapRepository, db)
 	scrapHTTPHandler := scrapHandler.New(scrapSvc)
+	stockOpnameRepository := stockOpnameRepo.New(db)
+	stockOpnameSvc := stockOpnameService.New(stockOpnameRepository, db, invSvc)
+	stockOpnameHTTPHandler := stockOpnameHandler.New(stockOpnameSvc)
 
 	// Delivery Scheduling Customer module (outbound customer delivery)
 	dscRepo := dscRepository.New(db)
@@ -385,6 +392,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		productionModule.NewHTTPModule(cfg, baseHTTPHandler, productionHTTPHandler, authSvc, roleSvc, productionSvc),
 		outgoingModule.NewHTTPModule(cfg, baseHTTPHandler, outgoingHTTPHandler, authSvc, roleSvc, outgoingSvc),
 		scrapModule.NewHTTPModule(cfg, baseHTTPHandler, scrapHTTPHandler, authSvc, roleSvc, scrapSvc),
+		stockOpnameModule.NewHTTPModule(cfg, baseHTTPHandler, stockOpnameHTTPHandler, authSvc, roleSvc, stockOpnameSvc),
 		finishedGoodsModule.NewHTTPModule(cfg, baseHTTPHandler, fgHTTPHandler, authSvc, roleSvc, fgSvc),
 		wipModule.NewHTTPModule(cfg, baseHTTPHandler, wipHTTPHandler, authSvc, roleSvc, wipSvc),
 		adminJobsModule.NewHTTPModule(cfg, baseHTTPHandler, adminJobsHTTPHandler, adminJobsSvc),
