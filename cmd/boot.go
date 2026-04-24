@@ -111,6 +111,10 @@ import (
 	qcHandler "github.com/ganasa18/go-template/internal/qc/handler"
 	qcRepo "github.com/ganasa18/go-template/internal/qc/repository"
 	qcService "github.com/ganasa18/go-template/internal/qc/service"
+	qcDashboardModule "github.com/ganasa18/go-template/internal/qc_dashboard"
+	qcDashboardHandler "github.com/ganasa18/go-template/internal/qc_dashboard/handler"
+	qcDashboardRepository "github.com/ganasa18/go-template/internal/qc_dashboard/repository"
+	qcDashboardService "github.com/ganasa18/go-template/internal/qc_dashboard/service"
 	roleModule "github.com/ganasa18/go-template/internal/role"
 	roleHandler "github.com/ganasa18/go-template/internal/role/handler"
 	roleRepository "github.com/ganasa18/go-template/internal/role/repository"
@@ -167,6 +171,7 @@ import (
 	workOrderHandler "github.com/ganasa18/go-template/internal/work_order/handler"
 	workOrderRepository "github.com/ganasa18/go-template/internal/work_order/repository"
 	workOrderService "github.com/ganasa18/go-template/internal/work_order/service"
+	"github.com/ganasa18/go-template/pkg/concurrency"
 )
 
 // initHTTP wires every module inside the modular monolith and returns an HTTP server.
@@ -252,17 +257,20 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	actionRepo := actionUIRepo.New(db)
 	actionUIProductionRepo := actionUIProductionRepo.NewProductionRepository(db)
 	actionUIIncomingRepo := actionUIIncomingRepo.NewIncomingRepository(db)
-	actionSvc := actionUIService.New(actionRepo, actionUIProductionRepo, actionUIIncomingRepo)
+	actionSvc := actionUIService.New(actionRepo, actionUIProductionRepo, actionUIIncomingRepo, db)
 	actionHTTPHandler := actionUIHandler.New(actionSvc)
 
 	shopFloorRepo := shopFloorRepository.New(db)
-	shopFloorSvc := shopFloorService.New(shopFloorRepo)
+	shopFloorSvc := shopFloorService.New(shopFloorRepo, concurrency.DefaultFanout)
 	shopFloorHTTPHandler := shopFloorHandler.New(shopFloorSvc)
 
 	// QC module (task list + approve/reject)
 	qcRepository := qcRepo.New(db)
 	qcSvc := qcService.New(qcRepository)
 	qcHTTPHandler := qcHandler.New(qcSvc)
+	qcDashboardRepo := qcDashboardRepository.New(db)
+	qcDashboardSvc := qcDashboardService.New(qcDashboardRepo, concurrency.DefaultFanout)
+	qcDashboardHTTPHandler := qcDashboardHandler.New(qcDashboardSvc)
 
 	// Inventory module (RM database, Indirect RM, Subcon)
 	invRepository := inventoryRepo.New(db)
@@ -377,6 +385,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		actionUIModule.NewHTTPModule(cfg, baseHTTPHandler, actionHTTPHandler, authSvc, roleSvc),
 		shopFloorModule.NewHTTPModule(cfg, baseHTTPHandler, shopFloorHTTPHandler, authSvc, roleSvc, shopFloorSvc),
 		qcModule.NewHTTPModule(cfg, baseHTTPHandler, qcHTTPHandler, authSvc, roleSvc),
+		qcDashboardModule.NewHTTPModule(cfg, baseHTTPHandler, qcDashboardHTTPHandler, authSvc, roleSvc, qcDashboardSvc),
 		inventoryModule.NewHTTPModule(cfg, baseHTTPHandler, invHTTPHandler, authSvc, roleSvc, invSvc),
 		workOrderModule.NewHTTPModule(cfg, baseHTTPHandler, woHTTPHandler, authSvc, roleSvc, woSvc),
 		safetyStockModule.NewHTTPModule(cfg, baseHTTPHandler, safetyStockHandler, authSvc, roleSvc, safetyStockService),

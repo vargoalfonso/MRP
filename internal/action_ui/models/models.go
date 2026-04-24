@@ -90,21 +90,48 @@ type ProductionScanLog struct {
 }
 
 type QCLog struct {
-	ID         int64
-	UUID       string
-	WOID       int64
-	WOItemID   int64
-	UniqCode   string
-	QCRound    int
-	QtyChecked float64
-	QtyPass    float64
-	QtyDefect  float64
-	QtyScrap   float64
-	Status     string
-	CheckedBy  string
-	CheckedAt  time.Time
-	CreatedAt  time.Time
+	ID           int64
+	UUID         string
+	QCTaskID     *int64
+	WOID         *int64
+	WOItemID     *int64
+	DNItemID     *int64
+	UniqCode     string
+	QCRound      int
+	QtyChecked   float64
+	QtyPass      float64
+	QtyDefect    float64
+	QtyScrap     float64
+	Status       string
+	DefectSource string
+	CheckedBy    string
+	CheckedAt    time.Time
+	CreatedAt    time.Time
 }
+
+func (QCLog) TableName() string { return "qc_logs" }
+
+type QCDefectItem struct {
+	ID               int64
+	QCLogID          int64
+	QCTaskID         *int64
+	WOID             *int64
+	WOItemID         *int64
+	DNItemID         *int64
+	UniqCode         string
+	DefectSource     string
+	DefectReasonCode string
+	DefectReasonText string
+	QtyDefect        float64
+	QtyScrap         float64
+	IsRepairable     bool
+	MachineID        *string
+	ProcessName      string
+	ReportedBy       string
+	ReportedAt       time.Time
+}
+
+func (QCDefectItem) TableName() string { return "qc_defect_items" }
 
 type FinishedGoods struct {
 	ID                    int64

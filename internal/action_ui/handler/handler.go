@@ -176,7 +176,8 @@ func (h *HTTPHandler) QCSubmit(ctx *app.Context) *app.CostumeResponse {
 		}
 	}
 
-	err := h.svc.QCSubmit(ctx.Request.Context(), req)
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	err := h.svc.QCSubmit(ctx.Request.Context(), req, userCtx.UserID)
 	if err != nil {
 		return &app.CostumeResponse{
 			RequestID: ctx.APIReqID,

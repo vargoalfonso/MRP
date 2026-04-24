@@ -16,6 +16,7 @@ type LiveProduction struct {
 	Machine    LiveProductionMachine  `json:"machine"`
 	Production LiveProductionCurrent  `json:"production"`
 	Progress   LiveProductionProgress `json:"progress"`
+	Quality    LiveProductionQuality  `json:"quality"`
 }
 
 type LiveProductionMachine struct {
@@ -38,6 +39,14 @@ type LiveProductionProgress struct {
 	ThroughputToday float64 `json:"throughput_today"`
 	OutputQty       float64 `json:"output_qty"`
 	ProgressPercent float64 `json:"progress_percent"`
+}
+
+type LiveProductionQuality struct {
+	CheckedQty  float64 `json:"checked_qty"`
+	PassQty     float64 `json:"pass_qty"`
+	DefectQty   float64 `json:"defect_qty"`
+	ScrapQty    float64 `json:"scrap_qty"`
+	RatePercent float64 `json:"rate_percent"`
 }
 
 type DeliveryReadinessSummary struct {

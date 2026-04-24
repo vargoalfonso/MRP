@@ -58,7 +58,9 @@ type ScrapStock struct {
 	PackingNumber *string `gorm:"size:128;index"`
 
 	// Traceability
-	WONumber *string `gorm:"size:128;index"` // reference to work order
+	WONumber       *string `gorm:"size:128;index"` // reference to work order
+	SourceQCLogID  *int64  `gorm:"column:source_qc_log_id;index"`
+	SourceDefectID *int64  `gorm:"column:source_defect_id;index"`
 
 	// Scrap classification (setting_machine_scrap | process_scrap | product_return_scrap)
 	ScrapType      string  `gorm:"not null;size:64;index"`
@@ -118,10 +120,10 @@ type ScrapRelease struct {
 	DisposalReason *string `gorm:"type:text"`
 
 	// Approval gate: Pending | Completed | Rejected
-	ApprovalStatus string     `gorm:"not null;size:32;default:'Pending';index"`
-	Validator      *string    `gorm:"size:255"` // person who submitted the release
-	Approver       *string    `gorm:"size:255"` // intended approver role/name
-	ApprovedBy     *string    `gorm:"size:255"` // actual approver (JWT at approval time)
+	ApprovalStatus string  `gorm:"not null;size:32;default:'Pending';index"`
+	Validator      *string `gorm:"size:255"` // person who submitted the release
+	Approver       *string `gorm:"size:255"` // intended approver role/name
+	ApprovedBy     *string `gorm:"size:255"` // actual approver (JWT at approval time)
 	ApprovedAt     *time.Time
 
 	Remarks *string `gorm:"type:text"`
