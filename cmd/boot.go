@@ -10,16 +10,16 @@ import (
 	userHandler "github.com/ganasa18/go-template/internal/access_control/handler"
 	userRepository "github.com/ganasa18/go-template/internal/access_control/repository"
 	userService "github.com/ganasa18/go-template/internal/access_control/service"
-	adminJobsModule "github.com/ganasa18/go-template/internal/admin_jobs"
-	adminJobsHandler "github.com/ganasa18/go-template/internal/admin_jobs/handler"
-	adminJobsRepo "github.com/ganasa18/go-template/internal/admin_jobs/repository"
-	adminJobsService "github.com/ganasa18/go-template/internal/admin_jobs/service"
 	actionUIModule "github.com/ganasa18/go-template/internal/action_ui"
 	actionUIHandler "github.com/ganasa18/go-template/internal/action_ui/handler"
 	actionUIIncomingRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
 	actionUIProductionRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
 	actionUIRepo "github.com/ganasa18/go-template/internal/action_ui/repository"
 	actionUIService "github.com/ganasa18/go-template/internal/action_ui/service"
+	adminJobsModule "github.com/ganasa18/go-template/internal/admin_jobs"
+	adminJobsHandler "github.com/ganasa18/go-template/internal/admin_jobs/handler"
+	adminJobsRepo "github.com/ganasa18/go-template/internal/admin_jobs/repository"
+	adminJobsService "github.com/ganasa18/go-template/internal/admin_jobs/service"
 	approvalWorkflowModule "github.com/ganasa18/go-template/internal/approval_workflow"
 	approvalWorkflowHandler "github.com/ganasa18/go-template/internal/approval_workflow/handler"
 	approvalWorkflowRepository "github.com/ganasa18/go-template/internal/approval_workflow/repository"
@@ -38,10 +38,18 @@ import (
 	customerHandler "github.com/ganasa18/go-template/internal/customer/handler"
 	customerRepository "github.com/ganasa18/go-template/internal/customer/repository"
 	customerService "github.com/ganasa18/go-template/internal/customer/service"
+	coModule "github.com/ganasa18/go-template/internal/customer_order"
+	coHandler "github.com/ganasa18/go-template/internal/customer_order/handler"
+	coRepository "github.com/ganasa18/go-template/internal/customer_order/repository"
+	coService "github.com/ganasa18/go-template/internal/customer_order/service"
 	deliveryNoteModule "github.com/ganasa18/go-template/internal/delivery_note"
 	deliveryNoteHandler "github.com/ganasa18/go-template/internal/delivery_note/handler"
 	deliveryNoteRepository "github.com/ganasa18/go-template/internal/delivery_note/repository"
 	deliveryNoteService "github.com/ganasa18/go-template/internal/delivery_note/service"
+	dscModule "github.com/ganasa18/go-template/internal/delivery_scheduling_customer"
+	dscHandler "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/handler"
+	dscRepository "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/repository"
+	dscService "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/service"
 	departementModule "github.com/ganasa18/go-template/internal/departement"
 	departementHandler "github.com/ganasa18/go-template/internal/departement/handler"
 	departementRepository "github.com/ganasa18/go-template/internal/departement/repository"
@@ -71,6 +79,10 @@ import (
 	masterMachineRepository "github.com/ganasa18/go-template/internal/master_machine/repository"
 	masterMachineService "github.com/ganasa18/go-template/internal/master_machine/service"
 	appmodule "github.com/ganasa18/go-template/internal/module"
+	outgoingModule "github.com/ganasa18/go-template/internal/outgoing_material"
+	outgoingHandler "github.com/ganasa18/go-template/internal/outgoing_material/handler"
+	outgoingRepo "github.com/ganasa18/go-template/internal/outgoing_material/repository"
+	outgoingService "github.com/ganasa18/go-template/internal/outgoing_material/service"
 	poBudgetModule "github.com/ganasa18/go-template/internal/po_budget"
 	poBudgetHandler "github.com/ganasa18/go-template/internal/po_budget/handler"
 	poBudgetRepository "github.com/ganasa18/go-template/internal/po_budget/repository"
@@ -79,14 +91,6 @@ import (
 	poSplitSettingHandler "github.com/ganasa18/go-template/internal/po_split_setting/handler"
 	poSplitSettingRepository "github.com/ganasa18/go-template/internal/po_split_setting/repository"
 	poSplitSettingService "github.com/ganasa18/go-template/internal/po_split_setting/service"
-	coModule "github.com/ganasa18/go-template/internal/customer_order"
-	coHandler "github.com/ganasa18/go-template/internal/customer_order/handler"
-	coRepository "github.com/ganasa18/go-template/internal/customer_order/repository"
-	coService "github.com/ganasa18/go-template/internal/customer_order/service"
-	dscModule "github.com/ganasa18/go-template/internal/delivery_scheduling_customer"
-	dscHandler "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/handler"
-	dscRepository "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/repository"
-	dscService "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/service"
 	prlModule "github.com/ganasa18/go-template/internal/prl"
 	prlHandler "github.com/ganasa18/go-template/internal/prl/handler"
 	prlRepository "github.com/ganasa18/go-template/internal/prl/repository"
@@ -99,6 +103,10 @@ import (
 	procHandler "github.com/ganasa18/go-template/internal/procurement/handler"
 	procRepository "github.com/ganasa18/go-template/internal/procurement/repository"
 	procService "github.com/ganasa18/go-template/internal/procurement/service"
+	productReturnModule "github.com/ganasa18/go-template/internal/product_return"
+	productReturnHandler "github.com/ganasa18/go-template/internal/product_return/handler"
+	productReturnRepository "github.com/ganasa18/go-template/internal/product_return/repository"
+	productReturnService "github.com/ganasa18/go-template/internal/product_return/service"
 	productionModule "github.com/ganasa18/go-template/internal/production"
 	productionHandler "github.com/ganasa18/go-template/internal/production/handler"
 	productionRepository "github.com/ganasa18/go-template/internal/production/repository"
@@ -115,10 +123,6 @@ import (
 	safetyStockHandler "github.com/ganasa18/go-template/internal/safety_stock_parameter/handler"
 	safetyStockRepo "github.com/ganasa18/go-template/internal/safety_stock_parameter/repository"
 	safetyStockService "github.com/ganasa18/go-template/internal/safety_stock_parameter/service"
-	outgoingModule "github.com/ganasa18/go-template/internal/outgoing_material"
-	outgoingHandler "github.com/ganasa18/go-template/internal/outgoing_material/handler"
-	outgoingRepo "github.com/ganasa18/go-template/internal/outgoing_material/repository"
-	outgoingService "github.com/ganasa18/go-template/internal/outgoing_material/service"
 	scrapModule "github.com/ganasa18/go-template/internal/scrap_stock"
 	scrapHandler "github.com/ganasa18/go-template/internal/scrap_stock/handler"
 	scrapRepo "github.com/ganasa18/go-template/internal/scrap_stock/repository"
@@ -335,6 +339,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	wipSvc := wipService.New(wipRepo)
 	wipHTTPHandler := wipHandler.New(wipSvc)
 
+	productReturnRepo := productReturnRepository.New(db)
+	productReturnSvc := productReturnService.New(productReturnRepo)
+	productReturnHTTPHandler := productReturnHandler.New(productReturnSvc)
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -345,7 +353,6 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		bomModule.NewHTTPModule(cfg, baseHTTPHandler, bomHTTPHandler, authSvc, roleSvc, bomSvc),
 		uploadModule.NewHTTPModule(baseHTTPHandler, uploadHTTPHandler, uploadSvc, authSvc, roleSvc),
 		roleModule.NewHTTPModule(cfg, baseHTTPHandler, roleHTTPHandler, authSvc, roleSvc),
-		warehouseModule.NewHTTPModule(cfg, baseHTTPHandler, warehouseHTTPHandler, authSvc),
 		departementModule.NewHTTPModule(cfg, baseHTTPHandler, departementHTTPHandler, authSvc, roleSvc, departementSvc),
 		employeeModule.NewHTTPModule(cfg, baseHTTPHandler, employeeHTTPHandler, authSvc, roleSvc, employeeSvc),
 		userModule.NewHTTPModule(cfg, baseHTTPHandler, userHTTPHandler, authSvc, roleSvc, userSvc),
@@ -374,6 +381,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		adminJobsModule.NewHTTPModule(cfg, baseHTTPHandler, adminJobsHTTPHandler, adminJobsSvc),
 		coModule.NewHTTPModule(cfg, baseHTTPHandler, coHTTPHandler, authSvc, roleSvc, coSvc),
 		dscModule.NewHTTPModule(baseHTTPHandler, dscHTTPHandler, authSvc, roleSvc, dscSvc),
+		productReturnModule.NewHTTPModule(cfg, baseHTTPHandler, productReturnHTTPHandler, authSvc, roleSvc, productReturnSvc),
 	}
 
 	// --- Server ---
