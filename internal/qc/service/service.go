@@ -4,14 +4,15 @@ import (
 	"context"
 	"math"
 
+	qcModels "github.com/ganasa18/go-template/internal/qc/models"
 	qcRepo "github.com/ganasa18/go-template/internal/qc/repository"
 )
 
 type IService interface {
 	ListTasks(ctx context.Context, f qcRepo.ListFilter) ([]qcRepo.TaskListRow, int64, error)
 	StartTask(ctx context.Context, taskID int64, performedBy string) error
-	ApproveIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string) error
-	RejectIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string) error
+	ApproveIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string, defects []qcModels.DefectInput) error
+	RejectIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string, defects []qcModels.DefectInput) error
 }
 
 type service struct{ repo qcRepo.IRepository }
@@ -28,12 +29,12 @@ func (s *service) StartTask(ctx context.Context, taskID int64, performedBy strin
 	return err
 }
 
-func (s *service) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string) error {
-	return s.repo.ApproveIncoming(ctx, taskID, numberOfDefects, dateChecked, performedBy)
+func (s *service) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string, defects []qcModels.DefectInput) error {
+	return s.repo.ApproveIncoming(ctx, taskID, numberOfDefects, dateChecked, performedBy, defects)
 }
 
-func (s *service) RejectIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string) error {
-	return s.repo.RejectIncoming(ctx, taskID, numberOfDefects, dateChecked, performedBy)
+func (s *service) RejectIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string, defects []qcModels.DefectInput) error {
+	return s.repo.RejectIncoming(ctx, taskID, numberOfDefects, dateChecked, performedBy, defects)
 }
 
 func TotalPages(total int64, limit int) int64 {

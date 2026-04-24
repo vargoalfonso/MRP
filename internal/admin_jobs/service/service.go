@@ -12,6 +12,10 @@ type IService interface {
 	// for all raw_material items for today's snapshot date.
 	// Returns (rowsUpserted, activePeriode, error).
 	RebuildDemandPeriodeSummaries(ctx context.Context) (int64, string, error)
+	// RecomputeSupplierPerformance aggregates delivery, QC, and PO data per supplier
+	// for the given period and upserts snapshot rows.
+	// Returns (rowsUpserted, error).
+	RecomputeSupplierPerformance(ctx context.Context, req RecomputeSupplierPerformanceRequest) (int64, error)
 }
 
 type service struct {

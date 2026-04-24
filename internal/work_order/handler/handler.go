@@ -19,6 +19,101 @@ type HTTPHandler struct {
 
 func New(svc woService.IService) *HTTPHandler { return &HTTPHandler{svc: svc} }
 
+func (h *HTTPHandler) ListBulkSourceDocuments(ctx *app.Context) *app.CostumeResponse {
+	limit := 20
+	if v := strings.TrimSpace(ctx.Query("limit")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+	data, err := h.svc.ListBulkSourceDocuments(ctx.Request.Context(), ctx.Query("document_type"), ctx.Query("q"), ctx.Query("target_date"), limit)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: data}
+}
+
+func (h *HTTPHandler) ListBulkSourceDocumentItems(ctx *app.Context) *app.CostumeResponse {
+	data, err := h.svc.ListBulkSourceDocumentItems(ctx.Request.Context(), ctx.Query("document_id"), ctx.Query("document_type"))
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: data}
+}
+
+func (h *HTTPHandler) ListBulkWorkOrders(ctx *app.Context) *app.CostumeResponse {
+	p := pagination.WorkOrderPagination(ctx)
+	data, err := h.svc.ListBulk(ctx.Request.Context(), p)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: data}
+}
+
+func (h *HTTPHandler) CreateBulkWorkOrder(ctx *app.Context) *app.CostumeResponse {
+	var req woModels.CreateBulkWorkOrderRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body: " + err.Error()}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+	}
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	data, err := h.svc.CreateBulk(ctx.Request.Context(), req, userCtx.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusCreated, Message: "Created", Data: data}
+}
+
+func (h *HTTPHandler) GetBulkWorkOrderSummary(ctx *app.Context) *app.CostumeResponse {
+	data, err := h.svc.GetBulkSummary(ctx.Request.Context())
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: data}
+}
+
+func (h *HTTPHandler) GetBulkWorkOrderDetail(ctx *app.Context) *app.CostumeResponse {
+	data, err := h.svc.GetBulkDetail(ctx.Request.Context(), ctx.Param("id"))
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: data}
+}
+
+func (h *HTTPHandler) ApprovalBulkWorkOrder(ctx *app.Context) *app.CostumeResponse {
+	var req woModels.WorkOrderApprovalRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body: " + err.Error()}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+	}
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	data, err := h.svc.ApprovalBulk(ctx.Request.Context(), ctx.Param("id"), req, userCtx.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: data}
+}
+
+func (h *HTTPHandler) BulkApprovalBulkWorkOrder(ctx *app.Context) *app.CostumeResponse {
+	var req woModels.BulkWorkOrderApprovalRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body: " + err.Error()}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+	}
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	data, err := h.svc.BulkApprovalBulk(ctx.Request.Context(), req, userCtx.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: data}
+}
+
 // ListRMProcessingWorkOrders returns paginated RM processing work order list.
 // GET /api/v1/working-order/rm-processing/work-orders
 func (h *HTTPHandler) ListRMProcessingWorkOrders(ctx *app.Context) *app.CostumeResponse {

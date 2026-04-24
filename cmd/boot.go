@@ -115,6 +115,10 @@ import (
 	qcHandler "github.com/ganasa18/go-template/internal/qc/handler"
 	qcRepo "github.com/ganasa18/go-template/internal/qc/repository"
 	qcService "github.com/ganasa18/go-template/internal/qc/service"
+	qcDashboardModule "github.com/ganasa18/go-template/internal/qc_dashboard"
+	qcDashboardHandler "github.com/ganasa18/go-template/internal/qc_dashboard/handler"
+	qcDashboardRepository "github.com/ganasa18/go-template/internal/qc_dashboard/repository"
+	qcDashboardService "github.com/ganasa18/go-template/internal/qc_dashboard/service"
 	roleModule "github.com/ganasa18/go-template/internal/role"
 	roleHandler "github.com/ganasa18/go-template/internal/role/handler"
 	roleRepository "github.com/ganasa18/go-template/internal/role/repository"
@@ -127,6 +131,14 @@ import (
 	scrapHandler "github.com/ganasa18/go-template/internal/scrap_stock/handler"
 	scrapRepo "github.com/ganasa18/go-template/internal/scrap_stock/repository"
 	scrapService "github.com/ganasa18/go-template/internal/scrap_stock/service"
+	shopFloorModule "github.com/ganasa18/go-template/internal/shop_floor"
+	shopFloorHandler "github.com/ganasa18/go-template/internal/shop_floor/handler"
+	shopFloorRepository "github.com/ganasa18/go-template/internal/shop_floor/repository"
+	shopFloorService "github.com/ganasa18/go-template/internal/shop_floor/service"
+	stockOpnameModule "github.com/ganasa18/go-template/internal/stock_opname"
+	stockOpnameHandler "github.com/ganasa18/go-template/internal/stock_opname/handler"
+	stockOpnameRepo "github.com/ganasa18/go-template/internal/stock_opname/repository"
+	stockOpnameService "github.com/ganasa18/go-template/internal/stock_opname/service"
 	supplierModule "github.com/ganasa18/go-template/internal/supplier"
 	supplierHandler "github.com/ganasa18/go-template/internal/supplier/handler"
 	supplierRepository "github.com/ganasa18/go-template/internal/supplier/repository"
@@ -135,6 +147,10 @@ import (
 	supplierItemHandler "github.com/ganasa18/go-template/internal/supplier_item/handler"
 	supplierItemRepository "github.com/ganasa18/go-template/internal/supplier_item/repository"
 	supplierItemService "github.com/ganasa18/go-template/internal/supplier_item/service"
+	spModule "github.com/ganasa18/go-template/internal/supplier_performance"
+	spHandler "github.com/ganasa18/go-template/internal/supplier_performance/handler"
+	spRepository "github.com/ganasa18/go-template/internal/supplier_performance/repository"
+	spService "github.com/ganasa18/go-template/internal/supplier_performance/service"
 	typeParameterModule "github.com/ganasa18/go-template/internal/type_parameter"
 	typeParameterHandler "github.com/ganasa18/go-template/internal/type_parameter/handler"
 	typeParameterRepository "github.com/ganasa18/go-template/internal/type_parameter/repository"
@@ -159,6 +175,7 @@ import (
 	workOrderHandler "github.com/ganasa18/go-template/internal/work_order/handler"
 	workOrderRepository "github.com/ganasa18/go-template/internal/work_order/repository"
 	workOrderService "github.com/ganasa18/go-template/internal/work_order/service"
+	"github.com/ganasa18/go-template/pkg/concurrency"
 )
 
 // initHTTP wires every module inside the modular monolith and returns an HTTP server.
@@ -244,13 +261,20 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	actionRepo := actionUIRepo.New(db)
 	actionUIProductionRepo := actionUIProductionRepo.NewProductionRepository(db)
 	actionUIIncomingRepo := actionUIIncomingRepo.NewIncomingRepository(db)
-	actionSvc := actionUIService.New(actionRepo, actionUIProductionRepo, actionUIIncomingRepo)
+	actionSvc := actionUIService.New(actionRepo, actionUIProductionRepo, actionUIIncomingRepo, db)
 	actionHTTPHandler := actionUIHandler.New(actionSvc)
+
+	shopFloorRepo := shopFloorRepository.New(db)
+	shopFloorSvc := shopFloorService.New(shopFloorRepo, concurrency.DefaultFanout)
+	shopFloorHTTPHandler := shopFloorHandler.New(shopFloorSvc)
 
 	// QC module (task list + approve/reject)
 	qcRepository := qcRepo.New(db)
 	qcSvc := qcService.New(qcRepository)
 	qcHTTPHandler := qcHandler.New(qcSvc)
+	qcDashboardRepo := qcDashboardRepository.New(db)
+	qcDashboardSvc := qcDashboardService.New(qcDashboardRepo, concurrency.DefaultFanout)
+	qcDashboardHTTPHandler := qcDashboardHandler.New(qcDashboardSvc)
 
 	// Inventory module (RM database, Indirect RM, Subcon)
 	invRepository := inventoryRepo.New(db)
@@ -329,12 +353,19 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	scrapRepository := scrapRepo.New(db)
 	scrapSvc := scrapService.New(scrapRepository, db)
 	scrapHTTPHandler := scrapHandler.New(scrapSvc)
+	stockOpnameRepository := stockOpnameRepo.New(db)
+	stockOpnameSvc := stockOpnameService.New(stockOpnameRepository, db, invSvc)
+	stockOpnameHTTPHandler := stockOpnameHandler.New(stockOpnameSvc)
 
 	// Delivery Scheduling Customer module (outbound customer delivery)
 	dscRepo := dscRepository.New(db)
 	dscSvc := dscService.New(dscRepo, db)
 	dscHTTPHandler := dscHandler.New(dscSvc)
 
+	// Supplier Performance module
+	spRepo := spRepository.New(db)
+	spSvc := spService.New(spRepo)
+	spHTTPHandler := spHandler.New(spSvc)
 	wipRepo := wipRepository.New(db)
 	wipSvc := wipService.New(wipRepo)
 	wipHTTPHandler := wipHandler.New(wipSvc)
@@ -359,7 +390,9 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		poBudgetModule.NewHTTPModule(cfg, baseHTTPHandler, poBudgetHTTPHandler, authSvc, roleSvc),
 		procModule.NewHTTPModule(cfg, baseHTTPHandler, procHTTPHandler, authSvc, roleSvc),
 		actionUIModule.NewHTTPModule(cfg, baseHTTPHandler, actionHTTPHandler, authSvc, roleSvc),
+		shopFloorModule.NewHTTPModule(cfg, baseHTTPHandler, shopFloorHTTPHandler, authSvc, roleSvc, shopFloorSvc),
 		qcModule.NewHTTPModule(cfg, baseHTTPHandler, qcHTTPHandler, authSvc, roleSvc),
+		qcDashboardModule.NewHTTPModule(cfg, baseHTTPHandler, qcDashboardHTTPHandler, authSvc, roleSvc, qcDashboardSvc),
 		inventoryModule.NewHTTPModule(cfg, baseHTTPHandler, invHTTPHandler, authSvc, roleSvc, invSvc),
 		workOrderModule.NewHTTPModule(cfg, baseHTTPHandler, woHTTPHandler, authSvc, roleSvc, woSvc),
 		safetyStockModule.NewHTTPModule(cfg, baseHTTPHandler, safetyStockHandler, authSvc, roleSvc, safetyStockService),
@@ -375,12 +408,13 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		productionModule.NewHTTPModule(cfg, baseHTTPHandler, productionHTTPHandler, authSvc, roleSvc, productionSvc),
 		outgoingModule.NewHTTPModule(cfg, baseHTTPHandler, outgoingHTTPHandler, authSvc, roleSvc, outgoingSvc),
 		scrapModule.NewHTTPModule(cfg, baseHTTPHandler, scrapHTTPHandler, authSvc, roleSvc, scrapSvc),
+		stockOpnameModule.NewHTTPModule(cfg, baseHTTPHandler, stockOpnameHTTPHandler, authSvc, roleSvc, stockOpnameSvc),
 		finishedGoodsModule.NewHTTPModule(cfg, baseHTTPHandler, fgHTTPHandler, authSvc, roleSvc, fgSvc),
-		warehouseModule.NewHTTPModule(cfg, baseHTTPHandler, warehouseHTTPHandler, authSvc),
 		wipModule.NewHTTPModule(cfg, baseHTTPHandler, wipHTTPHandler, authSvc, roleSvc, wipSvc),
 		adminJobsModule.NewHTTPModule(cfg, baseHTTPHandler, adminJobsHTTPHandler, adminJobsSvc),
 		coModule.NewHTTPModule(cfg, baseHTTPHandler, coHTTPHandler, authSvc, roleSvc, coSvc),
 		dscModule.NewHTTPModule(baseHTTPHandler, dscHTTPHandler, authSvc, roleSvc, dscSvc),
+		spModule.NewHTTPModule(baseHTTPHandler, spHTTPHandler, authSvc, roleSvc),
 		productReturnModule.NewHTTPModule(cfg, baseHTTPHandler, productReturnHTTPHandler, authSvc, roleSvc, productReturnSvc),
 	}
 

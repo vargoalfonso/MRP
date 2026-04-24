@@ -30,6 +30,9 @@ type QCTask struct {
 
 	// IncomingDNItemID links to delivery_note_items.id (bigint).
 	IncomingDNItemID *int64 `gorm:"column:incoming_dn_item_id" json:"incoming_dn_item_id"`
+	WOID             *int64 `gorm:"column:wo_id" json:"wo_id"`
+	WOItemID         *int64 `gorm:"column:wo_item_id" json:"wo_item_id"`
+	SourceScanID     *int64 `gorm:"column:source_scan_id" json:"source_scan_id"`
 
 	GoodQuantity  *int       `gorm:"column:good_quantity" json:"good_quantity"`
 	NgQuantity    *int       `gorm:"column:ng_quantity" json:"ng_quantity"`

@@ -317,7 +317,33 @@ type QCTaskPaginationInput struct {
 	Status         string        `json:"status"`
 }
 
+type QCDashboardPaginationInput struct {
+	Limit          int           `json:"limit"`
+	Page           int           `json:"page"`
+	Search         string        `json:"search"`
+	Filter         []FilterInput `json:"filter"`
+	OrderBy        string        `json:"order_by"`
+	OrderDirection string        `json:"order_direction"`
+	DateFrom       string        `json:"date_from"`
+	DateTo         string        `json:"date_to"`
+	UniqCode       string        `json:"uniq_code"`
+	WONumber       string        `json:"wo_number"`
+	SupplierID     int64         `json:"supplier_id"`
+	PONumber       string        `json:"po_number"`
+	DefectSource   string        `json:"defect_source"`
+	ReasonCode     string        `json:"reason_code"`
+	Status         string        `json:"status"`
+	GroupBy        string        `json:"group_by"`
+}
+
 func (p QCTaskPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+func (p QCDashboardPaginationInput) Offset() int {
 	if p.Page < 1 {
 		return 0
 	}
@@ -338,6 +364,34 @@ func QCTaskPagination(c *app.Context) QCTaskPaginationInput {
 		OrderDirection: base.OrderDirection,
 		TaskType:       c.Query("task_type"),
 		Status:         c.Query("status"),
+	}
+}
+
+func QCDashboardPagination(c *app.Context) QCDashboardPaginationInput {
+	base := Pagination(c)
+	var supplierID int64
+	if v := c.Query("supplier_id"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			supplierID = n
+		}
+	}
+	return QCDashboardPaginationInput{
+		Limit:          base.Limit,
+		Page:           base.Page,
+		Search:         base.Search,
+		Filter:         base.Filter,
+		OrderBy:        base.OrderBy,
+		OrderDirection: base.OrderDirection,
+		DateFrom:       c.Query("date_from"),
+		DateTo:         c.Query("date_to"),
+		UniqCode:       c.Query("uniq_code"),
+		WONumber:       c.Query("wo_number"),
+		SupplierID:     supplierID,
+		PONumber:       c.Query("po_number"),
+		DefectSource:   c.Query("defect_source"),
+		ReasonCode:     c.Query("reason_code"),
+		Status:         c.Query("status"),
+		GroupBy:        c.Query("group_by"),
 	}
 }
 
@@ -611,6 +665,44 @@ func InventoryIncomingPagination(c *app.Context) InventoryIncomingPaginationInpu
 // Helpers
 // ---------------------------------------------------------------------------
 
+// SupplierPerformancePaginationInput holds filters for GET /suppliers/performance.
+//
+// Query params:
+//
+//	?period_type=monthly&period_value=2026-04&search=PT&status=excellent&page=1&limit=20&sort_by=otd_percentage&sort_direction=desc
+type SupplierPerformancePaginationInput struct {
+	Limit         int
+	Page          int
+	Search        string
+	PeriodType    string
+	PeriodValue   string
+	Status        string
+	SortBy        string
+	SortDirection string
+}
+
+func (p SupplierPerformancePaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// SupplierPerformancePagination parses supplier performance list query params.
+func SupplierPerformancePagination(c *app.Context) SupplierPerformancePaginationInput {
+	base := Pagination(c)
+	return SupplierPerformancePaginationInput{
+		Limit:         base.Limit,
+		Page:          base.Page,
+		Search:        base.Search,
+		PeriodType:    c.Query("period_type"),
+		PeriodValue:   c.Query("period_value"),
+		Status:        c.Query("status"),
+		SortBy:        c.Query("sort_by"),
+		SortDirection: c.Query("sort_direction"),
+	}
+}
+
 func clampLimit(n int) int {
 	if n < 1 {
 		return 20
@@ -828,5 +920,41 @@ func OutgoingRMPagination(c *app.Context) OutgoingRMPaginationInput {
 		Uniq:           c.Query("uniq"),
 		TransactionID:  c.Query("transaction_id"),
 		WorkOrderNo:    c.Query("work_order_no"),
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Stock Opname
+// ---------------------------------------------------------------------------
+
+// StockOpnamePaginationInput holds filters for GET /stock-opname-sessions.
+type StockOpnamePaginationInput struct {
+	Limit          int
+	Page           int
+	OrderBy        string
+	OrderDirection string
+	Type           string
+	Status         string
+	Period         string
+}
+
+func (p StockOpnamePaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+// StockOpnamePagination parses stock-opname-specific pagination params.
+func StockOpnamePagination(c *app.Context) StockOpnamePaginationInput {
+	base := Pagination(c)
+	return StockOpnamePaginationInput{
+		Limit:          base.Limit,
+		Page:           base.Page,
+		OrderBy:        base.OrderBy,
+		OrderDirection: base.OrderDirection,
+		Type:           c.Query("type"),
+		Status:         c.Query("status"),
+		Period:         c.Query("period"),
 	}
 }

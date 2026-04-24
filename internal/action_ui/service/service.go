@@ -5,14 +5,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ganasa18/go-template/internal/action_ui/dto"
 	"github.com/ganasa18/go-template/internal/action_ui/models"
 	"github.com/ganasa18/go-template/internal/action_ui/repository"
+	invModels "github.com/ganasa18/go-template/internal/inventory/models"
+	scrapModels "github.com/ganasa18/go-template/internal/scrap_stock/models"
+	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
+	"gorm.io/gorm"
 )
 
 type IService interface {
@@ -36,17 +42,18 @@ type IService interface {
 	ScanOut(ctx context.Context, req dto.ScanOutRequest) error
 
 	// 🔹 QC submit (round 1,2,3)
-	QCSubmit(ctx context.Context, req dto.QCSubmitRequest) error
+	QCSubmit(ctx context.Context, req dto.QCSubmitRequest, performedBy string) error
 }
 
 type service struct {
 	repo           repository.IRepository
 	repoProduction repository.IProductionRepository
 	repoIncoming   repository.IIncomingRepository
+	db             *gorm.DB
 }
 
-func New(repo repository.IRepository, repoProduction repository.IProductionRepository, repoIncoming repository.IIncomingRepository) IService {
-	return &service{repo: repo, repoProduction: repoProduction, repoIncoming: repoIncoming}
+func New(repo repository.IRepository, repoProduction repository.IProductionRepository, repoIncoming repository.IIncomingRepository, db *gorm.DB) IService {
+	return &service{repo: repo, repoProduction: repoProduction, repoIncoming: repoIncoming, db: db}
 }
 
 func (s *service) LookupByPackingNumber(ctx context.Context, packingNumber, itemUniqCode string) (*models.IncomingScanDNItem, error) {
@@ -377,45 +384,214 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	return s.repoProduction.UpdateWOItem(ctx, item)
 }
 
-func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest) error {
-
-	item, err := s.repoProduction.FindWOItemByUuid(ctx, req.UUID)
-	if err != nil {
-		return err
+func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, performedBy string) error {
+	if req.UUID == "" {
+		return apperror.BadRequest("uuid is required")
+	}
+	if req.QCRound <= 0 {
+		return apperror.BadRequest("qc_round must be greater than 0")
+	}
+	if req.QtyChecked < 0 || req.QtyPass < 0 || req.QtyDefect < 0 || req.QtyScrap < 0 {
+		return apperror.BadRequest("quantities must be >= 0")
 	}
 
-	// ✅ INSERT QC LOG
-	err = s.repoProduction.InsertQCLog(ctx, models.QCLog{
-		UUID:       uuid.New().String(),
-		WOID:       item.WOID,
-		WOItemID:   item.ID,
-		UniqCode:   req.Uniq,
-		QCRound:    req.QCRound,
-		QtyChecked: req.QtyChecked,
-		QtyPass:    req.QtyPass,
-		QtyDefect:  req.QtyDefect,
-		QtyScrap:   req.QtyScrap,
-		Status:     req.Status,
-		CheckedAt:  time.Now(),
-		CreatedAt:  time.Now(),
-	})
-	if err != nil {
-		return err
+	defectSource := strings.TrimSpace(req.DefectSource)
+	if defectSource == "" {
+		defectSource = "process"
+	}
+	if defectSource != "process" && defectSource != "setting_machine" {
+		return apperror.BadRequest("defect_source must be process or setting_machine")
 	}
 
-	// 🔥 ONLY ROUND 3 → MASUK INVENTORY
-	if req.QCRound == 3 && req.Status == "PASSED" {
+	totalDefect := 0.0
+	totalScrap := 0.0
+	hasRepairable := false
+	for _, defect := range req.Defects {
+		if defect.QtyDefect < 0 || defect.QtyScrap < 0 {
+			return apperror.BadRequest("defect quantities must be >= 0")
+		}
+		totalDefect += defect.QtyDefect
+		totalScrap += defect.QtyScrap
+		hasRepairable = hasRepairable || defect.IsRepairable
+	}
+	if totalDefect > req.QtyDefect+0.0001 {
+		return apperror.BadRequest("sum defects qty_defect exceeds qty_defect")
+	}
+	if totalScrap > req.QtyScrap+0.0001 {
+		return apperror.BadRequest("sum defects qty_scrap exceeds qty_scrap")
+	}
 
-		err = s.insertFinishedGoods(ctx, item, req)
-		if err != nil {
+	performedBy = strings.TrimSpace(performedBy)
+	if performedBy == "" {
+		performedBy = "system"
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var item models.WorkOrderItem
+		if err := tx.Where("uuid = ?", req.UUID).First(&item).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return apperror.NotFound("uniq not found")
+			}
 			return err
 		}
 
-		item.Status = "DONE"
-		return s.repoProduction.UpdateWOItem(ctx, item)
-	}
+		woID := item.WOID
+		woItemID := item.ID
+		uniqCode := item.ItemUniqCode
+		if strings.TrimSpace(req.Uniq) != "" {
+			uniqCode = req.Uniq
+		}
 
-	return nil
+		var qcLog models.QCLog
+		qcLog = models.QCLog{
+			UUID:         uuid.New().String(),
+			WOID:         &woID,
+			WOItemID:     &woItemID,
+			UniqCode:     uniqCode,
+			QCRound:      req.QCRound,
+			QtyChecked:   req.QtyChecked,
+			QtyPass:      req.QtyPass,
+			QtyDefect:    req.QtyDefect,
+			QtyScrap:     req.QtyScrap,
+			Status:       strings.ToUpper(strings.TrimSpace(req.Status)),
+			DefectSource: defectSource,
+			CheckedBy:    performedBy,
+			CheckedAt:    time.Now(),
+			CreatedAt:    time.Now(),
+		}
+		if err := tx.Create(&qcLog).Error; err != nil {
+			return err
+		}
+
+		for _, defect := range req.Defects {
+			row := models.QCDefectItem{
+				QCLogID:          qcLog.ID,
+				WOID:             &woID,
+				WOItemID:         &woItemID,
+				UniqCode:         uniqCode,
+				DefectSource:     defectSource,
+				DefectReasonCode: defect.ReasonCode,
+				DefectReasonText: defect.ReasonText,
+				QtyDefect:        defect.QtyDefect,
+				QtyScrap:         defect.QtyScrap,
+				IsRepairable:     defect.IsRepairable,
+				ProcessName:      item.ProcessName,
+				ReportedBy:       performedBy,
+				ReportedAt:       time.Now(),
+			}
+			if err := tx.Create(&row).Error; err != nil {
+				return err
+			}
+		}
+
+		if req.QtyScrap > 0 {
+			var wo models.WorkOrder
+			var woNumber *string
+			if err := tx.First(&wo, item.WOID).Error; err == nil && strings.TrimSpace(wo.WONumber) != "" {
+				woNumber = &wo.WONumber
+			}
+			scrap := scrapModels.ScrapStock{
+				UUID:          uuid.New(),
+				UniqCode:      uniqCode,
+				PartNumber:    stringPtrOrNil(item.PartNumber),
+				PartName:      stringPtrOrNil(item.PartName),
+				Model:         stringPtrOrNil(item.Model),
+				PackingNumber: stringPtrOrNil(item.KanbanNumber),
+				WONumber:      woNumber,
+				ScrapType:     mapQCSourceToScrapType(defectSource),
+				Quantity:      req.QtyScrap,
+				UOM:           stringPtrOrNil(item.UOM),
+				DateReceived:  timePtr(time.Now()),
+				Validator:     &performedBy,
+				Status:        scrapModels.StockStatusActive,
+				CreatedBy:     &performedBy,
+				UpdatedBy:     &performedBy,
+				SourceQCLogID: &qcLog.ID,
+			}
+			if err := tx.Create(&scrap).Error; err != nil {
+				return err
+			}
+			sourceFlag := "qc_submit"
+			if err := tx.Create(&invModels.InventoryMovementLog{
+				MovementCategory: "scrap",
+				MovementType:     "incoming",
+				UniqCode:         uniqCode,
+				EntityID:         &scrap.ID,
+				QtyChange:        req.QtyScrap,
+				SourceFlag:       &sourceFlag,
+				LoggedBy:         &performedBy,
+				LoggedAt:         time.Now(),
+			}).Error; err != nil {
+				// non-fatal by design
+			}
+		}
+
+		if hasRepairable {
+			roundResults, _ := json.Marshal(map[string]interface{}{
+				"event":            "rework_qc_created",
+				"source_qc_log_id": qcLog.ID,
+				"qty_to_rework":    math.Max(req.QtyDefect-req.QtyScrap, 0),
+				"performed_by":     performedBy,
+				"occurred_at":      time.Now().UTC().Format(time.RFC3339),
+			})
+			task := models.QCTask{
+				TaskType:     "rework_qc",
+				Status:       "pending",
+				WOID:         &woID,
+				WOItemID:     &woItemID,
+				Round:        1,
+				RoundResults: datatypes.JSON(roundResults),
+				CreatedAt:    time.Now(),
+				UpdatedAt:    time.Now(),
+			}
+			if err := tx.Create(&task).Error; err != nil {
+				return err
+			}
+		}
+
+		if req.QCRound == 3 && strings.EqualFold(req.Status, "PASSED") {
+			fg := models.FinishedGoods{
+				UUID:       uuid.New().String(),
+				UniqCode:   item.ItemUniqCode,
+				ItemID:     item.ID,
+				PartNumber: item.PartNumber,
+				PartName:   item.PartName,
+				Model:      item.Model,
+				WONumber:   "",
+				StockQty:   req.QtyPass,
+				UOM:        item.UOM,
+				Status:     "AVAILABLE",
+				CreatedAt:  time.Now(),
+			}
+			if err := tx.Create(&fg).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&item).Update("status", "DONE").Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+func mapQCSourceToScrapType(defectSource string) string {
+	if defectSource == "setting_machine" {
+		return scrapModels.ScrapTypeSettingMachine
+	}
+	return scrapModels.ScrapTypeProcess
+}
+
+func stringPtrOrNil(s string) *string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+func timePtr(t time.Time) *time.Time {
+	return &t
 }
 
 func (s *service) insertFinishedGoods(ctx context.Context, item models.WorkOrderItem, qc dto.QCSubmitRequest) error {

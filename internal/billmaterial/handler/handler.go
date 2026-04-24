@@ -137,19 +137,34 @@ func (h *HTTPHandler) CreateBomRevision(ctx *app.Context) *app.CostumeResponse {
 	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusCreated, Message: http.StatusText(http.StatusCreated), Data: result}
 }
 
+// ActivateBomVersion  POST /api/v1/products/bom/:id/activate
+func (h *HTTPHandler) ActivateBomVersion(ctx *app.Context) *app.CostumeResponse {
+	bomID, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+	result, err := h.svc.ActivateBomVersion(ctx.Request.Context(), bomID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: result}
+}
+
 func (h *HTTPHandler) AddProcessRoute(ctx *app.Context) *app.CostumeResponse {
 	bomID, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
 	if err != nil {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
 	}
-	var req models.AddProcessRouteRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
+	var reqs []models.AddProcessRouteRequest
+	if err := ctx.ShouldBindJSON(&reqs); err != nil {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body"}
 	}
-	if errs := validator.Validate(req); errs != nil {
-		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+	for _, req := range reqs {
+		if errs := validator.Validate(req); errs != nil {
+			return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+		}
 	}
-	result, err := h.svc.AddProcessRoute(ctx.Request.Context(), bomID, req)
+	result, err := h.svc.AddProcessRoute(ctx.Request.Context(), bomID, reqs)
 	if err != nil {
 		return app.NewError(ctx, err)
 	}
@@ -173,25 +188,6 @@ func (h *HTTPHandler) PatchProcessRoute(ctx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
 	}
 	result, err := h.svc.PatchProcessRoute(ctx.Request.Context(), bomID, routeID, req)
-	if err != nil {
-		return app.NewError(ctx, err)
-	}
-	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: result}
-}
-
-func (h *HTTPHandler) ReleaseBom(ctx *app.Context) *app.CostumeResponse {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
-	}
-	var req models.ReleaseBomRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body"}
-	}
-	if errs := validator.Validate(req); errs != nil {
-		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
-	}
-	result, err := h.svc.ReleaseBom(ctx.Request.Context(), id, req)
 	if err != nil {
 		return app.NewError(ctx, err)
 	}

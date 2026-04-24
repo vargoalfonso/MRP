@@ -73,6 +73,16 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	rm.GET("/:id", perm("work_order", "view"), m.base.RunAction(m.handler.GetRMProcessingWorkOrderDetail))
 	rm.POST("/:id/approval", perm("work_order", "approve"), m.base.RunAction(m.handler.ApprovalRMProcessing))
 
+	bulk := g.Group("/bulk")
+	bulk.GET("/form-options/documents", perm("work_order", "view"), m.base.RunAction(m.handler.ListBulkSourceDocuments))
+	bulk.GET("/form-options/document-items", perm("work_order", "view"), m.base.RunAction(m.handler.ListBulkSourceDocumentItems))
+	bulk.GET("/work-orders/summary", perm("work_order", "view"), m.base.RunAction(m.handler.GetBulkWorkOrderSummary))
+	bulk.GET("/work-orders", perm("work_order", "view"), m.base.RunAction(m.handler.ListBulkWorkOrders))
+	bulk.POST("/work-orders", perm("work_order", "create"), m.base.RunAction(m.handler.CreateBulkWorkOrder))
+	bulk.POST("/work-orders/bulk-approval", perm("work_order", "approve"), m.base.RunAction(m.handler.BulkApprovalBulkWorkOrder))
+	bulk.GET("/work-orders/:id", perm("work_order", "view"), m.base.RunAction(m.handler.GetBulkWorkOrderDetail))
+	bulk.POST("/work-orders/:id/approval", perm("work_order", "approve"), m.base.RunAction(m.handler.ApprovalBulkWorkOrder))
+
 	items := g.Group("/work-order-items")
 	items.GET("/:id/qr", perm("work_order", "view"), m.base.RunAction(m.handler.GetWorkOrderItemQR))
 }
