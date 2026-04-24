@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
 	procModels "github.com/ganasa18/go-template/internal/procurement/models"
 	qcModels "github.com/ganasa18/go-template/internal/qc/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -40,8 +42,8 @@ type TaskListRow struct {
 type IRepository interface {
 	ListTasks(ctx context.Context, f ListFilter) ([]TaskListRow, int64, error)
 	StartTask(ctx context.Context, taskID int64, performedBy string) (*qcModels.QCTask, error)
-	ApproveIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string) error
-	RejectIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string) error
+	ApproveIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string, defects []qcModels.DefectInput) error
+	RejectIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string, defects []qcModels.DefectInput) error
 }
 
 type repo struct{ db *gorm.DB }
@@ -134,7 +136,7 @@ func (r *repo) StartTask(ctx context.Context, taskID int64, performedBy string) 
 	return &task, nil
 }
 
-func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string) error {
+func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string, defects []qcModels.DefectInput) error {
 	performedBy = normalizeActor(performedBy)
 
 	if numberOfDefects < 0 {
@@ -145,6 +147,9 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 	checkedAt, err := time.Parse("2006-01-02", dateChecked)
 	if err != nil {
 		return apperror.BadRequest("date_checked must be in YYYY-MM-DD format")
+	}
+	if err := validateDefectInputs(defects, float64(numberOfDefects), math.Max(float64(numberOfDefects), 0)); err != nil {
+		return err
 	}
 
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -228,11 +233,20 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 			_ = poNumber // reserved for future PO rollup
 		}
 
+		qtyScrap := sumDefectScrap(defects)
+		qcLogID, err := insertIncomingQCLog(tx, task, dnItem, checkedAt, performedBy, approvedQty, numberOfDefects, qtyScrap, "APPROVED", defects)
+		if err != nil {
+			return err
+		}
+		if err := insertIncomingQCDefects(tx, task, dnItem, qcLogID, performedBy, defects); err != nil {
+			return err
+		}
+
 		return nil
 	})
 }
 
-func (r *repo) RejectIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string) error {
+func (r *repo) RejectIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string, defects []qcModels.DefectInput) error {
 	performedBy = normalizeActor(performedBy)
 
 	if numberOfDefects < 0 {
@@ -242,6 +256,9 @@ func (r *repo) RejectIncoming(ctx context.Context, taskID int64, numberOfDefects
 	checkedAt, err := time.Parse("2006-01-02", dateChecked)
 	if err != nil {
 		return apperror.BadRequest("date_checked must be in YYYY-MM-DD format")
+	}
+	if err := validateDefectInputs(defects, float64(numberOfDefects), math.Max(float64(numberOfDefects), 0)); err != nil {
+		return err
 	}
 
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -290,8 +307,100 @@ func (r *repo) RejectIncoming(ctx context.Context, taskID int64, numberOfDefects
 			"performed_by":      performedBy,
 			"occurred_at":       time.Now().UTC().Format(time.RFC3339),
 		}
-		return appendRoundEventTx(tx, taskID, event)
+		if err := appendRoundEventTx(tx, taskID, event); err != nil {
+			return err
+		}
+
+		qtyScrap := sumDefectScrap(defects)
+		qcLogID, err := insertIncomingQCLog(tx, task, dnItem, checkedAt, performedBy, 0, numberOfDefects, qtyScrap, "REJECTED", defects)
+		if err != nil {
+			return err
+		}
+		return insertIncomingQCDefects(tx, task, dnItem, qcLogID, performedBy, defects)
 	})
+}
+
+func validateDefectInputs(defects []qcModels.DefectInput, totalDefect, totalScrapCap float64) error {
+	defectQty := 0.0
+	scrapQty := 0.0
+	for _, defect := range defects {
+		if defect.QtyDefect < 0 || defect.QtyScrap < 0 {
+			return apperror.BadRequest("defect quantities must be >= 0")
+		}
+		defectQty += defect.QtyDefect
+		scrapQty += defect.QtyScrap
+	}
+	if defectQty > totalDefect+0.0001 {
+		return apperror.BadRequest("sum defects qty_defect exceeds number_of_defects")
+	}
+	if scrapQty > totalScrapCap+0.0001 {
+		return apperror.BadRequest("sum defects qty_scrap exceeds number_of_defects")
+	}
+	return nil
+}
+
+func sumDefectScrap(defects []qcModels.DefectInput) float64 {
+	total := 0.0
+	for _, defect := range defects {
+		total += defect.QtyScrap
+	}
+	return total
+}
+
+func insertIncomingQCLog(tx *gorm.DB, task qcModels.QCTask, dnItem procModels.IncomingDNItem, checkedAt time.Time, performedBy string, approvedQty, defectQty int, qtyScrap float64, status string, defects []qcModels.DefectInput) (int64, error) {
+	row := map[string]interface{}{
+		"uuid":          uuid.New().String(),
+		"qc_task_id":    task.ID,
+		"dn_item_id":    dnItem.ID,
+		"uniq_code":     dnItem.ItemUniqCode,
+		"qc_round":      1,
+		"qty_checked":   dnItem.QtyReceived,
+		"qty_pass":      approvedQty,
+		"qty_defect":    defectQty,
+		"qty_scrap":     qtyScrap,
+		"status":        status,
+		"defect_source": "incoming_material",
+		"checked_by":    performedBy,
+		"checked_at":    checkedAt,
+		"created_at":    time.Now(),
+	}
+	if err := tx.Table("qc_logs").Create(&row).Error; err != nil {
+		return 0, fmt.Errorf("insert qc_logs: %w", err)
+	}
+	id, _ := row["id"].(int64)
+	if id == 0 {
+		var out struct {
+			ID int64 `gorm:"column:id"`
+		}
+		if err := tx.Raw("SELECT currval(pg_get_serial_sequence('qc_logs','id')) AS id").Scan(&out).Error; err != nil {
+			return 0, fmt.Errorf("load qc_log id: %w", err)
+		}
+		id = out.ID
+	}
+	return id, nil
+}
+
+func insertIncomingQCDefects(tx *gorm.DB, task qcModels.QCTask, dnItem procModels.IncomingDNItem, qcLogID int64, performedBy string, defects []qcModels.DefectInput) error {
+	for _, defect := range defects {
+		row := map[string]interface{}{
+			"qc_log_id":          qcLogID,
+			"qc_task_id":         task.ID,
+			"dn_item_id":         dnItem.ID,
+			"uniq_code":          dnItem.ItemUniqCode,
+			"defect_source":      "incoming_material",
+			"defect_reason_code": strings.TrimSpace(defect.ReasonCode),
+			"defect_reason_text": strings.TrimSpace(defect.ReasonText),
+			"qty_defect":         defect.QtyDefect,
+			"qty_scrap":          defect.QtyScrap,
+			"is_repairable":      defect.IsRepairable,
+			"reported_by":        performedBy,
+			"reported_at":        time.Now(),
+		}
+		if err := tx.Table("qc_defect_items").Create(&row).Error; err != nil {
+			return fmt.Errorf("insert qc_defect_items: %w", err)
+		}
+	}
+	return nil
 }
 
 func appendRoundEventTx(tx *gorm.DB, taskID int64, event map[string]interface{}) error {

@@ -63,14 +63,24 @@ type ScanOutRequest struct {
 }
 
 type QCSubmitRequest struct {
-	UUID       string  `json:"uuid"`
-	Uniq       string  `json:"uniq"`
-	QCRound    int     `json:"qc_round"`
-	QtyChecked float64 `json:"qty_checked"`
-	QtyPass    float64 `json:"qty_pass"`
-	QtyDefect  float64 `json:"qty_defect"`
-	QtyScrap   float64 `json:"qty_scrap"`
-	Status     string  `json:"status"`
+	UUID         string          `json:"uuid"`
+	Uniq         string          `json:"uniq"`
+	QCRound      int             `json:"qc_round"`
+	QtyChecked   float64         `json:"qty_checked"`
+	QtyPass      float64         `json:"qty_pass"`
+	QtyDefect    float64         `json:"qty_defect"`
+	QtyScrap     float64         `json:"qty_scrap"`
+	Status       string          `json:"status"`
+	DefectSource string          `json:"defect_source"`
+	Defects      []QCDefectInput `json:"defects"`
+}
+
+type QCDefectInput struct {
+	ReasonCode   string  `json:"reason_code"`
+	ReasonText   string  `json:"reason_text"`
+	QtyDefect    float64 `json:"qty_defect"`
+	QtyScrap     float64 `json:"qty_scrap"`
+	IsRepairable bool    `json:"is_repairable"`
 }
 
 type FinishedGoodsResponse struct {

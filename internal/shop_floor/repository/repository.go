@@ -19,7 +19,11 @@ type Filter struct {
 }
 
 type IRepository interface {
+	GetLiveProductionTotals(ctx context.Context, filter Filter) (*models.LiveProductionSummary, error)
+	GetLiveProductionItems(ctx context.Context, filter Filter) ([]models.LiveProduction, error)
 	GetLiveProductionSummary(ctx context.Context, filter Filter) (*models.LiveProductionSummary, error)
+	GetDeliveryReadinessTotals(ctx context.Context, filter Filter) (*models.DeliveryReadinessSummary, error)
+	GetDeliveryReadinessItems(ctx context.Context, filter Filter) ([]models.DeliveryReadinessItem, error)
 	GetDeliveryReadinessSummary(ctx context.Context, filter Filter) (*models.DeliveryReadinessSummary, error)
 	GetProductionIssuesSummary(ctx context.Context, filter Filter) (*models.ProductionIssuesSummary, error)
 	GetScanEventsSummary(ctx context.Context, filter Filter) (*models.ScanEventsSummary, error)
@@ -44,7 +48,7 @@ func New(db *gorm.DB) IRepository {
 	return &repository{db: db}
 }
 
-func (r *repository) GetLiveProductionSummary(ctx context.Context, filter Filter) (*models.LiveProductionSummary, error) {
+func (r *repository) GetLiveProductionTotals(ctx context.Context, filter Filter) (*models.LiveProductionSummary, error) {
 	startToday, endToday := dayBounds(time.Now())
 	activeSince := time.Now().Add(-time.Duration(filter.StaleMinutes) * time.Minute)
 	scanSchema, err := r.getScanLogSchema(ctx)
@@ -82,6 +86,23 @@ func (r *repository) GetLiveProductionSummary(ctx context.Context, filter Filter
 	if err != nil {
 		return nil, apperror.Internal("shop floor live production summary: " + err.Error())
 	}
+	return &models.LiveProductionSummary{
+		AsOf:               totals.AsOf,
+		StaleWindowMinutes: filter.StaleMinutes,
+		ThroughputToday:    totals.ThroughputToday,
+		ActiveMachines:     totals.ActiveMachines,
+		RunningMachines:    totals.RunningMachines,
+		IdleMachines:       totals.IdleMachines,
+	}, nil
+}
+
+func (r *repository) GetLiveProductionItems(ctx context.Context, filter Filter) ([]models.LiveProduction, error) {
+	startToday, endToday := dayBounds(time.Now())
+	activeSince := time.Now().Add(-time.Duration(filter.StaleMinutes) * time.Minute)
+	scanSchema, err := r.getScanLogSchema(ctx)
+	if err != nil {
+		return nil, apperror.Internal("shop floor live production schema: " + err.Error())
+	}
 
 	type itemRow struct {
 		MachineNumber   string     `gorm:"column:machine_number"`
@@ -95,6 +116,10 @@ func (r *repository) GetLiveProductionSummary(ctx context.Context, filter Filter
 		TargetQty       float64    `gorm:"column:target_qty"`
 		ThroughputToday float64    `gorm:"column:throughput_today"`
 		OutputQty       float64    `gorm:"column:output_qty"`
+		QCCheckedQty    float64    `gorm:"column:qc_checked_qty"`
+		QCPassQty       float64    `gorm:"column:qc_pass_qty"`
+		QCDefectQty     float64    `gorm:"column:qc_defect_qty"`
+		QCScrapQty      float64    `gorm:"column:qc_scrap_qty"`
 	}
 
 	var rows []itemRow
@@ -121,6 +146,17 @@ func (r *repository) GetLiveProductionSummary(ctx context.Context, filter Filter
 			FROM production_scan_logs psl
 			WHERE psl.wo_item_id IS NOT NULL AND %s >= ? AND %s < ?
 			GROUP BY psl.wo_item_id
+		), qc_summary AS (
+			SELECT
+				ql.wo_item_id,
+				COALESCE(SUM(ql.qty_checked), 0) AS qc_checked_qty,
+				COALESCE(SUM(ql.qty_pass), 0) AS qc_pass_qty,
+				COALESCE(SUM(ql.qty_defect), 0) AS qc_defect_qty,
+				COALESCE(SUM(ql.qty_scrap), 0) AS qc_scrap_qty
+			FROM qc_logs ql
+			WHERE ql.wo_item_id IS NOT NULL
+			  AND ql.defect_source IN ('process', 'setting_machine')
+			GROUP BY ql.wo_item_id
 		)
 		SELECT
 			latest.machine_number,
@@ -133,12 +169,17 @@ func (r *repository) GetLiveProductionSummary(ctx context.Context, filter Filter
 			latest.event_at AS last_scan_at,
 			COALESCE(woi.quantity, 0) AS target_qty,
 			COALESCE(throughput_today.throughput_today, 0) AS throughput_today,
-			COALESCE(progress.output_qty, 0) AS output_qty
+			COALESCE(progress.output_qty, 0) AS output_qty,
+			COALESCE(qc_summary.qc_checked_qty, 0) AS qc_checked_qty,
+			COALESCE(qc_summary.qc_pass_qty, 0) AS qc_pass_qty,
+			COALESCE(qc_summary.qc_defect_qty, 0) AS qc_defect_qty,
+			COALESCE(qc_summary.qc_scrap_qty, 0) AS qc_scrap_qty
 		FROM latest
 		LEFT JOIN work_orders wo ON wo.id = latest.wo_id
 		LEFT JOIN work_order_items woi ON woi.id = latest.wo_item_id
 		LEFT JOIN progress ON progress.wo_item_id = latest.wo_item_id
 		LEFT JOIN throughput_today ON throughput_today.wo_item_id = latest.wo_item_id
+		LEFT JOIN qc_summary ON qc_summary.wo_item_id = latest.wo_item_id
 		ORDER BY latest.event_at DESC, latest.machine_number ASC
 		LIMIT ?
 	`, scanSchema.machineKeyExpr, scanSchema.machineDisplayExpr, scanSchema.productionLineExpr, scanSchema.scanTypeExpr, scanSchema.eventAtExpr, scanSchema.joinMachine, scanSchema.machineKeyExpr, scanSchema.eventAtExpr, scanSchema.outputQtyExpr, scanSchema.outputQtyExpr, scanSchema.eventAtExpr, scanSchema.eventAtExpr), startToday, endToday, filter.Limit).Scan(&rows).Error
@@ -151,6 +192,11 @@ func (r *repository) GetLiveProductionSummary(ctx context.Context, filter Filter
 		progressPercent := 0.0
 		if row.TargetQty > 0 {
 			progressPercent = math.Min((row.OutputQty/row.TargetQty)*100, 100)
+		}
+
+		qualityRate := 0.0
+		if row.QCCheckedQty > 0 {
+			qualityRate = math.Min((row.QCPassQty/row.QCCheckedQty)*100, 100)
 		}
 
 		runtimeStatus := "idle"
@@ -178,21 +224,32 @@ func (r *repository) GetLiveProductionSummary(ctx context.Context, filter Filter
 				OutputQty:       row.OutputQty,
 				ProgressPercent: round2(progressPercent),
 			},
+			Quality: models.LiveProductionQuality{
+				CheckedQty:  round2(row.QCCheckedQty),
+				PassQty:     round2(row.QCPassQty),
+				DefectQty:   round2(row.QCDefectQty),
+				ScrapQty:    round2(row.QCScrapQty),
+				RatePercent: round2(qualityRate),
+			},
 		})
 	}
-
-	return &models.LiveProductionSummary{
-		AsOf:               totals.AsOf,
-		StaleWindowMinutes: filter.StaleMinutes,
-		ThroughputToday:    totals.ThroughputToday,
-		ActiveMachines:     totals.ActiveMachines,
-		RunningMachines:    totals.RunningMachines,
-		IdleMachines:       totals.IdleMachines,
-		Items:              items,
-	}, nil
+	return items, nil
 }
 
-func (r *repository) GetDeliveryReadinessSummary(ctx context.Context, filter Filter) (*models.DeliveryReadinessSummary, error) {
+func (r *repository) GetLiveProductionSummary(ctx context.Context, filter Filter) (*models.LiveProductionSummary, error) {
+	totals, err := r.GetLiveProductionTotals(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	items, err := r.GetLiveProductionItems(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	totals.Items = items
+	return totals, nil
+}
+
+func (r *repository) GetDeliveryReadinessTotals(ctx context.Context, filter Filter) (*models.DeliveryReadinessSummary, error) {
 	deliveryCols, err := r.tableColumns(ctx, "delivery_schedules_customer")
 	if err != nil {
 		return nil, apperror.Internal("shop floor delivery readiness schedule schema: " + err.Error())
@@ -249,6 +306,32 @@ func (r *repository) GetDeliveryReadinessSummary(ctx context.Context, filter Fil
 	`).Scan(&total).Error
 	if err != nil {
 		return nil, apperror.Internal("shop floor delivery readiness summary: " + err.Error())
+	}
+	_ = dueTimeExpr
+	_ = dueAtExpr
+	return &models.DeliveryReadinessSummary{
+		AsOf:              time.Now(),
+		TotalScheduled:    total.TotalScheduled,
+		ReadyItems:        total.ReadyItems,
+		AtRiskItems:       total.AtRiskItems,
+		CriticalItems:     total.CriticalItems,
+		TotalRequiredQty:  round2(total.TotalRequiredQty),
+		TotalAvailableQty: round2(total.TotalAvailableQty),
+		TotalShortfallQty: round2(total.TotalShortfallQty),
+	}, nil
+}
+
+func (r *repository) GetDeliveryReadinessItems(ctx context.Context, filter Filter) ([]models.DeliveryReadinessItem, error) {
+	deliveryCols, err := r.tableColumns(ctx, "delivery_schedules_customer")
+	if err != nil {
+		return nil, apperror.Internal("shop floor delivery readiness schedule schema: " + err.Error())
+	}
+
+	dueTimeExpr := "NULL::text"
+	dueAtExpr := "NULL::timestamptz"
+	if deliveryCols["departure_at"] {
+		dueTimeExpr = "CASE WHEN sc.departure_at IS NOT NULL THEN TO_CHAR(sc.departure_at, 'HH24:MI') END"
+		dueAtExpr = "sc.departure_at"
 	}
 
 	type itemRow struct {
@@ -355,18 +438,20 @@ func (r *repository) GetDeliveryReadinessSummary(ctx context.Context, filter Fil
 			},
 		})
 	}
+	return items, nil
+}
 
-	return &models.DeliveryReadinessSummary{
-		AsOf:              time.Now(),
-		TotalScheduled:    total.TotalScheduled,
-		ReadyItems:        total.ReadyItems,
-		AtRiskItems:       total.AtRiskItems,
-		CriticalItems:     total.CriticalItems,
-		TotalRequiredQty:  round2(total.TotalRequiredQty),
-		TotalAvailableQty: round2(total.TotalAvailableQty),
-		TotalShortfallQty: round2(total.TotalShortfallQty),
-		Items:             items,
-	}, nil
+func (r *repository) GetDeliveryReadinessSummary(ctx context.Context, filter Filter) (*models.DeliveryReadinessSummary, error) {
+	totals, err := r.GetDeliveryReadinessTotals(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	items, err := r.GetDeliveryReadinessItems(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	totals.Items = items
+	return totals, nil
 }
 
 func (r *repository) GetProductionIssuesSummary(ctx context.Context, filter Filter) (*models.ProductionIssuesSummary, error) {

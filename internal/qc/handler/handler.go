@@ -102,7 +102,7 @@ func (h *HTTPHandler) ApproveIncoming(ctx *app.Context) *app.CostumeResponse {
 	}
 
 	userCtx := userPkg.MustExtractUserContext(ctx)
-	if err := h.svc.ApproveIncoming(ctx.Request.Context(), id, req.NumberOfDefects, req.DateChecked, userCtx.UserID); err != nil {
+	if err := h.svc.ApproveIncoming(ctx.Request.Context(), id, req.NumberOfDefects, req.DateChecked, userCtx.UserID, req.Defects); err != nil {
 		return app.NewError(ctx, err)
 	}
 
@@ -122,7 +122,7 @@ func (h *HTTPHandler) RejectIncoming(ctx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body: " + err.Error()}
 	}
 	userCtx := userPkg.MustExtractUserContext(ctx)
-	if err := h.svc.RejectIncoming(ctx.Request.Context(), id, req.NumberOfDefects, req.DateChecked, userCtx.UserID); err != nil {
+	if err := h.svc.RejectIncoming(ctx.Request.Context(), id, req.NumberOfDefects, req.DateChecked, userCtx.UserID, req.Defects); err != nil {
 		return app.NewError(ctx, err)
 	}
 	resp := map[string]interface{}{"qc_task_id": id, "status": "rejected"}

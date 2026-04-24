@@ -82,4 +82,9 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	sr.GET("/:id", perm("scrap", "view"), m.base.RunAction(m.handler.GetScrapReleaseByID))
 	sr.PUT("/:id/approve", perm("scrap", "update"), m.base.RunAction(m.handler.ApproveScrapRelease))
 
+	actionUI := r.Group("/api/v1/action-ui/scrap")
+	actionUI.Use(auth)
+	actionUI.GET("/incoming", perm("scrap", "view"), m.base.RunAction(m.handler.ListIncomingScrap))
+	actionUI.POST("/incoming", perm("scrap", "create"), m.base.RunAction(m.handler.CreateIncomingScrap))
+
 }

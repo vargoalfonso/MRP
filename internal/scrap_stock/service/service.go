@@ -12,6 +12,7 @@ import (
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/ganasa18/go-template/pkg/creatorresolver"
 	"github.com/ganasa18/go-template/pkg/inventoryconst"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -58,26 +59,26 @@ func New(repo repository.IRepository, db *gorm.DB) IService { return &service{re
 
 func toStockItem(s *scrapModels.ScrapStock) *scrapModels.ScrapStockItem {
 	return &scrapModels.ScrapStockItem{
-		ID:            s.ID,
-		UUID:          s.UUID.String(),
-		UniqCode:      s.UniqCode,
-		PartNumber:    s.PartNumber,
-		PartName:      s.PartName,
-		Model:         s.Model,
-		PackingNumber: s.PackingNumber,
-		WONumber:      s.WONumber,
+		ID:             s.ID,
+		UUID:           s.UUID.String(),
+		UniqCode:       s.UniqCode,
+		PartNumber:     s.PartNumber,
+		PartName:       s.PartName,
+		Model:          s.Model,
+		PackingNumber:  s.PackingNumber,
+		WONumber:       s.WONumber,
 		ScrapType:      s.ScrapType,
 		DisposalReason: s.DisposalReason,
 		Quantity:       s.Quantity,
-		UOM:           s.UOM,
-		WeightKg:      s.WeightKg,
-		DateReceived:  s.DateReceived,
-		Validator:     s.Validator,
-		Remarks:       s.Remarks,
-		Status:        s.Status,
-		CreatedBy:     s.CreatedBy,
-		CreatedAt:     s.CreatedAt,
-		UpdatedAt:     s.UpdatedAt,
+		UOM:            s.UOM,
+		WeightKg:       s.WeightKg,
+		DateReceived:   s.DateReceived,
+		Validator:      s.Validator,
+		Remarks:        s.Remarks,
+		Status:         s.Status,
+		CreatedBy:      s.CreatedBy,
+		CreatedAt:      s.CreatedAt,
+		UpdatedAt:      s.UpdatedAt,
 	}
 }
 
@@ -188,6 +189,7 @@ func (sv *service) CreateScrapStock(ctx context.Context, req scrapModels.CreateS
 	}
 
 	s := &scrapModels.ScrapStock{
+		UUID:           uuid.New(),
 		UniqCode:       req.UniqCode,
 		PartNumber:     req.PartNumber,
 		PartName:       req.PartName,
@@ -230,12 +232,16 @@ func (sv *service) CreateIncomingScrap(ctx context.Context, req scrapModels.Inco
 	if err := validateScrapType(req.ScrapType); err != nil {
 		return nil, err
 	}
+	if req.ScrapType == scrapModels.ScrapTypeProductReturn {
+		return nil, apperror.New(501, apperror.CodeBadRequest, "product_return_scrap is not implemented yet; use production/incoming QC flow first")
+	}
 
 	_, creatorName, err := creatorresolver.Resolve(ctx, sv.db, createdBy)
 	if err != nil {
 		return nil, err
 	}
 	s := &scrapModels.ScrapStock{
+		UUID:          uuid.New(),
 		UniqCode:      req.UniqCode,
 		PackingNumber: req.PackingNumber,
 		WONumber:      req.WONumber,
