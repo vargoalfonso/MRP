@@ -22,3 +22,18 @@ type UpdateApprovalWorkflowRequest struct {
 type RejectRequest struct {
 	Note string `json:"note"`
 }
+
+type ApprovalManagerSummaryQuery struct {
+	Type string `form:"type"`
+}
+
+type ApprovalManagerListQuery struct {
+	Type         string `form:"type"`
+	Status       string `form:"status"`
+	Search       string `form:"search"`
+	SubmittedBy  string `form:"submitted_by"`
+	CurrentLevel int    `form:"current_level"`
+	Scope        string `form:"scope"`
+	Page         int    `form:"page"`
+	Limit        int    `form:"limit"`
+}

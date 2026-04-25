@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
 	"gorm.io/gorm"
 )
 
@@ -159,7 +160,8 @@ type UpdatePRLRequest struct {
 }
 
 type BulkStatusActionRequest struct {
-	IDs []string `json:"ids"`
+	IDs  []string `json:"ids"`
+	Note string   `json:"note"`
 }
 
 type ListPRLQuery struct {
@@ -187,6 +189,30 @@ type UniqBOMListResult struct {
 type PRLListResult struct {
 	Items      []PRL          `json:"items"`
 	Pagination PaginationMeta `json:"pagination"`
+}
+
+type PRLDetailResponse struct {
+	PRL      PRL                 `json:"prl"`
+	Approval *PRLApprovalSummary `json:"approval,omitempty"`
+}
+
+type PRLApprovalSummary struct {
+	InstanceID       int64                     `json:"instance_id"`
+	WorkflowID       int64                     `json:"workflow_id"`
+	WorkflowAction   string                    `json:"workflow_action"`
+	CurrentLevel     int                       `json:"current_level"`
+	MaxLevel         int                       `json:"max_level"`
+	Status           string                    `json:"status"`
+	SubmittedBy      string                    `json:"submitted_by"`
+	ApprovalProgress awmodels.ApprovalProgress `json:"approval_progress"`
+	LevelRoles       PRLApprovalWorkflowRoles  `json:"level_roles"`
+}
+
+type PRLApprovalWorkflowRoles struct {
+	Level1 string `json:"level_1_role,omitempty"`
+	Level2 string `json:"level_2_role,omitempty"`
+	Level3 string `json:"level_3_role,omitempty"`
+	Level4 string `json:"level_4_role,omitempty"`
 }
 
 type UniqBOMListFilters struct {
@@ -224,7 +250,14 @@ type BulkCreatePRLResponse struct {
 }
 
 type BulkStatusActionResponse struct {
-	UpdatedCount int64  `json:"updated_count"`
+	UpdatedCount int64                    `json:"updated_count"`
+	Status       string                   `json:"status"`
+	Results      []BulkStatusActionResult `json:"results,omitempty"`
+}
+
+type BulkStatusActionResult struct {
+	ID           string `json:"id"`
+	CurrentLevel int    `json:"current_level"`
 	Status       string `json:"status"`
 }
 

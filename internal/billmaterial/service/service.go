@@ -7,8 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	//"time"
+	"time"
 
 	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
 	"github.com/ganasa18/go-template/internal/billmaterial/models"
@@ -55,7 +54,7 @@ type IService interface {
 	// ApproveBom processes an approve or reject action for the BOM's approval instance.
 	// userRoles are the caller's JWT roles used to verify the current-level role.
 	// On full approval, bom_item.status and all child items.status are set to Active.
-	//ApproveBom(ctx context.Context, bomID int64, userID string, userRoles []string, req models.ApproveBomRequest) (*awmodels.ApprovalInstance, error)
+	ApproveBom(ctx context.Context, bomID int64, userID string, userRoles []string, req models.ApproveBomRequest) (*awmodels.ApprovalInstance, error)
 }
 
 type service struct{ repo repository.IRepository }
@@ -1813,73 +1812,72 @@ func uniqueInt64Keys(values map[int64]struct{}) []int64 {
 // ApproveBom — multi-level approval state machine using approval_instances
 // ---------------------------------------------------------------------------
 
-// func (s *service) ApproveBom(ctx context.Context, bomID int64, userID string, userRoles []string, req models.ApproveBomRequest) (*awmodels.ApprovalInstance, error) {
-// 	instance, err := s.repo.GetApprovalInstanceByRef(ctx, "bom", "bom_item", bomID)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-// 	if instance == nil {
-// 		return nil, apperror.NotFound("approval record not found for this BOM")
-// 	}
-// 	if instance.Status == "approved" || instance.Status == "rejected" {
-// 		return nil, apperror.BadRequest(fmt.Sprintf("BOM is already %s", instance.Status))
-// 	}
+func (s *service) ApproveBom(ctx context.Context, bomID int64, userID string, userRoles []string, req models.ApproveBomRequest) (*awmodels.ApprovalInstance, error) {
+	instance, err := s.repo.GetApprovalInstanceByRef(ctx, "bom", "bom_item", bomID)
+	if err != nil {
+		return nil, err
+	}
+	if instance == nil {
+		return nil, apperror.NotFound("approval record not found for this BOM")
+	}
+	if instance.Status == "approved" || instance.Status == "rejected" {
+		return nil, apperror.BadRequest(fmt.Sprintf("BOM is already %s", instance.Status))
+	}
 
-// 	wf, err := s.repo.GetApprovalWorkflowByID(ctx, instance.ApprovalWorkflowID)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+	wf, err := s.repo.GetApprovalWorkflowByID(ctx, instance.ApprovalWorkflowID)
+	if err != nil {
+		return nil, err
+	}
+	if wf == nil {
+		return nil, apperror.BadRequest("active approval workflow for bom not found")
+	}
 
-// 	requiredRole := approval.LevelRole(wf, int16(instance.CurrentLevel))
-// 	if requiredRole == "" {
-// 		return nil, apperror.BadRequest(fmt.Sprintf("no role configured for approval level %d", instance.CurrentLevel))
-// 	}
-// 	if !approval.HasRole(userRoles, requiredRole) {
-// 		return nil, apperror.Forbidden(fmt.Sprintf(
-// 			"level %d approval requires role '%s'", instance.CurrentLevel, requiredRole,
-// 		))
-// 	}
+	requiredRole := approval.LevelRole(wf, int16(instance.CurrentLevel))
+	if requiredRole == "" {
+		return nil, apperror.BadRequest(fmt.Sprintf("no role configured for approval level %d", instance.CurrentLevel))
+	}
+	if !approval.HasRole(userRoles, requiredRole) {
+		return nil, apperror.Forbidden(fmt.Sprintf("level %d approval requires role '%s'", instance.CurrentLevel, requiredRole))
+	}
 
-// 	now := time.Now().UTC().Format(time.RFC3339)
-// 	lvlIdx := instance.CurrentLevel - 1 // 0-based index into Levels slice
-// 	note := ""
-// 	if req.Notes != nil {
-// 		note = *req.Notes
-// 	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	lvlIdx := instance.CurrentLevel - 1
+	note := ""
+	if req.Notes != nil {
+		note = strings.TrimSpace(*req.Notes)
+	}
 
-// 	if req.Action == "reject" {
-// 		instance.ApprovalProgress.Levels[lvlIdx].Status = "rejected"
-// 		instance.ApprovalProgress.Levels[lvlIdx].ApprovedBy = userID
-// 		instance.ApprovalProgress.Levels[lvlIdx].ApprovedAt = now
-// 		instance.ApprovalProgress.Levels[lvlIdx].Note = note
-// 		instance.Status = "rejected"
+	if req.Action == "reject" {
+		instance.ApprovalProgress.Levels[lvlIdx].Status = "rejected"
+		instance.ApprovalProgress.Levels[lvlIdx].ApprovedBy = userID
+		instance.ApprovalProgress.Levels[lvlIdx].ApprovedAt = now
+		instance.ApprovalProgress.Levels[lvlIdx].Note = note
+		instance.Status = "rejected"
 
-// 		// Reset bom_item back to Draft so creator can revise and resubmit
-// 		if bom, _ := s.repo.GetBomByID(ctx, bomID); bom != nil {
-// 			bom.Status = "Draft"
-// 			_ = s.repo.UpdateBomItem(ctx, bom)
-// 		}
-// 	} else {
-// 		instance.ApprovalProgress.Levels[lvlIdx].Status = "approved"
-// 		instance.ApprovalProgress.Levels[lvlIdx].ApprovedBy = userID
-// 		instance.ApprovalProgress.Levels[lvlIdx].ApprovedAt = now
-// 		instance.ApprovalProgress.Levels[lvlIdx].Note = note
+		if bom, _ := s.repo.GetBomByID(ctx, bomID); bom != nil {
+			bom.Status = "Draft"
+			_ = s.repo.UpdateBomItem(ctx, bom)
+		}
+	} else {
+		instance.ApprovalProgress.Levels[lvlIdx].Status = "approved"
+		instance.ApprovalProgress.Levels[lvlIdx].ApprovedBy = userID
+		instance.ApprovalProgress.Levels[lvlIdx].ApprovedAt = now
+		instance.ApprovalProgress.Levels[lvlIdx].Note = note
 
-// 		if instance.CurrentLevel >= instance.MaxLevel {
-// 			// All levels passed — activate bom_item + all children items
-// 			instance.Status = "approved"
-// 			if bom, _ := s.repo.GetBomByID(ctx, bomID); bom != nil {
-// 				bom.Status = "Active"
-// 				_ = s.repo.UpdateBomItem(ctx, bom)
-// 			}
-// 			_ = s.repo.BulkActivateItemsByBomID(ctx, bomID)
-// 		} else {
-// 			instance.CurrentLevel++
-// 		}
-// 	}
+		if instance.CurrentLevel >= instance.MaxLevel {
+			instance.Status = "approved"
+			if bom, _ := s.repo.GetBomByID(ctx, bomID); bom != nil {
+				bom.Status = "Active"
+				_ = s.repo.UpdateBomItem(ctx, bom)
+			}
+			_ = s.repo.BulkActivateItemsByBomID(ctx, bomID)
+		} else {
+			instance.CurrentLevel++
+		}
+	}
 
-// 	if err := s.repo.UpdateApprovalInstance(ctx, instance); err != nil {
-// 		return nil, err
-// 	}
-// 	return instance, nil
-// }
+	if err := s.repo.UpdateApprovalInstance(ctx, instance); err != nil {
+		return nil, err
+	}
+	return instance, nil
+}

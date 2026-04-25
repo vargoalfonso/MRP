@@ -209,6 +209,50 @@ type POBudgetPaginationInput struct {
 	BudgetSubtype  string        `json:"budget_subtype"` // regular | adhoc
 }
 
+type ApprovalManagerPaginationInput struct {
+	Limit          int           `json:"limit"`
+	Page           int           `json:"page"`
+	Search         string        `json:"search"`
+	Filter         []FilterInput `json:"filter"`
+	OrderBy        string        `json:"order_by"`
+	OrderDirection string        `json:"order_direction"`
+	Type           string        `json:"type"`
+	Status         string        `json:"status"`
+	SubmittedBy    string        `json:"submitted_by"`
+	CurrentLevel   int           `json:"current_level"`
+	Scope          string        `json:"scope"`
+}
+
+func (p ApprovalManagerPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+func ApprovalManagerPagination(c *app.Context) ApprovalManagerPaginationInput {
+	base := Pagination(c)
+	currentLevel := 0
+	if v := c.Query("current_level"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			currentLevel = n
+		}
+	}
+	return ApprovalManagerPaginationInput{
+		Limit:          base.Limit,
+		Page:           base.Page,
+		Search:         base.Search,
+		Filter:         base.Filter,
+		OrderBy:        base.OrderBy,
+		OrderDirection: base.OrderDirection,
+		Type:           c.Query("type"),
+		Status:         c.Query("status"),
+		SubmittedBy:    c.Query("submitted_by"),
+		CurrentLevel:   currentLevel,
+		Scope:          c.Query("scope"),
+	}
+}
+
 func (p POBudgetPaginationInput) Offset() int {
 	if p.Page < 1 {
 		return 0

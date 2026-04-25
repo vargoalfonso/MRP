@@ -49,6 +49,7 @@ type IRepository interface {
 	DeleteUniqBOM(ctx context.Context, item *models.UniqBillOfMaterial) error
 
 	CreatePRLs(ctx context.Context, items []*models.PRL) error
+	FindPRLByID(ctx context.Context, id int64) (*models.PRL, error)
 	FindPRLByUUID(ctx context.Context, uuid string) (*models.PRL, error)
 	ListPRLs(ctx context.Context, filters models.PRLListFilters) ([]models.PRL, int64, error)
 	ListPRLsForExport(ctx context.Context, filters models.PRLListFilters) ([]models.PRL, error)
@@ -163,6 +164,18 @@ func (r *repository) CreatePRLs(ctx context.Context, items []*models.PRL) error 
 func (r *repository) FindPRLByUUID(ctx context.Context, uuid string) (*models.PRL, error) {
 	var item models.PRL
 	err := r.db.WithContext(ctx).Where("uuid = ?", uuid).First(&item).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, apperror.NotFound("prl not found")
+		}
+		return nil, apperror.InternalWrap("find prl failed", err)
+	}
+	return &item, nil
+}
+
+func (r *repository) FindPRLByID(ctx context.Context, id int64) (*models.PRL, error) {
+	var item models.PRL
+	err := r.db.WithContext(ctx).Where("id = ?", id).First(&item).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, apperror.NotFound("prl not found")

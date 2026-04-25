@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
+)
 
 type Pagination struct {
 	Total      int64 `json:"total"`
@@ -70,8 +74,24 @@ type StockOpnameEntryItem struct {
 }
 
 type StockOpnameSessionDetail struct {
-	Session StockOpnameSessionItem `json:"session"`
-	Entries []StockOpnameEntryItem `json:"entries"`
+	Session  StockOpnameSessionItem  `json:"session"`
+	Entries  []StockOpnameEntryItem  `json:"entries"`
+	Approval *StockOpnameApprovalDTO `json:"approval,omitempty"`
+}
+
+type StockOpnameApprovalDTO struct {
+	InstanceID       int64                     `json:"instance_id"`
+	WorkflowID       int64                     `json:"workflow_id"`
+	WorkflowAction   string                    `json:"workflow_action"`
+	CurrentLevel     int                       `json:"current_level"`
+	MaxLevel         int                       `json:"max_level"`
+	Status           string                    `json:"status"`
+	SubmittedBy      string                    `json:"submitted_by"`
+	ApprovalProgress awmodels.ApprovalProgress `json:"approval_progress"`
+	Level1Role       string                    `json:"level_1_role,omitempty"`
+	Level2Role       string                    `json:"level_2_role,omitempty"`
+	Level3Role       string                    `json:"level_3_role,omitempty"`
+	Level4Role       string                    `json:"level_4_role,omitempty"`
 }
 
 type StockOpnameSessionListResponse struct {
