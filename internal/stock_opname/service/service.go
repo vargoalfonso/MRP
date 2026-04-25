@@ -148,6 +148,9 @@ func (s *service) CreateSession(ctx context.Context, req stockModels.CreateSessi
 		if err := s.repo.CreateSession(ctx, tx, session); err != nil {
 			return err
 		}
+		if err := s.ensureApprovalInstance(ctx, tx, session.ID, actor); err != nil {
+			return err
+		}
 		if err := s.appendAuditLog(ctx, tx, session.ID, nil, session.InventoryType, stockModels.AuditActionCreate, stockModels.AuditEntitySession, actor, session.Remarks, map[string]interface{}{"session_number": session.SessionNumber, "method": session.Method, "period_month": session.PeriodMonth, "period_year": session.PeriodYear}); err != nil {
 			return err
 		}
@@ -474,13 +477,7 @@ func (s *service) SubmitSession(ctx context.Context, id int64, actor string) (*s
 		if err := s.repo.UpdateSession(ctx, tx, session); err != nil {
 			return err
 		}
-		if _, err := approval.CreateInstance(ctx, tx, approval.CreateInstanceParams{
-			ActionName:     "stock_opname",
-			ReferenceTable: "stock_opname_sessions",
-			ReferenceID:    session.ID,
-			SubmittedBy:    actor,
-			MinLevels:      1,
-		}); err != nil {
+		if err := s.ensureApprovalInstance(ctx, tx, session.ID, actor); err != nil {
 			return err
 		}
 		return s.appendAuditLog(ctx, tx, session.ID, nil, session.InventoryType, stockModels.AuditActionSubmit, stockModels.AuditEntitySession, actor, session.Remarks, map[string]interface{}{"status": session.Status, "total_entries": session.TotalEntries})
@@ -757,6 +754,28 @@ func (s *service) getApprovalContext(ctx context.Context, tx *gorm.DB, sessionID
 func (s *service) updateApprovalInstance(ctx context.Context, tx *gorm.DB, instance *awmodels.ApprovalInstance, now time.Time) error {
 	instance.UpdatedAt = now
 	return tx.WithContext(ctx).Model(&awmodels.ApprovalInstance{}).Where("id = ?", instance.ID).Updates(map[string]interface{}{"approval_progress": instance.ApprovalProgress, "status": instance.Status, "current_level": instance.CurrentLevel, "updated_at": now}).Error
+}
+
+func (s *service) ensureApprovalInstance(ctx context.Context, tx *gorm.DB, sessionID int64, actor string) error {
+	var existing awmodels.ApprovalInstance
+	err := tx.WithContext(ctx).
+		Where("action_name = ? AND reference_table = ? AND reference_id = ?", "stock_opname", "stock_opname_sessions", sessionID).
+		Order("id DESC").
+		First(&existing).Error
+	if err == nil {
+		return nil
+	}
+	if err != nil && err != gorm.ErrRecordNotFound {
+		return apperror.InternalWrap("find stock opname approval instance failed", err)
+	}
+	_, err = approval.CreateInstance(ctx, tx, approval.CreateInstanceParams{
+		ActionName:     "stock_opname",
+		ReferenceTable: "stock_opname_sessions",
+		ReferenceID:    sessionID,
+		SubmittedBy:    actor,
+		MinLevels:      1,
+	})
+	return err
 }
 
 func (s *service) rejectPendingEntries(ctx context.Context, tx *gorm.DB, entries []stockModels.StockOpnameEntry, actor string, now time.Time, remarks *string) error {
