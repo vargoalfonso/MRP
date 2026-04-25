@@ -111,7 +111,7 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 			PONumber:        po.PoNumber,
 			Period:          req.Period,
 			Type:            req.Type,
-			Status:          "draft",
+			Status:          "active",
 			SupplierID:      po.SupplierID,
 			TotalPOQty:      totalQty,
 			TotalDNCreated:  summary.Total,
@@ -764,7 +764,7 @@ func (s *deliveryNoteService) ScanDelivery(ctx context.Context, req models.ScanD
 			newDN := models.DeliveryNoteSupplier{
 				DNNumber:     req.DNNumber,
 				KanbanNumber: req.KanbanNumber,
-				Status:       "draft",
+				Status:       "active",
 				ScannedBy:    req.ScannedBy,
 				ScannedAt:    &now,
 				TotalQty:     req.Qty,
