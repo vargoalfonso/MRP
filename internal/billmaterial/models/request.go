@@ -176,7 +176,7 @@ type ListBomQuery struct {
 // POST /api/v1/products/bom/:id/approval
 // ---------------------------------------------------------------------------
 
-// type ApproveBomRequest struct {
-// 	Action string  `json:"action" validate:"required,oneof=approve reject"`
-// 	Notes  *string `json:"notes"`
-// }
+type ApproveBomRequest struct {
+	Action string  `json:"action" validate:"required,oneof=approve reject"`
+	Notes  *string `json:"notes"`
+}

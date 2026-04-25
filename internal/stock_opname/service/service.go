@@ -8,11 +8,13 @@ import (
 	"strings"
 	"time"
 
+	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
 	invService "github.com/ganasa18/go-template/internal/inventory/service"
 	"github.com/ganasa18/go-template/internal/stock_opname/adjuster"
 	stockModels "github.com/ganasa18/go-template/internal/stock_opname/models"
 	"github.com/ganasa18/go-template/internal/stock_opname/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/approval"
 	"github.com/ganasa18/go-template/pkg/inventoryconst"
 	"gorm.io/gorm"
 )
@@ -32,8 +34,8 @@ type IService interface {
 	UpdateEntry(ctx context.Context, sessionID, entryID int64, req stockModels.UpdateEntryRequest, actor string) (*stockModels.StockOpnameEntryItem, error)
 	DeleteEntry(ctx context.Context, sessionID, entryID int64, actor string) error
 	SubmitSession(ctx context.Context, id int64, actor string) (*stockModels.StockOpnameSessionItem, error)
-	ApproveSession(ctx context.Context, id int64, req stockModels.ApproveRequest, actor string) (*stockModels.StockOpnameSessionItem, error)
-	ApproveEntry(ctx context.Context, sessionID, entryID int64, req stockModels.ApproveRequest, actor string) (*stockModels.StockOpnameEntryItem, error)
+	ApproveSession(ctx context.Context, id int64, req stockModels.ApproveRequest, actor string, userRoles []string) (*stockModels.StockOpnameSessionItem, error)
+	ApproveEntry(ctx context.Context, sessionID, entryID int64, req stockModels.ApproveRequest, actor string, userRoles []string) (*stockModels.StockOpnameEntryItem, error)
 }
 
 type service struct {
@@ -199,7 +201,11 @@ func (s *service) GetSessionByID(ctx context.Context, id int64) (*stockModels.St
 	for i := range row.Entries {
 		entries = append(entries, toEntryItem(&row.Entries[i]))
 	}
-	return &stockModels.StockOpnameSessionDetail{Session: toSessionItem(row), Entries: entries}, nil
+	approvalInfo, err := s.buildApprovalSummary(ctx, row.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &stockModels.StockOpnameSessionDetail{Session: toSessionItem(row), Entries: entries, Approval: approvalInfo}, nil
 }
 
 func (s *service) UpdateSession(ctx context.Context, id int64, req stockModels.UpdateSessionRequest, actor string) (*stockModels.StockOpnameSessionItem, error) {
@@ -468,6 +474,15 @@ func (s *service) SubmitSession(ctx context.Context, id int64, actor string) (*s
 		if err := s.repo.UpdateSession(ctx, tx, session); err != nil {
 			return err
 		}
+		if _, err := approval.CreateInstance(ctx, tx, approval.CreateInstanceParams{
+			ActionName:     "stock_opname",
+			ReferenceTable: "stock_opname_sessions",
+			ReferenceID:    session.ID,
+			SubmittedBy:    actor,
+			MinLevels:      1,
+		}); err != nil {
+			return err
+		}
 		return s.appendAuditLog(ctx, tx, session.ID, nil, session.InventoryType, stockModels.AuditActionSubmit, stockModels.AuditEntitySession, actor, session.Remarks, map[string]interface{}{"status": session.Status, "total_entries": session.TotalEntries})
 	})
 	if err != nil {
@@ -477,7 +492,7 @@ func (s *service) SubmitSession(ctx context.Context, id int64, actor string) (*s
 	return &item, nil
 }
 
-func (s *service) ApproveSession(ctx context.Context, id int64, req stockModels.ApproveRequest, actor string) (*stockModels.StockOpnameSessionItem, error) {
+func (s *service) ApproveSession(ctx context.Context, id int64, req stockModels.ApproveRequest, actor string, userRoles []string) (*stockModels.StockOpnameSessionItem, error) {
 	var updated *stockModels.StockOpnameSession
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		session, err := s.repo.GetSessionByIDTx(ctx, tx, id, true)
@@ -491,6 +506,13 @@ func (s *service) ApproveSession(ctx context.Context, id int64, req stockModels.
 		if err := validateAction(action); err != nil {
 			return err
 		}
+		instance, workflow, err := s.getApprovalContext(ctx, tx, session.ID)
+		if err != nil {
+			return err
+		}
+		if err := ensureApprovalActor(instance, workflow, userRoles); err != nil {
+			return err
+		}
 		entries, err := s.repo.ListEntriesBySessionTx(ctx, tx, session.ID)
 		if err != nil {
 			return err
@@ -499,16 +521,47 @@ func (s *service) ApproveSession(ctx context.Context, id int64, req stockModels.
 			return apperror.Conflict("session has no entry to approve")
 		}
 		session.TotalEntries = len(entries)
-		adj, err := s.getAdjuster(session.InventoryType)
-		if err != nil {
-			return err
-		}
 		now := time.Now()
-		for i := range entries {
-			if entries[i].Status != stockModels.EntryStatusPending {
-				continue
+		if action == stockModels.ApprovalActionReject {
+			if err := s.rejectPendingEntries(ctx, tx, entries, actor, now, trimPtr(req.Remarks)); err != nil {
+				return err
 			}
-			if action == stockModels.ApprovalActionApprove {
+			instance.ApprovalProgress.Levels[instance.CurrentLevel-1].Status = stockModels.EntryStatusRejected
+			instance.ApprovalProgress.Levels[instance.CurrentLevel-1].ApprovedBy = actor
+			instance.ApprovalProgress.Levels[instance.CurrentLevel-1].ApprovedAt = now.Format(time.RFC3339)
+			instance.ApprovalProgress.Levels[instance.CurrentLevel-1].Note = strings.TrimSpace(ptrString(req.Remarks))
+			instance.Status = stockModels.SessionStatusRejected
+			if err := s.updateApprovalInstance(ctx, tx, instance, now); err != nil {
+				return err
+			}
+			status, err := s.repo.DeriveSessionStatus(ctx, tx, session.ID)
+			if err != nil {
+				return err
+			}
+			session.Status = status
+			session.ApprovalRemarks = trimPtr(req.Remarks)
+		} else if instance.CurrentLevel < instance.MaxLevel {
+			level := &instance.ApprovalProgress.Levels[instance.CurrentLevel-1]
+			level.Status = stockModels.EntryStatusApproved
+			level.ApprovedBy = actor
+			level.ApprovedAt = now.Format(time.RFC3339)
+			level.Note = strings.TrimSpace(ptrString(req.Remarks))
+			instance.CurrentLevel++
+			instance.Status = stockModels.EntryStatusPending
+			if err := s.updateApprovalInstance(ctx, tx, instance, now); err != nil {
+				return err
+			}
+			session.Status = stockModels.SessionStatusPendingApproval
+			session.ApprovalRemarks = trimPtr(req.Remarks)
+		} else {
+			adj, err := s.getAdjuster(session.InventoryType)
+			if err != nil {
+				return err
+			}
+			for i := range entries {
+				if entries[i].Status != stockModels.EntryStatusPending {
+					continue
+				}
 				result, err := adj.ApplyAdjustment(ctx, tx, &entries[i], session.SessionNumber, actor)
 				if err != nil {
 					return err
@@ -518,26 +571,32 @@ func (s *service) ApproveSession(ctx context.Context, id int64, req stockModels.
 				}
 				entries[i].Status = stockModels.EntryStatusApproved
 				entries[i].RejectReason = nil
-			} else {
-				entries[i].Status = stockModels.EntryStatusRejected
-				entries[i].RejectReason = trimPtr(req.Remarks)
+				entries[i].ApprovedBy = strPtr(actor)
+				entries[i].ApprovedAt = &now
+				entries[i].UpdatedBy = strPtr(actor)
+				entries[i].UpdatedAt = now
+				if err := s.repo.UpdateEntry(ctx, tx, &entries[i]); err != nil {
+					return err
+				}
 			}
-			entries[i].ApprovedBy = strPtr(actor)
-			entries[i].ApprovedAt = &now
-			entries[i].UpdatedBy = strPtr(actor)
-			entries[i].UpdatedAt = now
-			if err := s.repo.UpdateEntry(ctx, tx, &entries[i]); err != nil {
+			status, err := s.repo.DeriveSessionStatus(ctx, tx, session.ID)
+			if err != nil {
+				return err
+			}
+			session.Status = status
+			session.ApprovedBy = strPtr(actor)
+			session.ApprovedAt = &now
+			session.ApprovalRemarks = trimPtr(req.Remarks)
+			level := &instance.ApprovalProgress.Levels[instance.CurrentLevel-1]
+			level.Status = stockModels.EntryStatusApproved
+			level.ApprovedBy = actor
+			level.ApprovedAt = now.Format(time.RFC3339)
+			level.Note = strings.TrimSpace(ptrString(req.Remarks))
+			instance.Status = stockModels.SessionStatusApproved
+			if err := s.updateApprovalInstance(ctx, tx, instance, now); err != nil {
 				return err
 			}
 		}
-		status, err := s.repo.DeriveSessionStatus(ctx, tx, session.ID)
-		if err != nil {
-			return err
-		}
-		session.Status = status
-		session.ApprovedBy = strPtr(actor)
-		session.ApprovedAt = &now
-		session.ApprovalRemarks = trimPtr(req.Remarks)
 		session.UpdatedBy = strPtr(actor)
 		session.UpdatedAt = now
 		updated = session
@@ -557,7 +616,7 @@ func (s *service) ApproveSession(ctx context.Context, id int64, req stockModels.
 	return &item, nil
 }
 
-func (s *service) ApproveEntry(ctx context.Context, sessionID, entryID int64, req stockModels.ApproveRequest, actor string) (*stockModels.StockOpnameEntryItem, error) {
+func (s *service) ApproveEntry(ctx context.Context, sessionID, entryID int64, req stockModels.ApproveRequest, actor string, userRoles []string) (*stockModels.StockOpnameEntryItem, error) {
 	var updated *stockModels.StockOpnameEntry
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		session, err := s.repo.GetSessionByIDTx(ctx, tx, sessionID, true)
@@ -580,6 +639,16 @@ func (s *service) ApproveEntry(ctx context.Context, sessionID, entryID int64, re
 		action := normalizeAction(req.Action)
 		if err := validateAction(action); err != nil {
 			return err
+		}
+		instance, workflow, err := s.getApprovalContext(ctx, tx, session.ID)
+		if err != nil {
+			return err
+		}
+		if err := ensureApprovalActor(instance, workflow, userRoles); err != nil {
+			return err
+		}
+		if instance.CurrentLevel < instance.MaxLevel {
+			return apperror.Conflict("entry-level approval is only allowed at final approval level")
 		}
 		adj, err := s.getAdjuster(session.InventoryType)
 		if err != nil {
@@ -613,8 +682,23 @@ func (s *service) ApproveEntry(ctx context.Context, sessionID, entryID int64, re
 			return err
 		}
 		session.Status = status
-		session.ApprovedBy = strPtr(actor)
-		session.ApprovedAt = &now
+		if status != stockModels.SessionStatusPendingApproval {
+			session.ApprovedBy = strPtr(actor)
+			session.ApprovedAt = &now
+			level := &instance.ApprovalProgress.Levels[instance.CurrentLevel-1]
+			level.Status = map[bool]string{true: stockModels.EntryStatusRejected, false: stockModels.EntryStatusApproved}[action == stockModels.ApprovalActionReject]
+			level.ApprovedBy = actor
+			level.ApprovedAt = now.Format(time.RFC3339)
+			level.Note = strings.TrimSpace(ptrString(req.Remarks))
+			if status == stockModels.SessionStatusRejected {
+				instance.Status = stockModels.SessionStatusRejected
+			} else {
+				instance.Status = stockModels.SessionStatusApproved
+			}
+			if err := s.updateApprovalInstance(ctx, tx, instance, now); err != nil {
+				return err
+			}
+		}
 		session.ApprovalRemarks = trimPtr(req.Remarks)
 		session.UpdatedBy = strPtr(actor)
 		session.UpdatedAt = now
@@ -632,6 +716,92 @@ func (s *service) ApproveEntry(ctx context.Context, sessionID, entryID int64, re
 	}
 	item := toEntryItem(updated)
 	return &item, nil
+}
+
+func (s *service) buildApprovalSummary(ctx context.Context, sessionID int64) (*stockModels.StockOpnameApprovalDTO, error) {
+	var instance awmodels.ApprovalInstance
+	if err := s.db.WithContext(ctx).Where("action_name = ? AND reference_table = ? AND reference_id = ?", "stock_opname", "stock_opname_sessions", sessionID).Order("id DESC").First(&instance).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, apperror.InternalWrap("find stock opname approval instance failed", err)
+	}
+	var workflow awmodels.ApprovalWorkflow
+	if err := s.db.WithContext(ctx).Where("id = ?", instance.ApprovalWorkflowID).First(&workflow).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return &stockModels.StockOpnameApprovalDTO{InstanceID: instance.ID, WorkflowID: instance.ApprovalWorkflowID, CurrentLevel: instance.CurrentLevel, MaxLevel: instance.MaxLevel, Status: instance.Status, SubmittedBy: instance.SubmittedBy, ApprovalProgress: instance.ApprovalProgress}, nil
+		}
+		return nil, apperror.InternalWrap("find stock opname approval workflow failed", err)
+	}
+	return &stockModels.StockOpnameApprovalDTO{InstanceID: instance.ID, WorkflowID: workflow.ID, WorkflowAction: workflow.ActionName, CurrentLevel: instance.CurrentLevel, MaxLevel: instance.MaxLevel, Status: instance.Status, SubmittedBy: instance.SubmittedBy, ApprovalProgress: instance.ApprovalProgress, Level1Role: workflow.Level1Role, Level2Role: workflow.Level2Role, Level3Role: workflow.Level3Role, Level4Role: workflow.Level4Role}, nil
+}
+
+func (s *service) getApprovalContext(ctx context.Context, tx *gorm.DB, sessionID int64) (*awmodels.ApprovalInstance, *awmodels.ApprovalWorkflow, error) {
+	var instance awmodels.ApprovalInstance
+	if err := tx.WithContext(ctx).Where("action_name = ? AND reference_table = ? AND reference_id = ?", "stock_opname", "stock_opname_sessions", sessionID).Order("id DESC").First(&instance).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil, apperror.BadRequest("approval instance for stock opname session not found")
+		}
+		return nil, nil, apperror.InternalWrap("find stock opname approval instance failed", err)
+	}
+	var workflow awmodels.ApprovalWorkflow
+	if err := tx.WithContext(ctx).Where("id = ? AND status = ?", instance.ApprovalWorkflowID, "active").First(&workflow).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil, apperror.BadRequest("active approval workflow for stock opname not found")
+		}
+		return nil, nil, apperror.InternalWrap("find stock opname approval workflow failed", err)
+	}
+	return &instance, &workflow, nil
+}
+
+func (s *service) updateApprovalInstance(ctx context.Context, tx *gorm.DB, instance *awmodels.ApprovalInstance, now time.Time) error {
+	instance.UpdatedAt = now
+	return tx.WithContext(ctx).Model(&awmodels.ApprovalInstance{}).Where("id = ?", instance.ID).Updates(map[string]interface{}{"approval_progress": instance.ApprovalProgress, "status": instance.Status, "current_level": instance.CurrentLevel, "updated_at": now}).Error
+}
+
+func (s *service) rejectPendingEntries(ctx context.Context, tx *gorm.DB, entries []stockModels.StockOpnameEntry, actor string, now time.Time, remarks *string) error {
+	for i := range entries {
+		if entries[i].Status != stockModels.EntryStatusPending {
+			continue
+		}
+		entries[i].Status = stockModels.EntryStatusRejected
+		entries[i].RejectReason = remarks
+		entries[i].ApprovedBy = strPtr(actor)
+		entries[i].ApprovedAt = &now
+		entries[i].UpdatedBy = strPtr(actor)
+		entries[i].UpdatedAt = now
+		if err := s.repo.UpdateEntry(ctx, tx, &entries[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureApprovalActor(instance *awmodels.ApprovalInstance, workflow *awmodels.ApprovalWorkflow, userRoles []string) error {
+	if instance.Status == stockModels.SessionStatusApproved || instance.Status == stockModels.SessionStatusRejected {
+		return apperror.Conflict("approval already finished")
+	}
+	if instance.CurrentLevel < 1 || instance.CurrentLevel > len(instance.ApprovalProgress.Levels) {
+		return apperror.BadRequest("invalid approval current level")
+	}
+	requiredRole := approval.LevelRole(workflow, int16(instance.CurrentLevel))
+	if requiredRole == "" {
+		requiredRole = instance.ApprovalProgress.Levels[instance.CurrentLevel-1].Role
+	}
+	if requiredRole == "" {
+		return apperror.BadRequest("required approval role is not configured")
+	}
+	if !approval.HasRole(userRoles, requiredRole) {
+		return apperror.Forbidden(fmt.Sprintf("stock opname is waiting approval from role '%s'", requiredRole))
+	}
+	return nil
+}
+
+func ptrString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }
 
 func (s *service) addEntryTx(ctx context.Context, sessionID int64, req stockModels.CreateEntryRequest, actor string) (*stockModels.StockOpnameEntry, error) {

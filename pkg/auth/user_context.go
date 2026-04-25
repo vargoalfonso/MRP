@@ -14,6 +14,7 @@ type UserContext struct {
 	UserID   string // UUID from token
 	Username string // username (may be empty if not loaded)
 	Email    string // email (may be empty if not loaded)
+	Roles    []string
 }
 
 // MustExtractUserContext extracts user info from JWT claims.
@@ -22,12 +23,12 @@ type UserContext struct {
 func MustExtractUserContext(ctx *app.Context) *UserContext {
 	raw, exists := ctx.Get("claims")
 	if !exists {
-		return &UserContext{UserID: "system", Username: "system", Email: "system@erp"}
+		return &UserContext{UserID: "system", Username: "system", Email: "system@erp", Roles: []string{"system"}}
 	}
 
 	claims, ok := raw.(*authModels.Claims)
 	if !ok || claims == nil {
-		return &UserContext{UserID: "system", Username: "system", Email: "system@erp"}
+		return &UserContext{UserID: "system", Username: "system", Email: "system@erp", Roles: []string{"system"}}
 	}
 
 	userID := claims.UserID
@@ -39,6 +40,7 @@ func MustExtractUserContext(ctx *app.Context) *UserContext {
 		UserID:   userID,
 		Username: "", // will be populated if LoadFullUser() is called
 		Email:    "",
+		Roles:    claims.Roles,
 	}
 }
 

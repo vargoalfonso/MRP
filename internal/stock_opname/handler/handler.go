@@ -235,7 +235,7 @@ func (h *HTTPHandler) ApproveSession(ctx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
 	}
 	userCtx := userPkg.MustExtractUserContext(ctx)
-	resp, err := h.svc.ApproveSession(ctx.Request.Context(), id, req, userCtx.UserID)
+	resp, err := h.svc.ApproveSession(ctx.Request.Context(), id, req, userCtx.UserID, userCtx.Roles)
 	if err != nil {
 		return app.NewError(ctx, err)
 	}
@@ -259,7 +259,7 @@ func (h *HTTPHandler) ApproveEntry(ctx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
 	}
 	userCtx := userPkg.MustExtractUserContext(ctx)
-	resp, err := h.svc.ApproveEntry(ctx.Request.Context(), id, entryID, req, userCtx.UserID)
+	resp, err := h.svc.ApproveEntry(ctx.Request.Context(), id, entryID, req, userCtx.UserID, userCtx.Roles)
 	if err != nil {
 		return app.NewError(ctx, err)
 	}

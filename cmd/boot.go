@@ -20,6 +20,10 @@ import (
 	adminJobsHandler "github.com/ganasa18/go-template/internal/admin_jobs/handler"
 	adminJobsRepo "github.com/ganasa18/go-template/internal/admin_jobs/repository"
 	adminJobsService "github.com/ganasa18/go-template/internal/admin_jobs/service"
+	approvalManagerModule "github.com/ganasa18/go-template/internal/approval_manager"
+	approvalManagerHandler "github.com/ganasa18/go-template/internal/approval_manager/handler"
+	approvalManagerRepository "github.com/ganasa18/go-template/internal/approval_manager/repository"
+	approvalManagerService "github.com/ganasa18/go-template/internal/approval_manager/service"
 	approvalWorkflowModule "github.com/ganasa18/go-template/internal/approval_workflow"
 	approvalWorkflowHandler "github.com/ganasa18/go-template/internal/approval_workflow/handler"
 	approvalWorkflowRepository "github.com/ganasa18/go-template/internal/approval_workflow/repository"
@@ -216,7 +220,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	customerSvc := customerService.New(customerRepo)
 	customerHTTPHandler := customerHandler.New(customerSvc)
 	prlRepo := prlRepository.New(db)
-	prlSvc := prlService.New(prlRepo)
+	prlSvc := prlService.New(prlRepo, db)
 	prlHTTPHandler := prlHandler.New(prlSvc)
 	supplierRepo := supplierRepository.New(db)
 	supplierSvc := supplierService.New(supplierRepo)
@@ -305,6 +309,9 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	approvalWorkflowRepo := approvalWorkflowRepository.New(db)
 	approvalWorkflowSvc := approvalWorkflowService.New(approvalWorkflowRepo, roleRepo)
 	approvalWorkflowHTTPHandler := approvalWorkflowHandler.New(approvalWorkflowSvc)
+	approvalManagerRepo := approvalManagerRepository.New(db)
+	approvalManagerSvc := approvalManagerService.New(approvalManagerRepo)
+	approvalManagerHTTPHandler := approvalManagerHandler.New(approvalManagerSvc)
 
 	globalParameterRepo := globalParameterRepository.New(db)
 	globalParameterSvc := globalParameterService.New(globalParameterRepo)
@@ -401,6 +408,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		UnitMeasureModule.NewHTTPModule(cfg, baseHTTPHandler, unitMeasureHTTPHandler, authSvc, roleSvc, unitMeasureSvc),
 		poSplitSettingModule.NewHTTPModule(cfg, baseHTTPHandler, poSplitSettingHTTPHandler, authSvc, roleSvc, poSplitSettingSvc),
 		approvalWorkflowModule.NewHTTPModule(cfg, baseHTTPHandler, approvalWorkflowHTTPHandler, authSvc, roleSvc, approvalWorkflowSvc),
+		approvalManagerModule.NewHTTPModule(cfg, baseHTTPHandler, approvalManagerHTTPHandler, authSvc, roleSvc, approvalManagerSvc),
 		globalParameterModule.NewHTTPModule(cfg, baseHTTPHandler, globalParameterHTTPHandler, authSvc, roleSvc, globalParameterSvc),
 		processParameterModule.NewHTTPModule(cfg, baseHTTPHandler, processParameterHTTPHandler, authSvc, roleSvc, processParameterSvc),
 		masterMachineModule.NewHTTPModule(cfg, baseHTTPHandler, masterMachineHTTPHandler, authSvc, roleSvc, masterMachineSvc),

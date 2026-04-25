@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	authModels "github.com/ganasa18/go-template/internal/auth/models"
 	"github.com/ganasa18/go-template/internal/base/app"
 	"github.com/ganasa18/go-template/internal/prl/models"
 	prlService "github.com/ganasa18/go-template/internal/prl/service"
@@ -95,7 +96,11 @@ func (h *HTTPHandler) CreatePRL(appCtx *app.Context) *app.CostumeResponse {
 		if errs := validator.Validate(models.BulkCreatePRLRequest{Entries: bulkProbe.Entries}); errs != nil {
 			return validationError(appCtx, errs)
 		}
-		result, svcErr := h.service.BulkCreatePRLs(appCtx.Request.Context(), models.BulkCreatePRLRequest{Entries: bulkProbe.Entries})
+		userID, claimErr := mustUserID(appCtx)
+		if claimErr != nil {
+			return app.NewError(appCtx, claimErr)
+		}
+		result, svcErr := h.service.BulkCreatePRLs(appCtx.Request.Context(), models.BulkCreatePRLRequest{Entries: bulkProbe.Entries}, userID)
 		if svcErr != nil {
 			return app.NewError(appCtx, svcErr)
 		}
@@ -109,7 +114,11 @@ func (h *HTTPHandler) CreatePRL(appCtx *app.Context) *app.CostumeResponse {
 	if errs := validator.Validate(req); errs != nil {
 		return validationError(appCtx, errs)
 	}
-	item, svcErr := h.service.CreatePRL(appCtx.Request.Context(), req)
+	userID, claimErr := mustUserID(appCtx)
+	if claimErr != nil {
+		return app.NewError(appCtx, claimErr)
+	}
+	item, svcErr := h.service.CreatePRL(appCtx.Request.Context(), req, userID)
 	if svcErr != nil {
 		return app.NewError(appCtx, svcErr)
 	}
@@ -121,7 +130,11 @@ func (h *HTTPHandler) BulkCreatePRLs(appCtx *app.Context) *app.CostumeResponse {
 	if err := appCtx.ShouldBindJSON(&req); err != nil {
 		return badRequest(appCtx, "invalid request body")
 	}
-	result, err := h.service.BulkCreatePRLs(appCtx.Request.Context(), req)
+	userID, claimErr := mustUserID(appCtx)
+	if claimErr != nil {
+		return app.NewError(appCtx, claimErr)
+	}
+	result, err := h.service.BulkCreatePRLs(appCtx.Request.Context(), req, userID)
 	if err != nil {
 		return app.NewError(appCtx, err)
 	}
@@ -142,6 +155,14 @@ func (h *HTTPHandler) ListPRLs(appCtx *app.Context) *app.CostumeResponse {
 
 func (h *HTTPHandler) GetPRL(appCtx *app.Context) *app.CostumeResponse {
 	item, err := h.service.GetPRLByUUID(appCtx.Request.Context(), appCtx.Param("id"))
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+	return ok(appCtx, item)
+}
+
+func (h *HTTPHandler) GetPRLDetail(appCtx *app.Context) *app.CostumeResponse {
+	item, err := h.service.GetPRLDetail(appCtx.Request.Context(), appCtx.Param("id"))
 	if err != nil {
 		return app.NewError(appCtx, err)
 	}
@@ -205,17 +226,27 @@ func (h *HTTPHandler) ImportPRLs(c *gin.Context) {
 	}
 	defer func() { _ = file.Close() }()
 
-	result, serviceErr := h.service.ImportPRLs(c.Request.Context(), fileHeader.Filename, file)
-	if serviceErr != nil {
-		if appErr, ok := apperror.As(serviceErr); ok {
-			c.JSON(appErr.HTTPStatus, gin.H{"request_id": c.GetHeader("X-Request-Id"), "status": appErr.HTTPStatus, "message": appErr.Message, "data": nil})
+	appCtx := app.NewContext(c)
+	userID, claimErr := mustUserID(appCtx)
+	if claimErr != nil {
+		if appErr, ok := apperror.As(claimErr); ok {
+			c.JSON(appErr.HTTPStatus, gin.H{"request_id": appCtx.APIReqID, "status": appErr.HTTPStatus, "message": appErr.Message, "data": nil})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"request_id": c.GetHeader("X-Request-Id"), "status": http.StatusInternalServerError, "message": "import prl failed", "data": nil})
+		c.JSON(http.StatusUnauthorized, gin.H{"request_id": appCtx.APIReqID, "status": http.StatusUnauthorized, "message": "not authenticated", "data": nil})
+		return
+	}
+	result, serviceErr := h.service.ImportPRLs(c.Request.Context(), fileHeader.Filename, file, userID)
+	if serviceErr != nil {
+		if appErr, ok := apperror.As(serviceErr); ok {
+			c.JSON(appErr.HTTPStatus, gin.H{"request_id": appCtx.APIReqID, "status": appErr.HTTPStatus, "message": appErr.Message, "data": nil})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"request_id": appCtx.APIReqID, "status": http.StatusInternalServerError, "message": "import prl failed", "data": nil})
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"request_id": c.GetHeader("X-Request-Id"), "status": http.StatusCreated, "message": "prl import successful", "data": result})
+	c.JSON(http.StatusCreated, gin.H{"request_id": appCtx.APIReqID, "status": http.StatusCreated, "message": "prl import successful", "data": result})
 }
 
 func (h *HTTPHandler) ExportPRLs(c *gin.Context) {
@@ -249,10 +280,14 @@ func (h *HTTPHandler) bulkStatusAction(appCtx *app.Context, status string) *app.
 		result *models.BulkStatusActionResponse
 		err    error
 	)
+	userID, roles, claimErr := mustApprovalActor(appCtx)
+	if claimErr != nil {
+		return app.NewError(appCtx, claimErr)
+	}
 	if status == models.PRLStatusApproved {
-		result, err = h.service.ApprovePRLs(appCtx.Request.Context(), req)
+		result, err = h.service.ApprovePRLs(appCtx.Request.Context(), req, userID, roles)
 	} else {
-		result, err = h.service.RejectPRLs(appCtx.Request.Context(), req)
+		result, err = h.service.RejectPRLs(appCtx.Request.Context(), req, userID, roles)
 	}
 	if err != nil {
 		return app.NewError(appCtx, err)
@@ -270,4 +305,28 @@ func badRequest(appCtx *app.Context, message string) *app.CostumeResponse {
 
 func validationError(appCtx *app.Context, errs interface{}) *app.CostumeResponse {
 	return &app.CostumeResponse{RequestID: appCtx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+}
+
+func mustUserID(appCtx *app.Context) (string, error) {
+	claimsRaw, ok := appCtx.Get("claims")
+	if !ok {
+		return "", apperror.Unauthorized("not authenticated")
+	}
+	claims, ok := claimsRaw.(*authModels.Claims)
+	if !ok || claims == nil || claims.UserID == "" {
+		return "", apperror.Unauthorized("not authenticated")
+	}
+	return claims.UserID, nil
+}
+
+func mustApprovalActor(appCtx *app.Context) (string, []string, error) {
+	claimsRaw, ok := appCtx.Get("claims")
+	if !ok {
+		return "", nil, apperror.Unauthorized("not authenticated")
+	}
+	claims, ok := claimsRaw.(*authModels.Claims)
+	if !ok || claims == nil || claims.UserID == "" {
+		return "", nil, apperror.Unauthorized("not authenticated")
+	}
+	return claims.UserID, claims.Roles, nil
 }

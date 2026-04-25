@@ -11,11 +11,14 @@ import (
 	"strings"
 	"time"
 
+	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
 	"github.com/ganasa18/go-template/internal/prl/models"
 	prlRepo "github.com/ganasa18/go-template/internal/prl/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/approval"
 	"github.com/google/uuid"
 	"github.com/xuri/excelize/v2"
+	"gorm.io/gorm"
 )
 
 var forecastPeriodPattern = regexp.MustCompile(`^\d{4}-Q[1-4]$`)
@@ -27,27 +30,29 @@ type Service interface {
 	UpdateUniqBOM(ctx context.Context, uuid string, req models.UpdateUniqBOMRequest) (*models.UniqBillOfMaterial, error)
 	DeleteUniqBOM(ctx context.Context, uuid string) error
 
-	CreatePRL(ctx context.Context, req models.CreatePRLRequest) (*models.PRL, error)
-	BulkCreatePRLs(ctx context.Context, req models.BulkCreatePRLRequest) (*models.BulkCreatePRLResponse, error)
+	CreatePRL(ctx context.Context, req models.CreatePRLRequest, submittedBy string) (*models.PRL, error)
+	BulkCreatePRLs(ctx context.Context, req models.BulkCreatePRLRequest, submittedBy string) (*models.BulkCreatePRLResponse, error)
 	GetPRLByUUID(ctx context.Context, uuid string) (*models.PRL, error)
+	GetPRLDetail(ctx context.Context, id string) (*models.PRLDetailResponse, error)
 	ListPRLs(ctx context.Context, query models.ListPRLQuery) (*models.PRLListResult, error)
 	UpdatePRL(ctx context.Context, uuid string, req models.UpdatePRLRequest) (*models.PRL, error)
 	DeletePRL(ctx context.Context, uuid string) error
-	ApprovePRLs(ctx context.Context, req models.BulkStatusActionRequest) (*models.BulkStatusActionResponse, error)
-	RejectPRLs(ctx context.Context, req models.BulkStatusActionRequest) (*models.BulkStatusActionResponse, error)
+	ApprovePRLs(ctx context.Context, req models.BulkStatusActionRequest, userID string, userRoles []string) (*models.BulkStatusActionResponse, error)
+	RejectPRLs(ctx context.Context, req models.BulkStatusActionRequest, userID string, userRoles []string) (*models.BulkStatusActionResponse, error)
 
 	ListCustomerLookups(ctx context.Context, search string) ([]models.CustomerLookup, error)
 	ListForecastPeriodOptions(year int) []models.ForecastPeriodOption
-	ImportPRLs(ctx context.Context, fileName string, reader io.Reader) (*models.ImportPRLResponse, error)
+	ImportPRLs(ctx context.Context, fileName string, reader io.Reader, submittedBy string) (*models.ImportPRLResponse, error)
 	ExportPRLs(ctx context.Context, query models.ListPRLQuery) (string, []byte, error)
 }
 
 type service struct {
 	repo prlRepo.IRepository
+	db   *gorm.DB
 }
 
-func New(repo prlRepo.IRepository) Service {
-	return &service{repo: repo}
+func New(repo prlRepo.IRepository, db *gorm.DB) Service {
+	return &service{repo: repo, db: db}
 }
 
 func (s *service) CreateUniqBOM(ctx context.Context, req models.CreateUniqBOMRequest) (*models.UniqBillOfMaterial, error) {
@@ -109,7 +114,12 @@ func (s *service) DeleteUniqBOM(ctx context.Context, uuid string) error {
 	return s.repo.DeleteUniqBOM(ctx, item)
 }
 
-func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest) (*models.PRL, error) {
+func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest, submittedBy string) (*models.PRL, error) {
+	submittedBy = strings.TrimSpace(submittedBy)
+	if submittedBy == "" {
+		return nil, apperror.Unauthorized("not authenticated")
+	}
+
 	period, err := normalizeForecastPeriod(req.ForecastPeriod)
 	if err != nil {
 		return nil, err
@@ -186,13 +196,20 @@ func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest) (*
 	if err := s.repo.CreatePRLs(ctx, []*models.PRL{item}); err != nil {
 		return nil, err
 	}
+	if err := s.createApprovalInstance(ctx, item.ID, submittedBy); err != nil {
+		return nil, err
+	}
 
 	return item, nil
 }
 
-func (s *service) BulkCreatePRLs(ctx context.Context, req models.BulkCreatePRLRequest) (*models.BulkCreatePRLResponse, error) {
+func (s *service) BulkCreatePRLs(ctx context.Context, req models.BulkCreatePRLRequest, submittedBy string) (*models.BulkCreatePRLResponse, error) {
 	if len(req.Entries) == 0 {
 		return nil, apperror.BadRequest("entries is required")
+	}
+	submittedBy = strings.TrimSpace(submittedBy)
+	if submittedBy == "" {
+		return nil, apperror.Unauthorized("not authenticated")
 	}
 
 	items := make([]*models.PRL, 0, len(req.Entries))
@@ -206,6 +223,11 @@ func (s *service) BulkCreatePRLs(ctx context.Context, req models.BulkCreatePRLRe
 
 	if err := s.repo.CreatePRLs(ctx, items); err != nil {
 		return nil, err
+	}
+	for _, item := range items {
+		if err := s.createApprovalInstance(ctx, item.ID, submittedBy); err != nil {
+			return nil, err
+		}
 	}
 
 	out := make([]models.PRL, 0, len(items))
@@ -221,6 +243,72 @@ func (s *service) GetPRLByUUID(ctx context.Context, uuid string) (*models.PRL, e
 		return nil, apperror.BadRequest("prl id is required")
 	}
 	return s.repo.FindPRLByUUID(ctx, uuid)
+}
+
+func (s *service) GetPRLDetail(ctx context.Context, id string) (*models.PRLDetailResponse, error) {
+	item, err := s.resolvePRLDetailTarget(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &models.PRLDetailResponse{PRL: *item}
+
+	var instance awmodels.ApprovalInstance
+	if err := s.db.WithContext(ctx).
+		Where("action_name = ? AND reference_table = ? AND reference_id = ?", "prl", "prls", item.ID).
+		First(&instance).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return resp, nil
+		}
+		return nil, apperror.InternalWrap("find approval instance failed", err)
+	}
+
+	var workflow awmodels.ApprovalWorkflow
+	if err := s.db.WithContext(ctx).Where("id = ?", instance.ApprovalWorkflowID).First(&workflow).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			resp.Approval = &models.PRLApprovalSummary{
+				InstanceID:       instance.ID,
+				WorkflowID:       instance.ApprovalWorkflowID,
+				CurrentLevel:     instance.CurrentLevel,
+				MaxLevel:         instance.MaxLevel,
+				Status:           instance.Status,
+				SubmittedBy:      instance.SubmittedBy,
+				ApprovalProgress: instance.ApprovalProgress,
+			}
+			return resp, nil
+		}
+		return nil, apperror.InternalWrap("find approval workflow failed", err)
+	}
+
+	resp.Approval = &models.PRLApprovalSummary{
+		InstanceID:       instance.ID,
+		WorkflowID:       workflow.ID,
+		WorkflowAction:   workflow.ActionName,
+		CurrentLevel:     instance.CurrentLevel,
+		MaxLevel:         instance.MaxLevel,
+		Status:           instance.Status,
+		SubmittedBy:      instance.SubmittedBy,
+		ApprovalProgress: instance.ApprovalProgress,
+		LevelRoles: models.PRLApprovalWorkflowRoles{
+			Level1: workflow.Level1Role,
+			Level2: workflow.Level2Role,
+			Level3: workflow.Level3Role,
+			Level4: workflow.Level4Role,
+		},
+	}
+
+	return resp, nil
+}
+
+func (s *service) resolvePRLDetailTarget(ctx context.Context, id string) (*models.PRL, error) {
+	trimmed := models.Trimmed(id)
+	if trimmed == "" {
+		return nil, apperror.BadRequest("prl id is required")
+	}
+	if numericID, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+		return s.repo.FindPRLByID(ctx, numericID)
+	}
+	return s.repo.FindPRLByUUID(ctx, trimmed)
 }
 
 func (s *service) ListPRLs(ctx context.Context, query models.ListPRLQuery) (*models.PRLListResult, error) {
@@ -281,12 +369,12 @@ func (s *service) DeletePRL(ctx context.Context, uuid string) error {
 	return s.repo.DeletePRL(ctx, item)
 }
 
-func (s *service) ApprovePRLs(ctx context.Context, req models.BulkStatusActionRequest) (*models.BulkStatusActionResponse, error) {
-	return s.bulkSetStatus(ctx, req, models.PRLStatusApproved)
+func (s *service) ApprovePRLs(ctx context.Context, req models.BulkStatusActionRequest, userID string, userRoles []string) (*models.BulkStatusActionResponse, error) {
+	return s.bulkProcessApprovalAction(ctx, req, userID, userRoles, models.PRLStatusApproved)
 }
 
-func (s *service) RejectPRLs(ctx context.Context, req models.BulkStatusActionRequest) (*models.BulkStatusActionResponse, error) {
-	return s.bulkSetStatus(ctx, req, models.PRLStatusRejected)
+func (s *service) RejectPRLs(ctx context.Context, req models.BulkStatusActionRequest, userID string, userRoles []string) (*models.BulkStatusActionResponse, error) {
+	return s.bulkProcessApprovalAction(ctx, req, userID, userRoles, models.PRLStatusRejected)
 }
 
 func (s *service) ListCustomerLookups(ctx context.Context, search string) ([]models.CustomerLookup, error) {
@@ -305,7 +393,7 @@ func (s *service) ListForecastPeriodOptions(year int) []models.ForecastPeriodOpt
 	return items
 }
 
-func (s *service) ImportPRLs(ctx context.Context, fileName string, reader io.Reader) (*models.ImportPRLResponse, error) {
+func (s *service) ImportPRLs(ctx context.Context, fileName string, reader io.Reader, submittedBy string) (*models.ImportPRLResponse, error) {
 	if !strings.EqualFold(filepath.Ext(fileName), ".xlsx") {
 		return nil, apperror.BadRequest("file must be .xlsx")
 	}
@@ -349,7 +437,7 @@ func (s *service) ImportPRLs(ctx context.Context, fileName string, reader io.Rea
 		})
 	}
 
-	resp, err := s.BulkCreatePRLs(ctx, models.BulkCreatePRLRequest{Entries: entries})
+	resp, err := s.BulkCreatePRLs(ctx, models.BulkCreatePRLRequest{Entries: entries}, submittedBy)
 	if err != nil {
 		return nil, err
 	}
@@ -487,12 +575,189 @@ func (s *service) resolveCustomer(ctx context.Context, customerUUID models.Custo
 	}{UUID: customer.UUID, CustomerID: customer.CustomerID, CustomerName: customer.CustomerName}, nil
 }
 
-func (s *service) bulkSetStatus(ctx context.Context, req models.BulkStatusActionRequest, status string) (*models.BulkStatusActionResponse, error) {
-	if len(req.IDs) == 0 {
+func (s *service) createApprovalInstance(ctx context.Context, referenceID int64, submittedBy string) error {
+	_, err := approval.CreateInstance(ctx, s.db, approval.CreateInstanceParams{
+		ActionName:     "prl",
+		ReferenceTable: "prls",
+		ReferenceID:    referenceID,
+		SubmittedBy:    submittedBy,
+	})
+	return err
+}
+
+func (s *service) bulkProcessApprovalAction(ctx context.Context, req models.BulkStatusActionRequest, userID string, userRoles []string, action string) (*models.BulkStatusActionResponse, error) {
+	ids, err := normalizeActionIDs(req.IDs)
+	if err != nil {
+		return nil, err
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, apperror.Unauthorized("not authenticated")
+	}
+	roles := normalizeRoles(userRoles)
+	if len(roles) == 0 {
+		return nil, apperror.Forbidden("no roles assigned for approval")
+	}
+
+	results := make([]models.BulkStatusActionResult, 0, len(ids))
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, id := range ids {
+			result, processErr := s.processPRLApprovalAction(ctx, tx, id, req.Note, userID, roles, action)
+			if processErr != nil {
+				return processErr
+			}
+			results = append(results, *result)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.BulkStatusActionResponse{
+		UpdatedCount: int64(len(results)),
+		Status:       action,
+		Results:      results,
+	}, nil
+}
+
+func (s *service) processPRLApprovalAction(ctx context.Context, tx *gorm.DB, prlID, note, userID string, userRoles []string, action string) (*models.BulkStatusActionResult, error) {
+	item, err := s.findPRLByAnyID(ctx, tx, prlID)
+	if err != nil {
+		return nil, err
+	}
+
+	var instance awmodels.ApprovalInstance
+	if err := tx.WithContext(ctx).
+		Where("action_name = ? AND reference_table = ? AND reference_id = ?", "prl", "prls", item.ID).
+		First(&instance).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, apperror.BadRequest("approval instance for prl not found")
+		}
+		return nil, apperror.InternalWrap("find approval instance failed", err)
+	}
+
+	var workflow awmodels.ApprovalWorkflow
+	if err := tx.WithContext(ctx).
+		Where("id = ? AND status = ?", instance.ApprovalWorkflowID, "active").
+		First(&workflow).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, apperror.BadRequest("active approval workflow for prl not found")
+		}
+		return nil, apperror.InternalWrap("find approval workflow failed", err)
+	}
+
+	if instance.Status == models.PRLStatusApproved {
+		return nil, apperror.BadRequest("prl already approved")
+	}
+	if instance.Status == models.PRLStatusRejected {
+		return nil, apperror.BadRequest("prl already rejected")
+	}
+	if instance.CurrentLevel < 1 || instance.CurrentLevel > len(instance.ApprovalProgress.Levels) {
+		return nil, apperror.BadRequest("invalid approval current level")
+	}
+
+	levelIdx := instance.CurrentLevel - 1
+	level := &instance.ApprovalProgress.Levels[levelIdx]
+	requiredRole := approval.LevelRole(&workflow, int16(instance.CurrentLevel))
+	if requiredRole == "" {
+		requiredRole = level.Role
+	}
+	if requiredRole == "" {
+		return nil, apperror.BadRequest("required approval role is not configured")
+	}
+	if !approval.HasRole(userRoles, requiredRole) {
+		return nil, apperror.Forbidden(fmt.Sprintf("prl is waiting approval from role '%s'", requiredRole))
+	}
+	if level.Status != models.PRLStatusPending {
+		return nil, apperror.BadRequest("current approval level is no longer pending")
+	}
+
+	now := time.Now().UTC()
+	level.Note = strings.TrimSpace(note)
+	level.ApprovedBy = userID
+	level.ApprovedAt = now.Format(time.RFC3339)
+
+	prlUpdates := map[string]interface{}{
+		"updated_at":  now,
+		"approved_at": nil,
+		"rejected_at": nil,
+	}
+
+	if action == models.PRLStatusApproved {
+		level.Status = models.PRLStatusApproved
+		if instance.CurrentLevel >= instance.MaxLevel {
+			instance.Status = models.PRLStatusApproved
+			prlUpdates["status"] = models.PRLStatusApproved
+			prlUpdates["approved_at"] = now
+		} else {
+			instance.CurrentLevel++
+			instance.Status = models.PRLStatusPending
+			prlUpdates["status"] = models.PRLStatusPending
+		}
+	} else {
+		level.Status = models.PRLStatusRejected
+		instance.Status = models.PRLStatusRejected
+		prlUpdates["status"] = models.PRLStatusRejected
+		prlUpdates["rejected_at"] = now
+	}
+
+	instance.UpdatedAt = now
+	if err := tx.WithContext(ctx).
+		Model(&awmodels.ApprovalInstance{}).
+		Where("id = ?", instance.ID).
+		Updates(map[string]interface{}{
+			"approval_progress": instance.ApprovalProgress,
+			"status":            instance.Status,
+			"current_level":     instance.CurrentLevel,
+			"updated_at":        now,
+		}).Error; err != nil {
+		return nil, apperror.InternalWrap("update approval instance failed", err)
+	}
+
+	if err := tx.WithContext(ctx).
+		Model(&models.PRL{}).
+		Where("id = ?", item.ID).
+		Updates(prlUpdates).Error; err != nil {
+		return nil, apperror.InternalWrap("update prl status failed", err)
+	}
+
+	return &models.BulkStatusActionResult{ID: item.UUID, CurrentLevel: instance.CurrentLevel, Status: instance.Status}, nil
+}
+
+func (s *service) findPRLByAnyID(ctx context.Context, tx *gorm.DB, id string) (*models.PRL, error) {
+	trimmed := models.Trimmed(id)
+	if trimmed == "" {
+		return nil, apperror.BadRequest("prl id is required")
+	}
+
+	var item models.PRL
+	query := tx.WithContext(ctx)
+	if numericID, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+		if err := query.Where("id = ?", numericID).First(&item).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return nil, apperror.NotFound("prl not found")
+			}
+			return nil, apperror.InternalWrap("find prl failed", err)
+		}
+		return &item, nil
+	}
+
+	if err := query.Where("uuid = ?", trimmed).First(&item).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, apperror.NotFound("prl not found")
+		}
+		return nil, apperror.InternalWrap("find prl failed", err)
+	}
+	return &item, nil
+}
+
+func normalizeActionIDs(rawIDs []string) ([]string, error) {
+	if len(rawIDs) == 0 {
 		return nil, apperror.BadRequest("ids is required")
 	}
-	ids := make([]string, 0, len(req.IDs))
-	for _, id := range req.IDs {
+	ids := make([]string, 0, len(rawIDs))
+	for _, id := range rawIDs {
 		trimmed := models.Trimmed(id)
 		if trimmed == "" {
 			continue
@@ -502,11 +767,19 @@ func (s *service) bulkSetStatus(ctx context.Context, req models.BulkStatusAction
 	if len(ids) == 0 {
 		return nil, apperror.BadRequest("ids is required")
 	}
-	updated, err := s.repo.BulkSetStatus(ctx, ids, status)
-	if err != nil {
-		return nil, err
+	return ids, nil
+}
+
+func normalizeRoles(userRoles []string) []string {
+	roles := make([]string, 0, len(userRoles))
+	for _, role := range userRoles {
+		trimmed := strings.TrimSpace(role)
+		if trimmed == "" {
+			continue
+		}
+		roles = append(roles, trimmed)
 	}
-	return &models.BulkStatusActionResponse{UpdatedCount: updated, Status: status}, nil
+	return roles
 }
 
 func normalizePageLimit(page, limit int) (int, int) {
