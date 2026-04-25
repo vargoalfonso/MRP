@@ -380,6 +380,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		customerModule.NewHTTPModule(cfg, baseHTTPHandler, customerHTTPHandler, authSvc),
 		prlModule.NewHTTPModule(cfg, baseHTTPHandler, prlHTTPHandler, authSvc),
 		supplierModule.NewHTTPModule(cfg, baseHTTPHandler, supplierHTTPHandler, authSvc),
+		warehouseModule.NewHTTPModule(cfg, baseHTTPHandler, warehouseHTTPHandler, authSvc),
 		supplierItemModule.NewHTTPModule(cfg, baseHTTPHandler, supplierItemHTTPHandler, authSvc),
 		bomModule.NewHTTPModule(cfg, baseHTTPHandler, bomHTTPHandler, authSvc, roleSvc, bomSvc),
 		uploadModule.NewHTTPModule(baseHTTPHandler, uploadHTTPHandler, uploadSvc, authSvc, roleSvc),
