@@ -232,9 +232,6 @@ func (sv *service) CreateIncomingScrap(ctx context.Context, req scrapModels.Inco
 	if err := validateScrapType(req.ScrapType); err != nil {
 		return nil, err
 	}
-	if req.ScrapType == scrapModels.ScrapTypeProductReturn {
-		return nil, apperror.New(501, apperror.CodeBadRequest, "product_return_scrap is not implemented yet; use production/incoming QC flow first")
-	}
 
 	_, creatorName, err := creatorresolver.Resolve(ctx, sv.db, createdBy)
 	if err != nil {

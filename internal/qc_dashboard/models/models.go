@@ -63,6 +63,8 @@ type IncomingQCItem struct {
 	DNNumber           string  `json:"dn_number"`
 	KanbanPLScan       string  `json:"kanban_pl_scan"`
 	PONumber           string  `json:"po_number"`
+	PartnerType        string  `json:"partner_type"`
+	PartnerName        string  `json:"partner_name"`
 	SupplierID         *int64  `json:"supplier_id"`
 	SupplierName       string  `json:"supplier_name"`
 	UniqCode           string  `json:"uniq_code"`
@@ -77,6 +79,28 @@ type IncomingQCItem struct {
 type IncomingQCListResponse struct {
 	Items      []IncomingQCItem `json:"items"`
 	Pagination Pagination       `json:"pagination"`
+}
+
+type ProductReturnQCItem struct {
+	QCLogID             int64   `json:"qc_log_id"`
+	ProductReturnID     int64   `json:"product_return_id"`
+	ReportDate          string  `json:"report_date"`
+	ProductReturnNumber string  `json:"product_return_number"`
+	DNNumber            string  `json:"dn_number"`
+	PartnerType         string  `json:"partner_type"`
+	PartnerName         string  `json:"partner_name"`
+	ItemsChecked        float64 `json:"items_checked"`
+	IssueLabel          *string `json:"issue_label"`
+	QtyRework           float64 `json:"qty_rework"`
+	QtyDefect           float64 `json:"qty_defect"`
+	QtyScrap            float64 `json:"qty_scrap"`
+	QualityRatePercent  float64 `json:"quality_rate_percent"`
+	Status              string  `json:"status"`
+}
+
+type ProductReturnQCListResponse struct {
+	Items      []ProductReturnQCItem `json:"items"`
+	Pagination Pagination            `json:"pagination"`
 }
 
 type DefectItem struct {

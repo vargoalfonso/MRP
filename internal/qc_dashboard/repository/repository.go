@@ -42,6 +42,7 @@ type IRepository interface {
 	CountPendingRework(ctx context.Context) (int64, error)
 	ListProductionQC(ctx context.Context, filter Filter) (*models.ProductionQCListResponse, error)
 	ListIncomingQC(ctx context.Context, filter Filter) (*models.IncomingQCListResponse, error)
+	ListProductReturnQC(ctx context.Context, filter Filter) (*models.ProductReturnQCListResponse, error)
 	ListDefects(ctx context.Context, filter Filter) (*models.DefectListResponse, error)
 	CreateManualQCReport(ctx context.Context, req models.CreateManualQCReportRequest, performedBy string) error
 	CreateReworkTask(ctx context.Context, defectID int64, performedBy string) error
@@ -182,6 +183,8 @@ func (r *repository) ListIncomingQC(ctx context.Context, filter Filter) (*models
 			COALESCE(dn.dn_number, '') AS dn_number,
 			COALESCE(dni.packing_number, '') AS kanban_pl_scan,
 			COALESCE(dn.po_number, '') AS po_number,
+			'supplier' AS partner_type,
+			COALESCE(s.supplier_name, '') AS partner_name,
 			dn.supplier_id,
 			COALESCE(s.supplier_name, '') AS supplier_name,
 			ql.uniq_code,
@@ -210,6 +213,74 @@ func (r *repository) ListIncomingQC(ctx context.Context, filter Filter) (*models
 		return nil, apperror.Internal("list incoming qc: " + err.Error())
 	}
 	return &models.IncomingQCListResponse{Items: items, Pagination: buildPagination(total, filter.Page, filter.Limit)}, nil
+}
+
+func (r *repository) ListProductReturnQC(ctx context.Context, filter Filter) (*models.ProductReturnQCListResponse, error) {
+	where, args := buildProductReturnWhere(filter)
+	countQuery := `
+		SELECT COUNT(*)
+		FROM product_returns pr
+		LEFT JOIN LATERAL (
+			SELECT ql.id, ql.checked_at, ql.qty_checked, ql.qty_pass, ql.qty_defect, ql.qty_scrap, ql.status
+			FROM qc_logs ql
+			WHERE ql.uniq_code = pr.uniq
+			  AND ql.defect_source = 'product_return'
+			ORDER BY ql.checked_at DESC, ql.id DESC
+			LIMIT 1
+		) ql ON TRUE` + where
+	var total int64
+	if err := r.db.WithContext(ctx).Raw(countQuery, args...).Scan(&total).Error; err != nil {
+		return nil, apperror.Internal("count product return qc: " + err.Error())
+	}
+
+	query := `
+		SELECT
+			COALESCE(ql.id, 0) AS qc_log_id,
+			pr.id AS product_return_id,
+			TO_CHAR(COALESCE(ql.checked_at, pr.updated_at, pr.created_at)::date, 'YYYY-MM-DD') AS report_date,
+			COALESCE(pr.uniq, '') AS product_return_number,
+			COALESCE(pr.dn_number, '') AS dn_number,
+			'customer' AS partner_type,
+			COALESCE(dnc.customer_name_snapshot, '') AS partner_name,
+			COALESCE(ql.qty_checked, pr.quantity_rework + pr.quantity_scrap) AS items_checked,
+			NULLIF(top_defect.defect_reason_text, '') AS issue_label,
+			COALESCE(pr.quantity_rework, 0) AS qty_rework,
+			COALESCE(ql.qty_defect, pr.quantity_rework + pr.quantity_scrap) AS qty_defect,
+			COALESCE(ql.qty_scrap, pr.quantity_scrap) AS qty_scrap,
+			CASE WHEN COALESCE(ql.qty_checked, pr.quantity_rework + pr.quantity_scrap) > 0 THEN ROUND((COALESCE(ql.qty_pass, pr.quantity_rework) / COALESCE(ql.qty_checked, pr.quantity_rework + pr.quantity_scrap)) * 100, 2) ELSE 0 END AS quality_rate_percent,
+			CASE
+				WHEN UPPER(COALESCE(ql.status, pr.status, '')) IN ('PASSED', 'APPROVED', 'APPROVED_QC') THEN 'passed'
+				WHEN UPPER(COALESCE(ql.status, pr.status, '')) IN ('PENDING', 'WAITING', 'PENDING_QC') THEN 'pending'
+				ELSE 'not_passed'
+			END AS status
+		FROM product_returns pr
+		LEFT JOIN delivery_notes_customer dnc ON dnc.dn_number = pr.dn_number
+		LEFT JOIN LATERAL (
+			SELECT ql.id, ql.checked_at, ql.qty_checked, ql.qty_pass, ql.qty_defect, ql.qty_scrap, ql.status
+			FROM qc_logs ql
+			WHERE ql.uniq_code = pr.uniq
+			  AND ql.defect_source = 'product_return'
+			ORDER BY ql.checked_at DESC, ql.id DESC
+			LIMIT 1
+		) ql ON TRUE
+		LEFT JOIN LATERAL (
+			SELECT qdi.defect_reason_text
+			FROM qc_defect_items qdi
+			WHERE qdi.qc_log_id = ql.id
+			ORDER BY qdi.qty_defect DESC, qdi.id ASC
+			LIMIT 1
+		) top_defect ON TRUE` + where + `
+		ORDER BY COALESCE(ql.checked_at, pr.updated_at, pr.created_at) DESC, pr.id DESC
+		LIMIT ? OFFSET ?`
+	args = append(args, filter.Limit, filter.Offset)
+	var items []models.ProductReturnQCItem
+	if err := r.db.WithContext(ctx).Raw(query, args...).Scan(&items).Error; err != nil {
+		return nil, apperror.Internal("list product return qc: " + err.Error())
+	}
+	if items == nil {
+		items = make([]models.ProductReturnQCItem, 0)
+	}
+	return &models.ProductReturnQCListResponse{Items: items, Pagination: buildPagination(total, filter.Page, filter.Limit)}, nil
 }
 
 func (r *repository) ListDefects(ctx context.Context, filter Filter) (*models.DefectListResponse, error) {
@@ -262,7 +333,7 @@ func (r *repository) ListDefects(ctx context.Context, filter Filter) (*models.De
 	return &models.DefectListResponse{
 		Items:              items,
 		Pagination:         buildPagination(total, filter.Page, filter.Limit),
-		ImplementationNote: "Product return QC belum diimplementasikan; data yang muncul saat ini production dan incoming QC.",
+		ImplementationNote: "Defect report mencakup production, incoming, dan product return sesuai data QC yang sudah tercatat.",
 	}, nil
 }
 
@@ -271,11 +342,8 @@ func (r *repository) CreateManualQCReport(ctx context.Context, req models.Create
 	if qcType == "" {
 		return apperror.BadRequest("qc_type is required")
 	}
-	if qcType == "product_return" {
-		return apperror.New(501, apperror.CodeBadRequest, "product return QC belum diimplementasikan")
-	}
-	if qcType != "production" && qcType != "incoming" {
-		return apperror.BadRequest("qc_type must be production or incoming")
+	if qcType != "production" && qcType != "incoming" && qcType != "product_return" {
+		return apperror.BadRequest("qc_type must be production, incoming, or product_return")
 	}
 	if strings.TrimSpace(req.ReportDate) == "" {
 		return apperror.BadRequest("report_date is required")
@@ -284,10 +352,13 @@ func (r *repository) CreateManualQCReport(ctx context.Context, req models.Create
 	if err != nil {
 		return apperror.BadRequest("report_date must be YYYY-MM-DD")
 	}
-	if strings.TrimSpace(req.UniqCode) == "" {
+	if qcType != "product_return" && strings.TrimSpace(req.UniqCode) == "" {
 		return apperror.BadRequest("uniq_code is required")
 	}
-	if req.NumberOfItemCheck <= 0 {
+	if qcType == "product_return" && strings.TrimSpace(req.UniqCode) == "" && strings.TrimSpace(req.ReferenceNumber) == "" {
+		return apperror.BadRequest("uniq_code or reference_number is required for product_return")
+	}
+	if req.NumberOfItemCheck <= 0 && qcType != "product_return" {
 		return apperror.BadRequest("number_of_item_check must be greater than 0")
 	}
 	if req.NumberOfDefect < 0 || req.NumberOfScrap < 0 {
@@ -307,13 +378,17 @@ func (r *repository) CreateManualQCReport(ctx context.Context, req models.Create
 
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var (
-			woID     *int64
-			woItemID *int64
-			dnItemID *int64
-			kanban   string
-			uom      string
-			woNumber string
+			woID                *int64
+			woItemID            *int64
+			dnItemID            *int64
+			kanban              string
+			uom                 string
+			woNumber            string
+			productReturnID     *int64
+			productReturnNumber string
 		)
+		uniqCode := strings.TrimSpace(req.UniqCode)
+		numberOfItemCheck := req.NumberOfItemCheck
 
 		if qcType == "production" {
 			ctxRow, err := loadProductionManualContext(tx, req.ReferenceNumber, req.UniqCode)
@@ -325,7 +400,7 @@ func (r *repository) CreateManualQCReport(ctx context.Context, req models.Create
 			kanban = ctxRow.KanbanNumber
 			uom = ctxRow.UOM
 			woNumber = ctxRow.WONumber
-		} else {
+		} else if qcType == "incoming" {
 			ctxRow, err := loadIncomingManualContext(tx, req.ReferenceNumber, req.UniqCode)
 			if err != nil {
 				return err
@@ -333,12 +408,28 @@ func (r *repository) CreateManualQCReport(ctx context.Context, req models.Create
 			dnItemID = &ctxRow.DNItemID
 			kanban = ctxRow.PackingNumber
 			uom = ctxRow.UOM
+		} else if qcType == "product_return" {
+			ctxRow, err := loadProductReturnManualContext(tx, req.ReferenceNumber, req.UniqCode)
+			if err != nil {
+				return err
+			}
+			productReturnID = &ctxRow.ProductReturnID
+			productReturnNumber = ctxRow.ProductReturnNumber
+			uniqCode = ctxRow.ProductReturnNumber
+			if numberOfItemCheck <= 0 {
+				numberOfItemCheck = ctxRow.QuantityRework + ctxRow.QuantityScrap
+			}
+			if numberOfItemCheck <= 0 {
+				return apperror.BadRequest("number_of_item_check must be greater than 0")
+			}
 		}
 
-		qtyPass := math.Max(req.NumberOfItemCheck-req.NumberOfDefect, 0)
+		qtyPass := math.Max(numberOfItemCheck-req.NumberOfDefect, 0)
 		defectSource := "incoming_material"
 		if qcType == "production" {
 			defectSource = "process"
+		} else if qcType == "product_return" {
+			defectSource = "product_return"
 		}
 
 		qcLog := map[string]interface{}{
@@ -346,9 +437,9 @@ func (r *repository) CreateManualQCReport(ctx context.Context, req models.Create
 			"wo_id":         woID,
 			"wo_item_id":    woItemID,
 			"dn_item_id":    dnItemID,
-			"uniq_code":     strings.TrimSpace(req.UniqCode),
+			"uniq_code":     uniqCode,
 			"qc_round":      1,
-			"qty_checked":   req.NumberOfItemCheck,
+			"qty_checked":   numberOfItemCheck,
 			"qty_pass":      qtyPass,
 			"qty_defect":    req.NumberOfDefect,
 			"qty_scrap":     req.NumberOfScrap,
@@ -382,7 +473,7 @@ func (r *repository) CreateManualQCReport(ctx context.Context, req models.Create
 				"wo_id":              woID,
 				"wo_item_id":         woItemID,
 				"dn_item_id":         dnItemID,
-				"uniq_code":          strings.TrimSpace(req.UniqCode),
+				"uniq_code":          uniqCode,
 				"defect_source":      defectSource,
 				"defect_reason_code": strings.TrimSpace(req.IssueReasonCode),
 				"defect_reason_text": issueText,
@@ -416,6 +507,40 @@ func (r *repository) CreateManualQCReport(ctx context.Context, req models.Create
 			}
 			if err := tx.Create(&scrapStock).Error; err != nil {
 				return apperror.Internal("create manual qc scrap stock: " + err.Error())
+			}
+		}
+
+		if qcType == "product_return" {
+			productReturnStatus := "qc_rejected"
+			if status == "APPROVED" {
+				productReturnStatus = "approved"
+			}
+			if productReturnID != nil {
+				if err := tx.Table("product_returns").Where("id = ?", *productReturnID).Updates(map[string]interface{}{
+					"status":     productReturnStatus,
+					"updated_at": time.Now(),
+				}).Error; err != nil {
+					return apperror.Internal("update product return status: " + err.Error())
+				}
+			}
+			if req.NumberOfScrap > 0 {
+				scrapStock := scrapModels.ScrapStock{
+					UUID:          uuid.New(),
+					UniqCode:      uniqCode,
+					PackingNumber: stringPtrOrNil(strings.TrimSpace(productReturnNumber)),
+					ScrapType:     scrapModels.ScrapTypeProductReturn,
+					Quantity:      req.NumberOfScrap,
+					UOM:           stringPtrOrNil(strings.TrimSpace(uom)),
+					DateReceived:  &checkedAt,
+					Validator:     stringPtrOrNil(performedBy),
+					Status:        scrapModels.StockStatusActive,
+					CreatedBy:     stringPtrOrNil(performedBy),
+					UpdatedBy:     stringPtrOrNil(performedBy),
+					SourceQCLogID: &qcLogID,
+				}
+				if err := tx.Create(&scrapStock).Error; err != nil {
+					return apperror.Internal("create product return scrap stock: " + err.Error())
+				}
 			}
 		}
 
@@ -563,6 +688,32 @@ func buildIncomingWhere(filter Filter) (string, []interface{}) {
 	return " WHERE " + strings.Join(parts, " AND "), args
 }
 
+func buildProductReturnWhere(filter Filter) (string, []interface{}) {
+	parts := []string{"1=1"}
+	args := make([]interface{}, 0, 8)
+	parts, args = appendDateParts(parts, args, filter, "COALESCE(ql.checked_at, pr.updated_at, pr.created_at)")
+	if filter.Status != "" {
+		switch {
+		case strings.EqualFold(filter.Status, "passed"):
+			parts = append(parts, "UPPER(COALESCE(ql.status, pr.status, '')) IN ('PASSED','APPROVED','APPROVED_QC')")
+		case strings.EqualFold(filter.Status, "not_passed"):
+			parts = append(parts, "UPPER(COALESCE(ql.status, pr.status, '')) NOT IN ('PASSED','APPROVED','APPROVED_QC','PENDING','WAITING','PENDING_QC')")
+		case strings.EqualFold(filter.Status, "pending"):
+			parts = append(parts, "UPPER(COALESCE(ql.status, pr.status, '')) IN ('PENDING','WAITING','PENDING_QC')")
+		}
+	}
+	if filter.UniqCode != "" {
+		parts = append(parts, "pr.uniq ILIKE ?")
+		args = append(args, like(filter.UniqCode))
+	}
+	if filter.Search != "" {
+		parts = append(parts, "(pr.uniq ILIKE ? OR COALESCE(pr.dn_number, '') ILIKE ? OR COALESCE(dnc.customer_name_snapshot, '') ILIKE ?)")
+		search := like(filter.Search)
+		args = append(args, search, search, search)
+	}
+	return " WHERE " + strings.Join(parts, " AND "), args
+}
+
 func buildDefectWhere(filter Filter) (string, []interface{}) {
 	parts := []string{"1=1"}
 	args := make([]interface{}, 0, 8)
@@ -617,6 +768,14 @@ type incomingManualContext struct {
 	UOM           string `gorm:"column:uom"`
 }
 
+type productReturnManualContext struct {
+	ProductReturnID     int64   `gorm:"column:product_return_id"`
+	ProductReturnNumber string  `gorm:"column:product_return_number"`
+	DNNumber            string  `gorm:"column:dn_number"`
+	QuantityScrap       float64 `gorm:"column:quantity_scrap"`
+	QuantityRework      float64 `gorm:"column:quantity_rework"`
+}
+
 func loadProductionManualContext(tx *gorm.DB, referenceNumber, uniqCode string) (*productionManualContext, error) {
 	var row productionManualContext
 	q := tx.Table("work_order_items woi").
@@ -653,6 +812,25 @@ func loadIncomingManualContext(tx *gorm.DB, referenceNumber, uniqCode string) (*
 	return &row, nil
 }
 
+func loadProductReturnManualContext(tx *gorm.DB, referenceNumber, uniqCode string) (*productReturnManualContext, error) {
+	var row productReturnManualContext
+	q := tx.Table("product_returns pr").
+		Select("pr.id AS product_return_id, pr.uniq AS product_return_number, COALESCE(pr.dn_number, '') AS dn_number, COALESCE(pr.quantity_scrap, 0) AS quantity_scrap, COALESCE(pr.quantity_rework, 0) AS quantity_rework")
+	if ref := strings.TrimSpace(referenceNumber); ref != "" {
+		q = q.Where("(pr.uniq = ? OR pr.dn_number = ?)", ref, ref)
+	}
+	if code := strings.TrimSpace(uniqCode); code != "" {
+		q = q.Where("pr.uniq = ?", code)
+	}
+	if err := q.Order("pr.id DESC").Limit(1).Scan(&row).Error; err != nil {
+		return nil, apperror.Internal("load product return context: " + err.Error())
+	}
+	if row.ProductReturnID == 0 {
+		return nil, apperror.NotFound("product return context not found")
+	}
+	return &row, nil
+}
+
 func normalizeManualQCStatus(qcType, raw string) (string, error) {
 	status := strings.ToLower(strings.TrimSpace(raw))
 	switch qcType {
@@ -664,6 +842,13 @@ func normalizeManualQCStatus(qcType, raw string) (string, error) {
 			return "FAILED", nil
 		}
 	case "incoming":
+		switch status {
+		case "passed", "pass", "approved", "approve":
+			return "APPROVED", nil
+		case "failed", "fail", "not_passed", "not passed", "rejected", "reject":
+			return "REJECTED", nil
+		}
+	case "product_return":
 		switch status {
 		case "passed", "pass", "approved", "approve":
 			return "APPROVED", nil
