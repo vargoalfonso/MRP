@@ -92,7 +92,7 @@ func (r *repository) FindUniqBOMByUUID(ctx context.Context, uuid string) (*model
 
 func (r *repository) FindUniqBOMByUniqCode(ctx context.Context, uniqCode string) (*models.UniqBillOfMaterial, error) {
 	var item models.UniqBillOfMaterial
-	err := r.db.WithContext(ctx).Where("uniq_code = ?", uniqCode).First(&item).Error
+	err := r.db.WithContext(ctx).Where("uniq_code ILIKE ?", uniqCode).First(&item).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, apperror.NotFound("uniq bom not found")
@@ -323,7 +323,7 @@ func (r *repository) applyPRLFilters(query *gorm.DB, filters models.PRLListFilte
 		query = query.Where("customer_uuid = ?", *filters.CustomerUUID)
 	}
 	if filters.UniqCode != nil {
-		query = query.Where("uniq_code = ?", *filters.UniqCode)
+		query = query.Where("uniq_code ILIKE ?", *filters.UniqCode)
 	}
 	return query
 }

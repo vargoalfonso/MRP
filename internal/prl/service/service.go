@@ -58,10 +58,10 @@ func New(repo prlRepo.IRepository, db *gorm.DB) Service {
 func (s *service) CreateUniqBOM(ctx context.Context, req models.CreateUniqBOMRequest) (*models.UniqBillOfMaterial, error) {
 	item := &models.UniqBillOfMaterial{
 		UUID:         uuid.NewString(),
-		UniqCode:     strings.ToUpper(models.Trimmed(req.UniqCode)),
+		UniqCode:     models.Trimmed(req.UniqCode),
 		ProductModel: models.Trimmed(req.ProductModel),
 		PartName:     models.Trimmed(req.PartName),
-		PartNumber:   strings.ToUpper(models.Trimmed(req.PartNumber)),
+		PartNumber:   models.Trimmed(req.PartNumber),
 	}
 	if err := s.repo.CreateUniqBOM(ctx, item); err != nil {
 		return nil, err
@@ -96,10 +96,10 @@ func (s *service) UpdateUniqBOM(ctx context.Context, uuid string, req models.Upd
 	if err != nil {
 		return nil, err
 	}
-	item.UniqCode = strings.ToUpper(models.Trimmed(req.UniqCode))
+	item.UniqCode = models.Trimmed(req.UniqCode)
 	item.ProductModel = models.Trimmed(req.ProductModel)
 	item.PartName = models.Trimmed(req.PartName)
-	item.PartNumber = strings.ToUpper(models.Trimmed(req.PartNumber))
+	item.PartNumber = models.Trimmed(req.PartNumber)
 	if err := s.repo.UpdateUniqBOM(ctx, item); err != nil {
 		return nil, err
 	}
@@ -133,13 +133,13 @@ func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest, su
 		return nil, err
 	}
 
-	uniqCode := strings.ToUpper(models.Trimmed(req.UniqCode))
+	uniqCode := models.Trimmed(req.UniqCode)
 	bom, err := s.repo.FindUniqBOMByUniqCode(ctx, uniqCode)
 	if err != nil {
 		if appErr, ok := apperror.As(err); ok && appErr.Code == apperror.CodeNotFound {
 			productModel := models.Trimmed(req.ProductModel)
 			partName := models.Trimmed(req.PartName)
-			partNumber := strings.ToUpper(models.Trimmed(req.PartNumber))
+			partNumber := models.Trimmed(req.PartNumber)
 			if productModel == "" {
 				return nil, apperror.BadRequest("product_model is required when uniq_code is new")
 			}
@@ -167,16 +167,20 @@ func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest, su
 	}
 
 	// Optional mismatch guard: if client supplies BOM fields, they must match the existing UNIQ BOM.
-	if models.Trimmed(req.ProductModel) != "" && models.Trimmed(req.ProductModel) != bom.ProductModel {
+	if models.Trimmed(req.ProductModel) != "" && !strings.EqualFold(models.Trimmed(req.ProductModel), bom.ProductModel) {
 		return nil, apperror.BadRequest("product_model does not match existing uniq bom")
 	}
-	if models.Trimmed(req.PartName) != "" && models.Trimmed(req.PartName) != bom.PartName {
+	if models.Trimmed(req.PartName) != "" && !strings.EqualFold(models.Trimmed(req.PartName), bom.PartName) {
 		return nil, apperror.BadRequest("part_name does not match existing uniq bom")
 	}
-	if models.Trimmed(req.PartNumber) != "" && strings.ToUpper(models.Trimmed(req.PartNumber)) != bom.PartNumber {
+	if models.Trimmed(req.PartNumber) != "" && !strings.EqualFold(models.Trimmed(req.PartNumber), bom.PartNumber) {
 		return nil, apperror.BadRequest("part_number does not match existing uniq bom")
 	}
 
+	partNumber := bom.PartNumber
+	if p := models.Trimmed(req.PartNumber); p != "" {
+		partNumber = p
+	}
 	item := &models.PRL{
 		UUID:           uuid.NewString(),
 		PRLID:          "PENDING",
@@ -184,10 +188,10 @@ func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest, su
 		CustomerCode:   customer.CustomerID,
 		CustomerName:   customer.CustomerName,
 		UniqBOMUUID:    bom.UUID,
-		UniqCode:       bom.UniqCode,
+		UniqCode:       uniqCode,
 		ProductModel:   bom.ProductModel,
 		PartName:       bom.PartName,
-		PartNumber:     bom.PartNumber,
+		PartNumber:     partNumber,
 		ForecastPeriod: period,
 		Quantity:       req.Quantity,
 		Status:         models.PRLStatusPending,
@@ -322,7 +326,7 @@ func (s *service) ListPRLs(ctx context.Context, query models.ListPRLQuery) (*mod
 		return nil, err
 	}
 	customerUUID := normalizeOptionalString(query.CustomerUUID)
-	uniqCode := normalizeOptionalUpper(query.UniqCode)
+	uniqCode := normalizeOptionalString(query.UniqCode)
 
 	filters := models.PRLListFilters{
 		Search:         models.Trimmed(query.Search),
@@ -506,7 +510,7 @@ func (s *service) buildPRLFromEntry(ctx context.Context, entry models.CreatePRLE
 	if err != nil {
 		return nil, err
 	}
-	bom, err := s.repo.FindUniqBOMByUniqCode(ctx, strings.ToUpper(models.Trimmed(entry.UniqCode)))
+	bom, err := s.repo.FindUniqBOMByUniqCode(ctx, models.Trimmed(entry.UniqCode))
 	if err != nil {
 		return nil, err
 	}
@@ -518,7 +522,7 @@ func (s *service) buildPRLFromEntry(ctx context.Context, entry models.CreatePRLE
 		CustomerCode:   customer.CustomerID,
 		CustomerName:   customer.CustomerName,
 		UniqBOMUUID:    bom.UUID,
-		UniqCode:       bom.UniqCode,
+		UniqCode:       models.Trimmed(entry.UniqCode),
 		ProductModel:   bom.ProductModel,
 		PartName:       bom.PartName,
 		PartNumber:     bom.PartNumber,
