@@ -13,6 +13,7 @@ type IService interface {
 	GetOverview(ctx context.Context, filter repository.Filter) (*models.OverviewResponse, error)
 	ListProductionQC(ctx context.Context, filter repository.Filter) (*models.ProductionQCListResponse, error)
 	ListIncomingQC(ctx context.Context, filter repository.Filter) (*models.IncomingQCListResponse, error)
+	ListProductReturnQC(ctx context.Context, filter repository.Filter) (*models.ProductReturnQCListResponse, error)
 	ListDefects(ctx context.Context, filter repository.Filter) (*models.DefectListResponse, error)
 	ListIssueTypes() []models.IssueListItem
 	CreateManualQCReport(ctx context.Context, req models.CreateManualQCReportRequest, performedBy string) error
@@ -83,7 +84,7 @@ func (s *service) GetOverview(ctx context.Context, filter repository.Filter) (*m
 		Cards:              cards,
 		BySource:           bySource,
 		TopIssues:          topIssues,
-		ImplementationNote: "Product return QC dashboard belum diimplementasikan.",
+		ImplementationNote: "Overview sudah mencakup production, incoming, dan product return QC bila datanya sudah tercatat.",
 	}, nil
 }
 
@@ -93,6 +94,10 @@ func (s *service) ListProductionQC(ctx context.Context, filter repository.Filter
 
 func (s *service) ListIncomingQC(ctx context.Context, filter repository.Filter) (*models.IncomingQCListResponse, error) {
 	return s.repo.ListIncomingQC(ctx, filter)
+}
+
+func (s *service) ListProductReturnQC(ctx context.Context, filter repository.Filter) (*models.ProductReturnQCListResponse, error) {
+	return s.repo.ListProductReturnQC(ctx, filter)
 }
 
 func (s *service) ListDefects(ctx context.Context, filter repository.Filter) (*models.DefectListResponse, error) {

@@ -72,6 +72,24 @@ func (h *HTTPHandler) ListIncomingQC(ctx *app.Context) *app.CostumeResponse {
 	return app.NewSuccess(ctx, http.StatusOK, data)
 }
 
+func (h *HTTPHandler) ListProductReturnQC(ctx *app.Context) *app.CostumeResponse {
+	p := pagination.QCDashboardPagination(ctx)
+	data, err := h.svc.ListProductReturnQC(ctx.Request.Context(), qcDashboardRepo.Filter{
+		Limit:    p.Limit,
+		Page:     p.Page,
+		Offset:   p.Offset(),
+		Search:   p.Search,
+		DateFrom: p.DateFrom,
+		DateTo:   p.DateTo,
+		Status:   p.Status,
+		UniqCode: p.UniqCode,
+	})
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return app.NewSuccess(ctx, http.StatusOK, data)
+}
+
 func (h *HTTPHandler) ListDefects(ctx *app.Context) *app.CostumeResponse {
 	p := pagination.QCDashboardPagination(ctx)
 	data, err := h.svc.ListDefects(ctx.Request.Context(), qcDashboardRepo.Filter{
