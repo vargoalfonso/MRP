@@ -105,10 +105,14 @@ func (r *repository) BuildPagination(total int64, page, limit int) approvalModel
 }
 
 func normalizeType(v string) string {
-	v = strings.TrimSpace(strings.ToLower(v))
-	switch v {
-	case "bom", "prl", "po_budget", "stock_opname":
-		return v
+	lower := strings.ToLower(strings.TrimSpace(v))
+	switch lower {
+	case "bom", "prl", "stock_opname":
+		return lower
+	case "po_budget", "po-budget":
+		return "po-budget"
+	case "delivery_note", "delivery note":
+		return "Delivery Note"
 	default:
 		return "all"
 	}
@@ -122,8 +126,9 @@ func approvalManagerBaseQuery(filterType, status, search string, currentLevel in
 		CASE ai.action_name
 			WHEN 'bom' THEN 'Bill of Material'
 			WHEN 'prl' THEN 'PRL Management'
-			WHEN 'po_budget' THEN 'PO Budget'
+			WHEN 'po-budget' THEN 'PO Budget'
 			WHEN 'stock_opname' THEN 'Stock Opname'
+			WHEN 'Delivery Note' THEN 'Delivery Note'
 			ELSE ai.action_name
 		END AS module_label,
 		ai.reference_table,
@@ -180,13 +185,21 @@ func approvalManagerBaseQuery(filterType, status, search string, currentLevel in
 			COALESCE(s.submitted_at::text, s.created_at::text) AS submitted_at
 		FROM stock_opname_sessions s
 		UNION ALL
-		SELECT 'po_budget' AS action_name, pbe.id AS reference_id, COALESCE(pbe.po_budget_ref, pbe.id::text) AS document_id, ''::text AS document_uuid,
+		SELECT 'po-budget' AS action_name, pbe.id AS reference_id, COALESCE(pbe.po_budget_ref, pbe.id::text) AS document_id, ''::text AS document_uuid,
 			COALESCE(pbe.part_name, 'PO Budget') AS item_name, COALESCE(pbe.uniq_code, pbe.id::text) AS item_code,
 			('/api/v1/po-budget/' || REPLACE(pbe.budget_type, '_', '-') || '/budget/' || pbe.id)::text AS detail_url,
-			('')::text AS approval_url,
+			('/api/v1/po-budget/' || REPLACE(pbe.budget_type, '_', '-') || '/budget/' || pbe.id || '/approve')::text AS approval_url,
 			COALESCE(pbe.created_by, '') AS submitted_by_name,
 			pbe.created_at::text AS submitted_at
 		FROM po_budget_entries pbe
+		UNION ALL
+		SELECT 'Delivery Note' AS action_name, dn.id AS reference_id, COALESCE(dn.dn_number, dn.id::text) AS document_id, ''::text AS document_uuid,
+			COALESCE('Delivery Note - ' || dn.dn_number, 'Delivery Note') AS item_name, COALESCE(dn.dn_number, dn.id::text) AS item_code,
+			('/api/v1/delivery-notes/' || dn.id)::text AS detail_url,
+			''::text AS approval_url,
+			COALESCE(dn.created_by, '') AS submitted_by_name,
+			dn.created_at::text AS submitted_at
+		FROM delivery_notes dn
 	) src ON src.action_name = ai.action_name AND src.reference_id = ai.reference_id
 	WHERE 1=1`
 	args := make([]interface{}, 0)
