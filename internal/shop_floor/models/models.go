@@ -23,6 +23,7 @@ type LiveProductionMachine struct {
 	Number         string `json:"number"`
 	ProductionLine string `json:"production_line"`
 	RuntimeStatus  string `json:"runtime_status"`
+	ScannedBy      string `json:"scanned_by"`
 }
 
 type LiveProductionCurrent struct {
@@ -121,14 +122,22 @@ type ProductionIssue struct {
 	UpdatedAt  *time.Time `json:"updated_at"`
 }
 
+type PaginationMeta struct {
+	Total      int64 `json:"total"`
+	Page       int   `json:"page"`
+	Limit      int   `json:"limit"`
+	TotalPages int   `json:"total_pages"`
+}
+
 type ScanEventsSummary struct {
-	AsOf         *time.Time  `json:"as_of"`
-	WindowHours  int         `json:"window_hours"`
-	TotalEvents  int64       `json:"total_events"`
-	ScanInCount  int64       `json:"scan_in_count"`
-	ScanOutCount int64       `json:"scan_out_count"`
-	QCCount      int64       `json:"qc_count"`
-	Items        []ScanEvent `json:"items"`
+	AsOf         *time.Time     `json:"as_of"`
+	WindowHours  int            `json:"window_hours"`
+	TotalEvents  int64          `json:"total_events"`
+	ScanInCount  int64          `json:"scan_in_count"`
+	ScanOutCount int64          `json:"scan_out_count"`
+	QCCount      int64          `json:"qc_count"`
+	Items        []ScanEvent    `json:"items"`
+	Pagination   PaginationMeta `json:"pagination"`
 }
 
 type ScanEvent struct {

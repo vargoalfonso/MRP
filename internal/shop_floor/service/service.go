@@ -12,7 +12,7 @@ type IService interface {
 	GetLiveProductionSummary(ctx context.Context, limit, staleMinutes int) (*models.LiveProductionSummary, error)
 	GetDeliveryReadinessSummary(ctx context.Context, limit int) (*models.DeliveryReadinessSummary, error)
 	GetProductionIssuesSummary(ctx context.Context, limit, windowHours int) (*models.ProductionIssuesSummary, error)
-	GetScanEventsSummary(ctx context.Context, limit, windowHours int) (*models.ScanEventsSummary, error)
+	GetScanEventsSummary(ctx context.Context, limit, page, offset, windowHours int) (*models.ScanEventsSummary, error)
 }
 
 type service struct {
@@ -90,6 +90,6 @@ func (s *service) GetProductionIssuesSummary(ctx context.Context, limit, windowH
 	return s.repo.GetProductionIssuesSummary(ctx, repository.Filter{Limit: limit, WindowHours: windowHours})
 }
 
-func (s *service) GetScanEventsSummary(ctx context.Context, limit, windowHours int) (*models.ScanEventsSummary, error) {
-	return s.repo.GetScanEventsSummary(ctx, repository.Filter{Limit: limit, WindowHours: windowHours})
+func (s *service) GetScanEventsSummary(ctx context.Context, limit, page, offset, windowHours int) (*models.ScanEventsSummary, error) {
+	return s.repo.GetScanEventsSummary(ctx, repository.Filter{Limit: limit, Offset: offset, WindowHours: windowHours})
 }
