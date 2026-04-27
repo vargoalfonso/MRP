@@ -81,8 +81,8 @@ type ProductionScanLog struct {
 	QtyScrap       float64
 	QtyRework      float64
 	Shift          string
-	DandoriTime    float64
-	SetupQCTime    float64
+	DandoriTime    string
+	SetupQCTime    string
 	ScannedBy      string
 	ScannedAt      time.Time
 	CreatedAt      time.Time
@@ -104,6 +104,7 @@ type QCLog struct {
 	QtyDefect    float64
 	QtyScrap     float64
 	Status       string
+	ProcessName  string
 	DefectSource string
 	CheckedBy    string
 	CheckedAt    time.Time
