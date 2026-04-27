@@ -43,8 +43,8 @@ type ScanInRequest struct {
 	ProductionLine       string  `json:"production_line"` // optional
 	Qty                  float64 `json:"qty" binding:"required"`
 	Shift                string  `json:"shift" binding:"required"`
-	DandoriTime          float64 `json:"dandori_time"`  // optional
-	SetupQCTime          float64 `json:"setup_qc_time"` // optional
+	DandoriTime          string  `json:"dandori_time"`  // optional
+	SetupQCTime          string  `json:"setup_qc_time"` // optional
 	ScannedBy            string  `json:"scanned_by"`    // dari user login / optional override
 	ProductIssue         bool    `json:"product_issue"`
 	ProductIssueType     string  `json:"product_issue_type"`
@@ -53,7 +53,7 @@ type ScanInRequest struct {
 
 type ScanOutRequest struct {
 	WOID           int64   `json:"wo_id" binding:"required"`
-	Uniq           string  `json:"uniq" binding:"required"`
+	Uniq           string  `json:"uniq"`
 	MachineID      string  `json:"machine_id"`      // optional
 	ProductionLine string  `json:"production_line"` // optional
 	QtyOutput      float64 `json:"qty_output" binding:"required"`
@@ -62,29 +62,25 @@ type ScanOutRequest struct {
 	NGProcess      float64 `json:"ng_process"`
 	QtyScrap       float64 `json:"qty_scrap"`
 	QtyRework      float64 `json:"qty_rework"`
-	Shift          string  `json:"shift" binding:"required"`
+	Shift          string  `json:"shift"`
 	ScannedBy      string  `json:"scanned_by"`
+	Warehouse      string  `json:"warehouse"`
 }
 
 type QCSubmitRequest struct {
-	UUID         string          `json:"uuid"`
-	Uniq         string          `json:"uniq"`
-	QCRound      int             `json:"qc_round"`
-	QtyChecked   float64         `json:"qty_checked"`
-	QtyPass      float64         `json:"qty_pass"`
-	QtyDefect    float64         `json:"qty_defect"`
-	QtyScrap     float64         `json:"qty_scrap"`
-	Status       string          `json:"status"`
-	DefectSource string          `json:"defect_source"`
-	Defects      []QCDefectInput `json:"defects"`
-}
+	QCTaskID int64 `json:"qc_task_id" binding:"required"`
 
-type QCDefectInput struct {
-	ReasonCode   string  `json:"reason_code"`
-	ReasonText   string  `json:"reason_text"`
-	QtyDefect    float64 `json:"qty_defect"`
-	QtyScrap     float64 `json:"qty_scrap"`
-	IsRepairable bool    `json:"is_repairable"`
+	WOID     int64 `json:"wo_id" binding:"required"`
+	WOItemID int64 `json:"wo_item_id" binding:"required"`
+
+	QCRound int `json:"qc_round" binding:"required"`
+
+	QtyChecked float64 `json:"qty_checked" binding:"required"`
+	QtyPass    float64 `json:"qty_pass"`
+	QtyDefect  float64 `json:"qty_defect"`
+	QtyScrap   float64 `json:"qty_scrap"`
+
+	Status string `json:"status" binding:"required"` // PASSED / FAILED
 }
 
 type FinishedGoodsResponse struct {

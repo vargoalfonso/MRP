@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -13,7 +12,6 @@ import (
 	"github.com/ganasa18/go-template/internal/action_ui/dto"
 	"github.com/ganasa18/go-template/internal/action_ui/models"
 	"github.com/ganasa18/go-template/internal/action_ui/repository"
-	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	scrapModels "github.com/ganasa18/go-template/internal/scrap_stock/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/google/uuid"
@@ -277,31 +275,53 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 
 func (s *service) createQCTaskIfNeeded(ctx context.Context, item models.WorkOrderItem, log models.ProductionScanLog, req dto.ScanInRequest) error {
 
-	// 🔒 cek sudah ada QC pending belum (anti duplicate)
-	exist, err := s.repoProduction.IsQCPendingExist(ctx, item.ID, log.ProcessName)
+	// =============================
+	// Anti duplicate pending task
+	// =============================
+	exist, err := s.repoProduction.IsQCPendingExist(
+		ctx,
+		item.ID,
+		log.ProcessName,
+	)
+
 	if err != nil {
 		return err
 	}
+
 	if exist {
-		return nil // sudah ada, skip
+		return nil
 	}
 
+	// =============================
+	// Build JSON payload
+	// =============================
+	payload := map[string]interface{}{
+		"uniq":            item.ItemUniqCode,
+		"kanban_number":   item.KanbanNumber,
+		"process_name":    log.ProcessName,
+		"production_line": log.ProductionLine,
+		"wo_id":           item.WOID,
+		"wo_item_id":      item.ID,
+		"qty":             log.QtyInput,
+	}
+
+	raw, _ := json.Marshal(payload)
+
+	// =============================
+	// Create QC Task
+	// =============================
 	qc := models.QCTask{
 		TaskType: "production_qc",
 		Status:   "pending",
 
-		// optional kalau mau link ke WO item
-		// IncomingDNItemID: nil,
+		WOID:     &item.WOID,
+		WOItemID: &item.ID,
+
+		ProcessName: log.ProcessName,
 
 		Round: 1,
 
-		// 🔥 simpan info tambahan ke JSON
-		RoundResults: datatypes.JSON([]byte(fmt.Sprintf(`{
-			"kanban_number": "%s",
-			"process_name": "%s",
-			"wo_id": %d,
-			"qty": %f
-		}`, item.KanbanNumber, log.ProcessName, item.WOID, log.QtyInput))),
+		RoundResults: datatypes.JSON(raw),
 
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
@@ -317,9 +337,9 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 		return errors.New("uniq not found")
 	}
 
-	// =============================
-	// 🔄 PROCESS FLOW
-	// =============================
+	// =====================================
+	// PROCESS FLOW
+	// =====================================
 	flow, err := parseProcessFlow(item.ProcessFlowJSON)
 	if err != nil {
 		return err
@@ -333,23 +353,43 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	currentIndex := getCurrentIndex(item.CurrentStepSeq, totalStep)
 	currentProcess := flow[currentIndex].ProcessName
 
-	// =============================
-	// 🚫 VALIDASI
-	// =============================
-
-	// harus sudah scan in
+	// =====================================
+	// VALIDASI BASIC
+	// =====================================
 	if item.ScanInCount <= item.ScanOutCount {
 		return errors.New("please scan in first")
 	}
 
-	// process harus match
 	if item.LastScannedProcess != currentProcess {
 		return errors.New("invalid process sequence")
 	}
 
-	// =============================
-	// 🏭 MACHINE (optional)
-	// =============================
+	// =====================================
+	// VALIDASI QC ROUND 3 HARUS PASSED
+	// =====================================
+	var qcCount int64
+
+	err = s.db.WithContext(ctx).
+		Model(&models.QCLog{}).
+		Where(`
+			wo_item_id = ?
+			AND process_name = ?
+			AND qc_round = ?
+			AND UPPER(status) = ?
+		`, item.ID, currentProcess, 3, "PASSED").
+		Count(&qcCount).Error
+
+	if err != nil {
+		return err
+	}
+
+	if qcCount == 0 {
+		return errors.New("scan out blocked: QC round 3 not passed")
+	}
+
+	// =====================================
+	// MACHINE OPTIONAL
+	// =====================================
 	var machineID int64
 	var productionLine string
 
@@ -360,9 +400,12 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 			productionLine = m.ProductionLine
 		}
 	}
-	// =============================
-	// 📝 INSERT LOG
-	// =============================
+
+	now := time.Now()
+
+	// =====================================
+	// INSERT LOG
+	// =====================================
 	log := models.ProductionScanLog{
 		UUID:           uuid.New().String(),
 		WOID:           item.WOID,
@@ -372,35 +415,36 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 		ProcessName:    currentProcess,
 		ProductionLine: productionLine,
 		ScanType:       "SCAN_OUT",
-		QtyOutput:      req.QtyOutput,
-		QtyRMUsed:      req.QtyRMUsed,
-		NGMachine:      req.NGMachine,
-		NGProcess:      req.NGProcess,
-		QtyScrap:       req.QtyScrap,
-		QtyRework:      req.QtyRework,
-		Shift:          "1",
-		ScannedBy:      req.ScannedBy,
-		ScannedAt:      time.Now(),
-		CreatedAt:      time.Now(),
+
+		QtyOutput: req.QtyOutput,
+
+		QtyRMUsed: 0,
+		NGMachine: 0,
+		NGProcess: 0,
+		QtyScrap:  0,
+		QtyRework: 0,
+
+		Shift:     req.Shift,
+		ScannedBy: req.ScannedBy,
+		ScannedAt: now,
+		CreatedAt: now,
+		Warehouse: req.Warehouse,
 	}
 
 	if err := s.repoProduction.InsertScanLog(ctx, log); err != nil {
 		return err
 	}
 
-	// =============================
-	// 📊 UPDATE AGGREGATE
-	// =============================
+	// =====================================
+	// UPDATE ITEM
+	// =====================================
 	item.ScanOutCount++
 	item.TotalGoodQty += req.QtyOutput
-	item.TotalNGQty += req.NGMachine + req.NGProcess
-	item.TotalScrapQty += req.QtyScrap
+	item.LastScannedProcess = currentProcess
 
-	// =============================
-	// 🔥 STEP TRANSITION
-	// =============================
-	if item.CurrentStepSeq < totalStep {
-		item.CurrentStepSeq++
+	if currentIndex < totalStep-1 {
+		item.CurrentStepSeq = flow[currentIndex+1].OpSeq
+		item.Status = "PENDING"
 	} else {
 		item.Status = "FINISHED"
 	}
@@ -409,40 +453,16 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 }
 
 func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, performedBy string) error {
-	if req.UUID == "" {
-		return apperror.BadRequest("uuid is required")
-	}
-	if req.QCRound <= 0 {
-		return apperror.BadRequest("qc_round must be greater than 0")
-	}
-	if req.QtyChecked < 0 || req.QtyPass < 0 || req.QtyDefect < 0 || req.QtyScrap < 0 {
-		return apperror.BadRequest("quantities must be >= 0")
+	if req.QCTaskID == 0 {
+		return apperror.BadRequest("qc_task_id is required")
 	}
 
-	defectSource := strings.TrimSpace(req.DefectSource)
-	if defectSource == "" {
-		defectSource = "process"
-	}
-	if defectSource != "process" && defectSource != "setting_machine" {
-		return apperror.BadRequest("defect_source must be process or setting_machine")
+	if req.WOID == 0 || req.WOItemID == 0 {
+		return apperror.BadRequest("wo_id and wo_item_id are required")
 	}
 
-	totalDefect := 0.0
-	totalScrap := 0.0
-	hasRepairable := false
-	for _, defect := range req.Defects {
-		if defect.QtyDefect < 0 || defect.QtyScrap < 0 {
-			return apperror.BadRequest("defect quantities must be >= 0")
-		}
-		totalDefect += defect.QtyDefect
-		totalScrap += defect.QtyScrap
-		hasRepairable = hasRepairable || defect.IsRepairable
-	}
-	if totalDefect > req.QtyDefect+0.0001 {
-		return apperror.BadRequest("sum defects qty_defect exceeds qty_defect")
-	}
-	if totalScrap > req.QtyScrap+0.0001 {
-		return apperror.BadRequest("sum defects qty_scrap exceeds qty_scrap")
+	if req.QCRound < 1 || req.QCRound > 3 {
+		return apperror.BadRequest("qc_round must be 1 until 3")
 	}
 
 	performedBy = strings.TrimSpace(performedBy)
@@ -451,146 +471,125 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 	}
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var item models.WorkOrderItem
-		if err := tx.Where("uuid = ?", req.UUID).First(&item).Error; err != nil {
+
+		// =====================================
+		// GET QC TASK
+		// =====================================
+		var task models.QCTask
+		if err := tx.
+			Where(`
+				id = ?
+				AND wo_id = ?
+				AND wo_item_id = ?
+				AND task_type = 'production_qc'
+				AND status = 'pending'
+			`, req.QCTaskID, req.WOID, req.WOItemID).
+			First(&task).Error; err != nil {
+
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return apperror.NotFound("uniq not found")
+				return apperror.NotFound("pending qc task not found")
 			}
 			return err
 		}
 
-		woID := item.WOID
-		woItemID := item.ID
-		uniqCode := item.ItemUniqCode
-		if strings.TrimSpace(req.Uniq) != "" {
-			uniqCode = req.Uniq
+		// =====================================
+		// VALIDASI ROUND
+		// =====================================
+		if task.Round != req.QCRound {
+			return apperror.BadRequest(
+				fmt.Sprintf("current pending qc round is %d", task.Round),
+			)
 		}
 
-		var qcLog models.QCLog
-		qcLog = models.QCLog{
-			UUID:         uuid.New().String(),
-			WOID:         &woID,
-			WOItemID:     &woItemID,
-			UniqCode:     uniqCode,
-			QCRound:      req.QCRound,
-			QtyChecked:   req.QtyChecked,
-			QtyPass:      req.QtyPass,
-			QtyDefect:    req.QtyDefect,
-			QtyScrap:     req.QtyScrap,
-			Status:       strings.ToUpper(strings.TrimSpace(req.Status)),
-			DefectSource: defectSource,
-			CheckedBy:    performedBy,
-			CheckedAt:    time.Now(),
-			CreatedAt:    time.Now(),
-		}
-		if err := tx.Create(&qcLog).Error; err != nil {
+		// =====================================
+		// GET ITEM
+		// =====================================
+		var item models.WorkOrderItem
+		if err := tx.
+			Where("id = ? AND wo_id = ?", req.WOItemID, req.WOID).
+			First(&item).Error; err != nil {
 			return err
 		}
 
-		for _, defect := range req.Defects {
-			row := models.QCDefectItem{
-				QCLogID:          qcLog.ID,
-				WOID:             &woID,
-				WOItemID:         &woItemID,
-				UniqCode:         uniqCode,
-				DefectSource:     defectSource,
-				DefectReasonCode: defect.ReasonCode,
-				DefectReasonText: defect.ReasonText,
-				QtyDefect:        defect.QtyDefect,
-				QtyScrap:         defect.QtyScrap,
-				IsRepairable:     defect.IsRepairable,
-				ProcessName:      item.ProcessName,
-				ReportedBy:       performedBy,
-				ReportedAt:       time.Now(),
-			}
-			if err := tx.Create(&row).Error; err != nil {
-				return err
-			}
+		// =====================================
+		// AMBIL PAYLOAD TASK JSON
+		// =====================================
+		var payload struct {
+			Uniq        string `json:"uniq"`
+			ProcessName string `json:"process_name"`
 		}
 
-		if req.QtyScrap > 0 {
-			var wo models.WorkOrder
-			var woNumber *string
-			if err := tx.First(&wo, item.WOID).Error; err == nil && strings.TrimSpace(wo.WONumber) != "" {
-				woNumber = &wo.WONumber
-			}
-			scrap := scrapModels.ScrapStock{
-				UUID:          uuid.New(),
-				UniqCode:      uniqCode,
-				PartNumber:    stringPtrOrNil(item.PartNumber),
-				PartName:      stringPtrOrNil(item.PartName),
-				Model:         stringPtrOrNil(item.Model),
-				PackingNumber: stringPtrOrNil(item.KanbanNumber),
-				WONumber:      woNumber,
-				ScrapType:     mapQCSourceToScrapType(defectSource),
-				Quantity:      req.QtyScrap,
-				UOM:           stringPtrOrNil(item.UOM),
-				DateReceived:  timePtr(time.Now()),
-				Validator:     &performedBy,
-				Status:        scrapModels.StockStatusActive,
-				CreatedBy:     &performedBy,
-				UpdatedBy:     &performedBy,
-				SourceQCLogID: &qcLog.ID,
-			}
-			if err := tx.Create(&scrap).Error; err != nil {
-				return err
-			}
-			sourceFlag := "qc_submit"
-			if err := tx.Create(&invModels.InventoryMovementLog{
-				MovementCategory: "scrap",
-				MovementType:     "incoming",
-				UniqCode:         uniqCode,
-				EntityID:         &scrap.ID,
-				QtyChange:        req.QtyScrap,
-				SourceFlag:       &sourceFlag,
-				LoggedBy:         &performedBy,
-				LoggedAt:         time.Now(),
-			}).Error; err != nil {
-				// non-fatal by design
-			}
+		if len(task.RoundResults) > 0 {
+			_ = json.Unmarshal(task.RoundResults, &payload)
 		}
 
-		if hasRepairable {
-			roundResults, _ := json.Marshal(map[string]interface{}{
-				"event":            "rework_qc_created",
-				"source_qc_log_id": qcLog.ID,
-				"qty_to_rework":    math.Max(req.QtyDefect-req.QtyScrap, 0),
-				"performed_by":     performedBy,
-				"occurred_at":      time.Now().UTC().Format(time.RFC3339),
-			})
-			task := models.QCTask{
-				TaskType:     "rework_qc",
-				Status:       "pending",
-				WOID:         &woID,
-				WOItemID:     &woItemID,
-				Round:        1,
-				RoundResults: datatypes.JSON(roundResults),
-				CreatedAt:    time.Now(),
-				UpdatedAt:    time.Now(),
-			}
-			if err := tx.Create(&task).Error; err != nil {
-				return err
-			}
+		if payload.Uniq == "" {
+			payload.Uniq = item.ItemUniqCode
 		}
 
-		if req.QCRound == 3 && strings.EqualFold(req.Status, "PASSED") {
-			fg := models.FinishedGoods{
-				UUID:       uuid.New().String(),
-				UniqCode:   item.ItemUniqCode,
-				ItemID:     item.ID,
-				PartNumber: item.PartNumber,
-				PartName:   item.PartName,
-				Model:      item.Model,
-				WONumber:   "",
-				StockQty:   req.QtyPass,
-				UOM:        item.UOM,
-				Status:     "AVAILABLE",
-				CreatedAt:  time.Now(),
+		if payload.ProcessName == "" {
+			payload.ProcessName = item.ProcessName
+		}
+
+		now := time.Now()
+
+		// =====================================
+		// INSERT QC LOG
+		// =====================================
+		qc := models.QCLog{
+			UUID:        uuid.New().String(),
+			WOID:        &item.WOID,
+			WOItemID:    &item.ID,
+			UniqCode:    payload.Uniq,
+			ProcessName: payload.ProcessName,
+
+			QCRound:    req.QCRound,
+			QtyChecked: req.QtyChecked,
+			QtyPass:    req.QtyPass,
+			QtyDefect:  req.QtyDefect,
+			QtyScrap:   req.QtyScrap,
+
+			Status:    strings.ToUpper(req.Status),
+			CheckedBy: performedBy,
+			CheckedAt: now,
+			CreatedAt: now,
+		}
+
+		if err := tx.Create(&qc).Error; err != nil {
+			return err
+		}
+
+		// =====================================
+		// UPDATE TASK
+		// =====================================
+		if strings.EqualFold(req.Status, "PASSED") {
+
+			// ROUND 1 -> 2 / ROUND 2 -> 3
+			if req.QCRound < 3 {
+				if err := tx.Model(&task).Updates(map[string]interface{}{
+					"round":      req.QCRound + 1,
+					"updated_at": now,
+				}).Error; err != nil {
+					return err
+				}
+			} else {
+				// ROUND 3 DONE
+				if err := tx.Model(&task).Updates(map[string]interface{}{
+					"status":     "done",
+					"updated_at": now,
+				}).Error; err != nil {
+					return err
+				}
+
+				// unlock scan out
+				if err := tx.Model(&item).Update("status", "QC_PASSED").Error; err != nil {
+					return err
+				}
 			}
-			if err := tx.Create(&fg).Error; err != nil {
-				return err
-			}
-			if err := tx.Model(&item).Update("status", "DONE").Error; err != nil {
+
+		} else {
+			// gagal = tetap round yg sama
+			if err := tx.Model(&task).Update("updated_at", now).Error; err != nil {
 				return err
 			}
 		}
