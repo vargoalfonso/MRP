@@ -15,6 +15,7 @@ type IProductionRepository interface {
 	FindWOByID(ctx context.Context, id int64) (models.WorkOrder, error)
 	FindMachineByID(ctx context.Context, id int) (models.MasterMachine, error)
 	FindWOByNumber(ctx context.Context, woNumber string) (models.WorkOrder, error)
+	FindWOByKanbanNumber(ctx context.Context, woNumber string) (models.WorkOrderItem, error)
 	FindWOItemsByWOID(ctx context.Context, woid int64) ([]models.WorkOrderItem, error)
 	FindWOItemByUniq(ctx context.Context, uniq string) (models.WorkOrderItem, error)
 	FindWOItemByUniqAndWO(ctx context.Context, uniq string, woID int64) (models.WorkOrderItem, error)
@@ -121,6 +122,23 @@ func (r *productionRepo) FindWOByNumber(ctx context.Context, woNumber string) (m
 
 	err := r.db.WithContext(ctx).
 		Where("wo_number = ?", woNumber).
+		First(&wo).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return wo, apperror.NotFound("wo not found")
+		}
+		return wo, err
+	}
+
+	return wo, nil
+}
+
+func (r *productionRepo) FindWOByKanbanNumber(ctx context.Context, woNumber string) (models.WorkOrderItem, error) {
+	var wo models.WorkOrderItem
+
+	err := r.db.WithContext(ctx).
+		Where("kanban_number LIKE ?", "%"+woNumber+"%").
 		First(&wo).Error
 
 	if err != nil {
