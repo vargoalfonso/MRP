@@ -30,6 +30,8 @@ type IProductionRepository interface {
 	IsQCPendingExist(ctx context.Context, woItemID int64, process string) (bool, error)
 	CreateQC(ctx context.Context, qc *models.QCTask) error
 	InsertProductIssue(ctx context.Context, data models.ProductionIssue) error
+
+	CountQCLogs(ctx context.Context, workOrderID int64) (int64, error)
 }
 
 type productionRepo struct {
@@ -45,6 +47,21 @@ func NewProductionRepository(db *gorm.DB) IProductionRepository {
 // 🔍 FIND DATA
 // ==============================
 //
+
+func (r *productionRepo) CountQCLogs(ctx context.Context, workOrderID int64) (int64, error) {
+	var total int64
+
+	err := r.db.WithContext(ctx).
+		Model(&models.QCLog{}).
+		Where("work_order_id = ?", workOrderID).
+		Count(&total).Error
+
+	if err != nil {
+		return 0, err
+	}
+
+	return total, nil
+}
 
 func (r *productionRepo) InsertProductIssue(ctx context.Context, data models.ProductionIssue) error {
 	return r.db.WithContext(ctx).Create(&data).Error

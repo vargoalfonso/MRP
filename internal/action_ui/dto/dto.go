@@ -17,6 +17,8 @@ type ScanContextResponse struct {
 	NextProcess    string                   `json:"next_process"`
 	CurrentStep    int                      `json:"current_step"`
 	TotalStep      int                      `json:"total_step"`
+	CurrentQCStep  int64                    `json:"current_qc_step"`
+	TotalQCStep    int                      `json:"total_qc_step"`
 	DefaultQty     float64                  `json:"default_qty"`
 	Status         string                   `json:"status"`
 	RawMaterials   []ScanContextRawMaterial `json:"raw_materials"`

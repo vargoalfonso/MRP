@@ -115,6 +115,12 @@ func (s *service) ScanContext(ctx context.Context, woNumber string) (*dto.ScanCo
 		return nil, err
 	}
 
+	var m int64 = 0
+
+	if wo.ID != 0 {
+		m, err = s.repoProduction.CountQCLogs(ctx, wo.ID)
+	}
+
 	totalStep := len(flow)
 	currentIndex := getCurrentIndex(item.CurrentStepSeq, totalStep)
 
@@ -154,6 +160,8 @@ func (s *service) ScanContext(ctx context.Context, woNumber string) (*dto.ScanCo
 		NextProcess:    nextProcess,
 		CurrentStep:    item.CurrentStepSeq,
 		TotalStep:      totalStep,
+		CurrentQCStep:  m,
+		TotalQCStep:    totalStep * 3,
 		PartName:       item.PartName,
 		PartNumber:     item.PartNumber,
 		KanbanNumber:   item.KanbanNumber,
