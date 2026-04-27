@@ -87,6 +87,7 @@ type ProductionScanLog struct {
 	ScannedAt      time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+	Warehouse      string
 }
 
 type QCLog struct {

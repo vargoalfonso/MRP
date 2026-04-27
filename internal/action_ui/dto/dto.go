@@ -53,7 +53,7 @@ type ScanInRequest struct {
 
 type ScanOutRequest struct {
 	WOID           int64   `json:"wo_id" binding:"required"`
-	Uniq           string  `json:"uniq" binding:"required"`
+	Uniq           string  `json:"uniq"`
 	MachineID      string  `json:"machine_id"`      // optional
 	ProductionLine string  `json:"production_line"` // optional
 	QtyOutput      float64 `json:"qty_output" binding:"required"`
@@ -62,8 +62,9 @@ type ScanOutRequest struct {
 	NGProcess      float64 `json:"ng_process"`
 	QtyScrap       float64 `json:"qty_scrap"`
 	QtyRework      float64 `json:"qty_rework"`
-	Shift          string  `json:"shift" binding:"required"`
+	Shift          string  `json:"shift"`
 	ScannedBy      string  `json:"scanned_by"`
+	Warehouse      string  `json:"warehouse"`
 }
 
 type QCSubmitRequest struct {

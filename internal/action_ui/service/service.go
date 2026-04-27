@@ -317,9 +317,6 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 		return errors.New("uniq not found")
 	}
 
-	// =============================
-	// 🔄 PROCESS FLOW
-	// =============================
 	flow, err := parseProcessFlow(item.ProcessFlowJSON)
 	if err != nil {
 		return err
@@ -334,21 +331,18 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	currentProcess := flow[currentIndex].ProcessName
 
 	// =============================
-	// 🚫 VALIDASI
+	// VALIDASI
 	// =============================
-
-	// harus sudah scan in
 	if item.ScanInCount <= item.ScanOutCount {
 		return errors.New("please scan in first")
 	}
 
-	// process harus match
 	if item.LastScannedProcess != currentProcess {
 		return errors.New("invalid process sequence")
 	}
 
 	// =============================
-	// 🏭 MACHINE (optional)
+	// MACHINE OPTIONAL
 	// =============================
 	var machineID int64
 	var productionLine string
@@ -360,8 +354,11 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 			productionLine = m.ProductionLine
 		}
 	}
+
+	now := time.Now()
+
 	// =============================
-	// 📝 INSERT LOG
+	// INSERT LOG
 	// =============================
 	log := models.ProductionScanLog{
 		UUID:           uuid.New().String(),
@@ -372,16 +369,21 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 		ProcessName:    currentProcess,
 		ProductionLine: productionLine,
 		ScanType:       "SCAN_OUT",
-		QtyOutput:      req.QtyOutput,
-		QtyRMUsed:      req.QtyRMUsed,
-		NGMachine:      req.NGMachine,
-		NGProcess:      req.NGProcess,
-		QtyScrap:       req.QtyScrap,
-		QtyRework:      req.QtyRework,
-		Shift:          "1",
-		ScannedBy:      req.ScannedBy,
-		ScannedAt:      time.Now(),
-		CreatedAt:      time.Now(),
+
+		QtyOutput: req.QtyOutput,
+
+		QtyRMUsed: 0,
+		NGMachine: 0,
+		NGProcess: 0,
+		QtyScrap:  0,
+		QtyRework: 0,
+
+		Shift:     req.Shift,
+		ScannedBy: req.ScannedBy,
+		ScannedAt: now,
+		CreatedAt: now,
+
+		Warehouse: req.Warehouse,
 	}
 
 	if err := s.repoProduction.InsertScanLog(ctx, log); err != nil {
@@ -389,16 +391,12 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	}
 
 	// =============================
-	// 📊 UPDATE AGGREGATE
+	// UPDATE ITEM
 	// =============================
 	item.ScanOutCount++
 	item.TotalGoodQty += req.QtyOutput
-	item.TotalNGQty += req.NGMachine + req.NGProcess
-	item.TotalScrapQty += req.QtyScrap
+	item.LastScannedProcess = currentProcess
 
-	// =============================
-	// 🔥 STEP TRANSITION
-	// =============================
 	if item.CurrentStepSeq < totalStep {
 		item.CurrentStepSeq++
 	} else {
