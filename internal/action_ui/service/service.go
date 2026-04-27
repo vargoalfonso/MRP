@@ -69,11 +69,15 @@ func (s *service) ScanContext(ctx context.Context, woNumber string) (*dto.ScanCo
 	// =============================
 	// 🔍 1. GET WO
 	// =============================
-	wo, err := s.repoProduction.FindWOByNumber(ctx, woNumber)
+	woItems, err := s.repoProduction.FindWOByKanbanNumber(ctx, woNumber)
 	if err != nil {
 		return nil, err
 	}
 
+	wo, err := s.repoProduction.FindWOByID(ctx, woItems.WOID)
+	if err != nil {
+		return nil, err
+	}
 	// =============================
 	// 🔍 2. GET ALL ITEMS
 	// =============================
