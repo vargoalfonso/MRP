@@ -239,3 +239,99 @@ type ProductionIssue struct {
 	UpdatedAt      *time.Time `db:"updated_at,omitempty" json:"updated_at,omitempty"`
 	DeletedAt      *time.Time `db:"deleted_at,omitempty" json:"deleted_at,omitempty"`
 }
+
+type WIP struct {
+	ID        int64     `gorm:"primaryKey"`
+	WoID      int64     `gorm:"column:wo_id"`
+	Status    string    `gorm:"column:status"`
+	CreatedAt time.Time `gorm:"column:created_at"`
+	UpdatedAt time.Time `gorm:"column:updated_at"`
+}
+
+func (WIP) TableName() string {
+	return "wips"
+}
+
+type WIPItem struct {
+	ID int64 `gorm:"primaryKey"`
+
+	WipID int64 `gorm:"column:wip_id"`
+
+	// 🔥 dari work_order_items
+	Uniq string `gorm:"column:uniq"` // optional display
+
+	PackingNumber string `gorm:"column:packing_number"`
+	WipType       string `gorm:"column:wip_type"` // draft
+
+	// 🔥 dari process_flow_json
+	ProcessName string `gorm:"column:process_name"`
+	MachineName string `gorm:"column:machine_name"`
+	OpSeq       int    `gorm:"column:op_seq"`
+
+	Seq int `gorm:"column:seq"`
+	// 🔥 dari work_order_items
+	UOM string `gorm:"column:uom"`
+
+	// 🔥 input user
+	Stock int `gorm:"column:stock"`
+
+	// tracking
+	QtyIn        int `gorm:"column:qty_in"`
+	QtyOut       int `gorm:"column:qty_out"`
+	QtyRemaining int `gorm:"column:qty_remaining"`
+
+	Status string `gorm:"column:status"` // queue, process, done
+
+	CreatedAt time.Time `gorm:"column:created_at"`
+	UpdatedAt time.Time `gorm:"column:updated_at"`
+}
+
+func (WIPItem) TableName() string {
+	return "wip_items"
+}
+
+type WIPLog struct {
+	ID int64 `gorm:"primaryKey"`
+
+	WipItemID int64  `gorm:"column:wip_item_id"`
+	Action    string `gorm:"column:action"`
+	Qty       int    `gorm:"column:qty"`
+
+	CreatedAt time.Time `gorm:"column:created_at"`
+}
+
+func (WIPLog) TableName() string {
+	return "wip_logs"
+}
+
+// =====================================
+// MODEL
+// =====================================
+type InventoryMovementLog struct {
+	ID int64 `gorm:"primaryKey"`
+
+	MovementCategory string `gorm:"column:movement_category"` // finished_goods / scrap / raw_material / wip
+	MovementType     string `gorm:"column:movement_type"`     // incoming / outgoing / adjustment / transfer
+
+	UniqCode string `gorm:"column:uniq_code"`
+
+	EntityID *int64 `gorm:"column:entity_id"`
+
+	QtyBefore float64 `gorm:"column:qty_before"`
+	QtyChange float64 `gorm:"column:qty_change"`
+	QtyAfter  float64 `gorm:"column:qty_after"`
+
+	ReferenceNo *string `gorm:"column:reference_no"` // WO Number / DO Number / SO Number
+	SourceFlag  *string `gorm:"column:source_flag"`  // QC_FINAL / DELIVERY / ADJUSTMENT
+
+	Remarks *string `gorm:"column:remarks"`
+
+	LoggedBy *string   `gorm:"column:logged_by"`
+	LoggedAt time.Time `gorm:"column:logged_at"`
+
+	CreatedAt time.Time `gorm:"column:created_at"`
+}
+
+func (InventoryMovementLog) TableName() string {
+	return "inventory_movement_logs"
+}

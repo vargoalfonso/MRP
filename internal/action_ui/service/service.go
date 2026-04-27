@@ -12,7 +12,6 @@ import (
 	"github.com/ganasa18/go-template/internal/action_ui/dto"
 	"github.com/ganasa18/go-template/internal/action_ui/models"
 	"github.com/ganasa18/go-template/internal/action_ui/repository"
-	scrapModels "github.com/ganasa18/go-template/internal/scrap_stock/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
@@ -180,9 +179,9 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 		return errors.New("uniq not found")
 	}
 
-	// =============================
-	// 🔄 PROCESS FLOW
-	// =============================
+	// =====================================
+	// PROCESS FLOW
+	// =====================================
 	flow, err := parseProcessFlow(item.ProcessFlowJSON)
 	if err != nil {
 		return err
@@ -195,21 +194,26 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 	totalStep := len(flow)
 	currentIndex := getCurrentIndex(item.CurrentStepSeq, totalStep)
 	currentProcess := flow[currentIndex].ProcessName
+	currentStep := flow[currentIndex]
 
-	// =============================
-	// 🚫 VALIDASI
-	// =============================
+	// =====================================
+	// VALIDASI
+	// =====================================
 	if item.Status == "FINISHED" || item.Status == "DONE" {
 		return errors.New("item already finished")
+	}
+
+	if item.Status == "WAITING_FINAL_QC" {
+		return errors.New("cannot scan in before final qc completed")
 	}
 
 	if item.ScanInCount > item.ScanOutCount {
 		return errors.New("already scan in, please scan out first")
 	}
 
-	// =============================
-	// 🏭 MACHINE
-	// =============================
+	// =====================================
+	// MACHINE
+	// =====================================
 	var machineID int64
 	var productionLine string
 
@@ -223,16 +227,15 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 
 	now := time.Now()
 
-	// =============================
-	// 📝 INSERT SCAN LOG
-	// =============================
+	// =====================================
+	// INSERT SCAN LOG
+	// =====================================
 	log := models.ProductionScanLog{
 		UUID:           uuid.New().String(),
 		WOID:           item.WOID,
 		WOItemID:       item.ID,
 		MachineID:      machineID,
 		KanbanNumber:   item.KanbanNumber,
-		RawMaterialID:  nil,
 		ProcessName:    currentProcess,
 		ProductionLine: productionLine,
 		ScanType:       "SCAN_IN",
@@ -249,11 +252,79 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 		return err
 	}
 
-	// =============================
-	// 🚨 INSERT PRODUCT ISSUE
-	// =============================
-	if req.ProductIssue {
+	// =====================================
+	// CREATE WIP HEADER
+	// =====================================
+	wip, err := s.repoProduction.FindOrCreateWIP(ctx, item.WOID)
+	if err != nil {
+		return err
+	}
 
+	// =====================================
+	// FIND QUEUE WIP ITEM (hasil dari process sebelumnya)
+	// =====================================
+	wipItem, err := s.repoProduction.FindQueueWIPItem(
+		ctx,
+		wip.ID,
+		item.ItemUniqCode,
+		currentProcess,
+	)
+
+	if err != nil {
+
+		// kalau belum ada, create fresh (process pertama)
+		wipItem = models.WIPItem{
+			WipID:         wip.ID,
+			Uniq:          item.ItemUniqCode,
+			PackingNumber: item.KanbanNumber,
+			WipType:       "production",
+
+			ProcessName: currentProcess,
+			MachineName: derefString(currentStep.MachineName),
+			OpSeq:       currentStep.OpSeq,
+			Seq:         currentIndex + 1,
+
+			UOM: item.UOM,
+
+			Stock: int(req.Qty),
+
+			QtyIn:        int(req.Qty),
+			QtyOut:       0,
+			QtyRemaining: int(req.Qty),
+
+			Status: "process",
+
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+
+		if err := s.repoProduction.CreateWIPItem(ctx, &wipItem); err != nil {
+			return err
+		}
+
+	} else {
+		// kalau sudah ada queue -> ubah ke process
+		wipItem.Status = "process"
+		wipItem.UpdatedAt = now
+
+		if err := s.repoProduction.UpdateWIPItem(ctx, &wipItem); err != nil {
+			return err
+		}
+	}
+
+	// =====================================
+	// WIP LOG
+	// =====================================
+	_ = s.repoProduction.CreateWIPLog(ctx, &models.WIPLog{
+		WipItemID: wipItem.ID,
+		Action:    "SCAN_IN",
+		Qty:       int(req.Qty),
+		CreatedAt: now,
+	})
+	// =====================================
+	// PRODUCT ISSUE
+	// =====================================
+	if req.ProductIssue {
 		issue := models.ProductionIssue{
 			UUID:           uuid.New().String(),
 			WOID:           item.WOID,
@@ -262,8 +333,8 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 			ProcessName:    currentProcess,
 			ProductionLine: productionLine,
 			IssueType:      req.ProductIssueType,
-			IssueDuration:  int64(req.ProductIssueDuration), // menit
-			QtyAffected:    float64(req.Qty),
+			IssueDuration:  req.ProductIssueDuration,
+			QtyAffected:    req.Qty,
 			ReportedBy:     req.ScannedBy,
 			ReportedAt:     now,
 			CreatedAt:      now,
@@ -274,19 +345,25 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 		}
 	}
 
-	// =============================
-	// 🔄 UPDATE ITEM
-	// =============================
+	// =====================================
+	// UPDATE ITEM
+	// =====================================
 	item.Status = "IN_PROGRESS"
 	item.ScanInCount++
 	item.LastScannedProcess = currentProcess
 
-	err = s.createQCTaskIfNeeded(ctx, item, log, req)
-	if err != nil {
+	if err := s.createQCTaskIfNeeded(ctx, item, log, req); err != nil {
 		return err
 	}
 
 	return s.repoProduction.UpdateWOItem(ctx, item)
+}
+
+func derefString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }
 
 func (s *service) createQCTaskIfNeeded(ctx context.Context, item models.WorkOrderItem, log models.ProductionScanLog, req dto.ScanInRequest) error {
@@ -381,7 +458,7 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	}
 
 	// =====================================
-	// VALIDASI QC ROUND 3 HARUS PASSED
+	// VALIDASI QC ROUND 2 HARUS PASSED
 	// =====================================
 	var qcCount int64
 
@@ -392,7 +469,7 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 			AND process_name = ?
 			AND qc_round = ?
 			AND UPPER(status) = ?
-		`, item.ID, currentProcess, 3, "PASSED").
+		`, item.ID, currentProcess, 2, "APPROVE").
 		Count(&qcCount).Error
 
 	if err != nil {
@@ -400,7 +477,14 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	}
 
 	if qcCount == 0 {
-		return errors.New("scan out blocked: QC round 3 not passed")
+		return errors.New("scan out blocked: QC round 2 not approved")
+	}
+
+	// =====================================
+	// CEK SUDAH PERNAH SCAN OUT BELUM
+	// =====================================
+	if item.Status == "WAITING_FINAL_QC" {
+		return errors.New("already scan out, waiting final qc")
 	}
 
 	// =====================================
@@ -458,12 +542,9 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	item.TotalGoodQty += req.QtyOutput
 	item.LastScannedProcess = currentProcess
 
-	if currentIndex < totalStep-1 {
-		item.CurrentStepSeq = flow[currentIndex+1].OpSeq
-		item.Status = "PENDING"
-	} else {
-		item.Status = "FINISHED"
-	}
+	// BELUM PINDAH PROCESS
+	// MASIH MENUNGGU QC FINAL (ROUND 3)
+	item.Status = "WAITING_FINAL_QC"
 
 	return s.repoProduction.UpdateWOItem(ctx, item)
 }
@@ -528,7 +609,7 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 		}
 
 		// =====================================
-		// AMBIL PAYLOAD TASK JSON
+		// GET PAYLOAD JSON
 		// =====================================
 		var payload struct {
 			Uniq        string `json:"uniq"`
@@ -544,7 +625,7 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 		}
 
 		if payload.ProcessName == "" {
-			payload.ProcessName = item.ProcessName
+			payload.ProcessName = item.LastScannedProcess
 		}
 
 		now := time.Now()
@@ -565,7 +646,7 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 			QtyDefect:  req.QtyDefect,
 			QtyScrap:   req.QtyScrap,
 
-			Status:    req.Status,
+			Status:    strings.ToUpper(req.Status),
 			CheckedBy: performedBy,
 			CheckedAt: now,
 			CreatedAt: now,
@@ -576,36 +657,55 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 		}
 
 		// =====================================
-		// UPDATE TASK
+		// JIKA REJECT
 		// =====================================
-		if strings.EqualFold(req.Status, "PASSED") {
+		if !strings.EqualFold(req.Status, "APPROVE") &&
+			!strings.EqualFold(req.Status, "PASSED") {
 
-			// ROUND 1 -> 2 / ROUND 2 -> 3
-			if req.QCRound < 3 {
-				if err := tx.Model(&task).Updates(map[string]interface{}{
-					"round":      req.QCRound + 1,
-					"updated_at": now,
-				}).Error; err != nil {
-					return err
-				}
-			} else {
-				// ROUND 3 DONE
-				if err := tx.Model(&task).Updates(map[string]interface{}{
-					"status":     "done",
-					"updated_at": now,
-				}).Error; err != nil {
-					return err
-				}
+			return tx.Model(&task).
+				Update("updated_at", now).Error
+		}
 
-				// unlock scan out
-				if err := tx.Model(&item).Update("status", "QC_PASSED").Error; err != nil {
-					return err
-				}
+		// =====================================
+		// ROUND 1 -> ROUND 2
+		// =====================================
+		if req.QCRound == 1 {
+			return tx.Model(&task).Updates(map[string]interface{}{
+				"round":      2,
+				"updated_at": now,
+			}).Error
+		}
+
+		// =====================================
+		// ROUND 2 -> TUNGGU SCAN OUT
+		// =====================================
+		if req.QCRound == 2 {
+			return tx.Model(&task).Updates(map[string]interface{}{
+				"round":      3,
+				"updated_at": now,
+			}).Error
+		}
+
+		// =====================================
+		// ROUND 3 FINAL QC
+		// =====================================
+		if req.QCRound == 3 {
+			if item.Status != "WAITING_FINAL_QC" {
+				return apperror.BadRequest("final qc requires scan out first")
+			}
+			// task done
+			if err := tx.Model(&task).Updates(map[string]interface{}{
+				"status":         "done",
+				"good_quantity":  int(req.QtyPass),
+				"ng_quantity":    int(req.QtyDefect),
+				"scrap_quantity": int(req.QtyScrap),
+				"updated_at":     now,
+			}).Error; err != nil {
+				return err
 			}
 
-		} else {
-			// gagal = tetap round yg sama
-			if err := tx.Model(&task).Update("updated_at", now).Error; err != nil {
+			// pindah process berikutnya / finish
+			if err := s.afterFinalQC(ctx, tx, &item, req, performedBy); err != nil {
 				return err
 			}
 		}
@@ -614,53 +714,228 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 	})
 }
 
-func mapQCSourceToScrapType(defectSource string) string {
-	if defectSource == "setting_machine" {
-		return scrapModels.ScrapTypeSettingMachine
-	}
-	return scrapModels.ScrapTypeProcess
-}
+func (s *service) afterFinalQC(ctx context.Context, tx *gorm.DB, item *models.WorkOrderItem, req dto.QCSubmitRequest, performedBy string) error {
 
-func stringPtrOrNil(s string) *string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-func timePtr(t time.Time) *time.Time {
-	return &t
-}
-
-func (s *service) insertFinishedGoods(ctx context.Context, item models.WorkOrderItem, qc dto.QCSubmitRequest) error {
-
-	fg := models.FinishedGoods{
-		UUID:       uuid.New().String(),
-		UniqCode:   item.ItemUniqCode,
-		ItemID:     item.ID,
-		PartNumber: item.PartNumber,
-		PartName:   item.PartName,
-		Model:      item.Model,
-		WONumber:   "",
-		StockQty:   qc.QtyPass,
-		UOM:        item.UOM,
-		Status:     "AVAILABLE",
-		CreatedAt:  time.Now(),
+	flow, err := parseProcessFlow(item.ProcessFlowJSON)
+	if err != nil {
+		return err
 	}
 
-	return s.repoProduction.InsertFinishedGoods(ctx, fg)
-}
-
-func (s *service) isLastStep(item models.WorkOrderItem) bool {
-	var flow []models.ProcessFlow
-
-	err := json.Unmarshal([]byte(item.ProcessFlowJSON), &flow)
-	if err != nil || len(flow) == 0 {
-		return false
+	var wo models.WorkOrder
+	if err := tx.Where("id = ?", req.WOID).
+		First(&wo).Error; err != nil {
+		return err
 	}
 
-	return item.CurrentStepSeq >= len(flow)-1
+	now := time.Now()
+
+	totalStep := len(flow)
+	currentIndex := getCurrentIndex(item.CurrentStepSeq, totalStep)
+	currentStep := flow[currentIndex]
+
+	// =====================================
+	// CLOSE CURRENT WIP
+	// =====================================
+	var currentWIP models.WIPItem
+
+	if err := tx.
+		Where(`
+			uniq = ?
+			AND process_name = ?
+			AND status = ?
+		`,
+			item.ItemUniqCode,
+			currentStep.ProcessName,
+			"process",
+		).
+		Order("id desc").
+		First(&currentWIP).Error; err == nil {
+
+		currentWIP.QtyOut += int(req.QtyPass)
+		currentWIP.QtyRemaining =
+			currentWIP.QtyIn - currentWIP.QtyOut
+
+		currentWIP.Status = "done"
+		currentWIP.UpdatedAt = now
+
+		if err := tx.Save(&currentWIP).Error; err != nil {
+			return err
+		}
+
+		_ = tx.Create(&models.WIPLog{
+			WipItemID: currentWIP.ID,
+			Action:    "QC_FINAL_DONE",
+			Qty:       int(req.QtyPass),
+			CreatedAt: now,
+		}).Error
+	}
+
+	// =====================================
+	// JIKA MASIH ADA NEXT PROCESS
+	// =====================================
+	if currentIndex < totalStep-1 {
+
+		nextStep := flow[currentIndex+1]
+
+		nextWIP := models.WIPItem{
+			WipID: currentWIP.WipID,
+
+			Uniq:          item.ItemUniqCode,
+			PackingNumber: item.KanbanNumber,
+			WipType:       "production",
+
+			ProcessName: nextStep.ProcessName,
+			MachineName: derefString(nextStep.MachineName),
+			OpSeq:       nextStep.OpSeq,
+			Seq:         currentIndex + 2, // step ke-2 / ke-3
+
+			UOM: item.UOM,
+
+			Stock: int(req.QtyPass),
+
+			QtyIn:        int(req.QtyPass),
+			QtyOut:       0,
+			QtyRemaining: int(req.QtyPass),
+
+			Status: "queue",
+
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+
+		if err := tx.Create(&nextWIP).Error; err != nil {
+			return err
+		}
+
+		_ = tx.Create(&models.WIPLog{
+			WipItemID: nextWIP.ID,
+			Action:    "TRANSFER_IN",
+			Qty:       int(req.QtyPass),
+			CreatedAt: now,
+		}).Error
+
+		// =====================================
+		// PINDAH STEP
+		// pakai 1,2,3
+		// =====================================
+		item.CurrentStepSeq = currentIndex + 2
+		item.Status = "PENDING"
+		item.LastScannedProcess = ""
+
+		return tx.Save(item).Error
+	}
+
+	// =====================================
+	// LAST PROCESS -> FINISHED GOODS
+	// =====================================
+	var fg models.FinishedGoods
+
+	err = tx.Where("uniq_code = ?", item.ItemUniqCode).
+		First(&fg).Error
+
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+
+		fg = models.FinishedGoods{
+			UUID:       uuid.New().String(),
+			UniqCode:   item.ItemUniqCode,
+			ItemID:     item.ID,
+			PartNumber: item.PartNumber,
+			PartName:   item.PartName,
+			Model:      item.Model,
+			WONumber:   wo.WONumber,
+			StockQty:   req.QtyPass,
+			UOM:        item.UOM,
+			Status:     "AVAILABLE",
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
+
+		if err := tx.Create(&fg).Error; err != nil {
+			return err
+		}
+
+		if err := s.createInventoryMovementLog(
+			tx,
+			"finished_goods",
+			"incoming",
+			item.ItemUniqCode,
+			&fg.ID,
+			0,
+			req.QtyPass,
+			req.QtyPass,
+			&wo.WONumber,
+			stringPtr("QC_FINAL"),
+			stringPtr("Create FG from final production process"),
+			stringPtr(performedBy),
+		); err != nil {
+			return err
+		}
+
+	} else if err == nil {
+
+		beforeQty := fg.StockQty
+		afterQty := beforeQty + req.QtyPass
+
+		fg.StockQty = afterQty
+		fg.UpdatedAt = now
+
+		if err := tx.Save(&fg).Error; err != nil {
+			return err
+		}
+
+		if err := s.createInventoryMovementLog(
+			tx,
+			"finished_goods",
+			"incoming",
+			item.ItemUniqCode,
+			&fg.ID,
+			beforeQty,
+			req.QtyPass,
+			afterQty,
+			&wo.WONumber,
+			stringPtr("QC_FINAL"),
+			stringPtr("Add stock from final production process"),
+			stringPtr(performedBy),
+		); err != nil {
+			return err
+		}
+
+	} else {
+		return err
+	}
+
+	item.Status = "FINISHED"
+	item.LastScannedProcess = ""
+
+	return tx.Save(item).Error
+}
+
+func stringPtr(v string) *string {
+	return &v
+}
+
+func (s *service) createInventoryMovementLog(tx *gorm.DB, category string, movementType string, uniqCode string, entityID *int64, beforeQty float64, changeQty float64, afterQty float64, refNo *string, source *string, remarks *string, user *string) error {
+
+	row := models.InventoryMovementLog{
+		MovementCategory: category,
+		MovementType:     movementType,
+		UniqCode:         uniqCode,
+		EntityID:         entityID,
+
+		QtyBefore: beforeQty,
+		QtyChange: changeQty,
+		QtyAfter:  afterQty,
+
+		ReferenceNo: refNo,
+		SourceFlag:  source,
+		Remarks:     remarks,
+
+		LoggedBy:  user,
+		LoggedAt:  time.Now(),
+		CreatedAt: time.Now(),
+	}
+
+	return tx.Create(&row).Error
 }
 
 func parseProcessFlow(flowJSON string) ([]models.ProcessFlow, error) {
@@ -705,71 +980,6 @@ func getCurrentIndex(step int, total int) int {
 
 	return idx
 }
-
-// func (s *service) ScanIncoming(ctx context.Context, req dto.IncomingScanRequest) error {
-
-// 	// =============================
-// 	// 🔒 IDEMPOTENCY CHECK
-// 	// =============================
-// 	exist, err := s.repoIncoming.IsIdempotentExist(ctx, req.IdempotencyKey)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	if exist {
-// 		return nil // already processed
-// 	}
-
-// 	// =============================
-// 	// 🔍 VALIDATE DN ITEM
-// 	// =============================
-// 	_, err = s.repoIncoming.GetDNItem(ctx, req.DNItemID)
-// 	if err != nil {
-// 		return errors.New("DN item not found")
-// 	}
-
-// 	// =============================
-// 	// 📝 INSERT SCAN
-// 	// =============================
-// 	scan := models.IncomingReceivingScan{
-// 		IncomingDNItemID:  req.DNItemID,
-// 		IdempotencyKey:    req.IdempotencyKey,
-// 		ScanRef:           req.ScanRef,
-// 		Qty:               req.Qty,
-// 		WeightKg:          req.WeightKg,
-// 		ScannedAt:         time.Now(),
-// 		ScannedBy:         req.ScannedBy,
-// 		WarehouseLocation: req.Warehouse,
-// 		Status:            "pending",
-// 	}
-
-// 	if err := s.repoIncoming.InsertScan(ctx, &scan); err != nil {
-// 		return err
-// 	}
-
-// 	// =============================
-// 	// 🧪 CREATE QC TASK
-// 	// =============================
-// 	qc := models.QCTask{
-// 		TaskType:         "incoming_qc",
-// 		Status:           "pending",
-// 		IncomingDNItemID: &req.DNItemID,
-// 		CreatedAt:        time.Now(),
-// 		UpdatedAt:        time.Now(),
-// 	}
-
-// 	if err := s.repoIncoming.CreateQCTask(ctx, &qc); err != nil {
-// 		return err
-// 	}
-
-// 	// =============================
-// 	// 🔗 LINK QC → SCAN
-// 	// =============================
-// 	if err := s.repoIncoming.AttachQCToScan(ctx, scan.ID, qc.ID); err != nil {
-// 		return err
-// 	}
-
-// 	return nil
-// }
 
 func (s *service) ListQCTask(ctx context.Context, req dto.ListQCTaskRequest) (map[string]interface{}, error) {
 

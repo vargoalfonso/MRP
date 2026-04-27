@@ -53,6 +53,7 @@ type ScanInRequest struct {
 	ProductIssue         bool    `json:"product_issue"`
 	ProductIssueType     string  `json:"product_issue_type"`
 	ProductIssueDuration int64   `json:"product_issue_duration"`
+	IsWIP                bool    `json:"is_wip"`
 }
 
 type ScanOutRequest struct {
