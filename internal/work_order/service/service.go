@@ -1732,21 +1732,21 @@ func (s *service) fetchProcessFlows(ctx context.Context, tx *gorm.DB, uniqCodes 
 	}
 
 	rawSQL := `
-		SELECT i.uniq_code,
+		SELECT DISTINCT ON (i.uniq_code, ro.op_seq)
+		       i.uniq_code,
 		       ro.op_seq,
 		       pp.process_name,
 		       mm.machine_name     AS machine_name,
 		       ro.cycle_time_sec,
 		       ro.setup_time_min
 		FROM   items i
-		JOIN   bom_item bi ON bi.item_id = i.id AND bi.is_current = TRUE AND bi.status = 'Released'
-		JOIN   routing_headers rh ON rh.item_revision_id = bi.root_item_revision_id
+		JOIN   routing_headers rh ON rh.item_id = i.id
 		JOIN   routing_operations ro ON ro.routing_header_id = rh.id
 		JOIN   process_parameters pp ON pp.id = ro.process_id
 		LEFT   JOIN master_machines mm ON mm.id = ro.machine_id
 		WHERE  i.uniq_code IN ?
 		  AND  i.deleted_at IS NULL
-		ORDER  BY i.uniq_code, ro.op_seq`
+		ORDER  BY i.uniq_code, ro.op_seq, rh.id DESC`
 
 	var opRows []opRow
 	db := s.db.WithContext(ctx)
