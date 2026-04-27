@@ -141,6 +141,7 @@ func (s *service) ScanContext(ctx context.Context, woNumber string) (*dto.ScanCo
 	// 🎯 RESPONSE
 	// =============================
 	return &dto.ScanContextResponse{
+		WOID:           wo.ID,
 		WONumber:       wo.WONumber,
 		Uniq:           item.ItemUniqCode,
 		MachineID:      machineID,
@@ -188,13 +189,12 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 		return errors.New("item already finished")
 	}
 
-	// anti double scan in
 	if item.ScanInCount > item.ScanOutCount {
 		return errors.New("already scan in, please scan out first")
 	}
 
 	// =============================
-	// 🏭 MACHINE (optional)
+	// 🏭 MACHINE
 	// =============================
 	var machineID int64
 	var productionLine string
@@ -207,19 +207,18 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 		}
 	}
 
+	now := time.Now()
+
 	// =============================
-	// 📝 INSERT LOG
+	// 📝 INSERT SCAN LOG
 	// =============================
 	log := models.ProductionScanLog{
-		UUID:         uuid.New().String(),
-		WOID:         item.WOID,
-		WOItemID:     item.ID,
-		MachineID:    machineID,
-		KanbanNumber: item.KanbanNumber,
-
-		// 🔥 FIX INI
-		RawMaterialID: nil,
-
+		UUID:           uuid.New().String(),
+		WOID:           item.WOID,
+		WOItemID:       item.ID,
+		MachineID:      machineID,
+		KanbanNumber:   item.KanbanNumber,
+		RawMaterialID:  nil,
 		ProcessName:    currentProcess,
 		ProductionLine: productionLine,
 		ScanType:       "SCAN_IN",
@@ -228,12 +227,37 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 		DandoriTime:    req.DandoriTime,
 		SetupQCTime:    req.SetupQCTime,
 		ScannedBy:      req.ScannedBy,
-		ScannedAt:      time.Now(),
-		CreatedAt:      time.Now(),
+		ScannedAt:      now,
+		CreatedAt:      now,
 	}
 
 	if err := s.repoProduction.InsertScanLog(ctx, log); err != nil {
 		return err
+	}
+
+	// =============================
+	// 🚨 INSERT PRODUCT ISSUE
+	// =============================
+	if req.ProductIssue {
+
+		issue := models.ProductionIssue{
+			UUID:           uuid.New().String(),
+			WOID:           item.WOID,
+			WOItemID:       item.ID,
+			MachineID:      machineID,
+			ProcessName:    currentProcess,
+			ProductionLine: productionLine,
+			IssueType:      req.ProductIssueType,
+			IssueDuration:  int64(req.ProductIssueDuration), // menit
+			QtyAffected:    float64(req.Qty),
+			ReportedBy:     req.ScannedBy,
+			ReportedAt:     now,
+			CreatedAt:      now,
+		}
+
+		if err := s.repoProduction.InsertProductIssue(ctx, issue); err != nil {
+			return err
+		}
 	}
 
 	// =============================

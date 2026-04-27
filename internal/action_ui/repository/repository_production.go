@@ -28,6 +28,7 @@ type IProductionRepository interface {
 
 	IsQCPendingExist(ctx context.Context, woItemID int64, process string) (bool, error)
 	CreateQC(ctx context.Context, qc *models.QCTask) error
+	InsertProductIssue(ctx context.Context, data models.ProductionIssue) error
 }
 
 type productionRepo struct {
@@ -43,6 +44,10 @@ func NewProductionRepository(db *gorm.DB) IProductionRepository {
 // 🔍 FIND DATA
 // ==============================
 //
+
+func (r *productionRepo) InsertProductIssue(ctx context.Context, data models.ProductionIssue) error {
+	return r.db.WithContext(ctx).Create(&data).Error
+}
 
 func (r *productionRepo) FindWOItemByUniqAndWO(ctx context.Context, uniq string, woID int64) (models.WorkOrderItem, error) {
 	var item models.WorkOrderItem

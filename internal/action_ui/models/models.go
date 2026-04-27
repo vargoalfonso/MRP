@@ -219,3 +219,21 @@ type DeliveryNoteItem struct {
 	Check          string     `json:"check" gorm:"check"`                            //field untuk menampung nilai check ketika menerima barang,
 	QtySent        int64      `json:"qty_sent" gorm:"qty_sent"`
 }
+
+type ProductionIssue struct {
+	ID             int64      `db:"id" json:"id"`
+	UUID           string     `db:"uuid" json:"uuid"`
+	WOID           int64      `db:"wo_id" json:"wo_id"`
+	WOItemID       int64      `db:"wo_item_id" json:"wo_item_id"`
+	MachineID      int64      `db:"machine_id" json:"machine_id,omitempty"`
+	ProcessName    string     `db:"process_name" json:"process_name"`
+	ProductionLine string     `db:"production_line" json:"production_line"`
+	IssueType      string     `db:"issue_type" json:"issue_type"`
+	IssueDuration  int64      `db:"issue_duration" json:"issue_duration"` // menit
+	QtyAffected    float64    `db:"qty_affected" json:"qty_affected"`
+	ReportedBy     string     `db:"reported_by" json:"reported_by"`
+	ReportedAt     time.Time  `db:"reported_at" json:"reported_at"`
+	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt      *time.Time `db:"updated_at,omitempty" json:"updated_at,omitempty"`
+	DeletedAt      *time.Time `db:"deleted_at,omitempty" json:"deleted_at,omitempty"`
+}

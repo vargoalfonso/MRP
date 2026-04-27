@@ -1,6 +1,7 @@
 package dto
 
 type ScanContextResponse struct {
+	WOID           int64                    `json:"wo_id"`
 	WONumber       string                   `json:"wo_number"`
 	Uniq           string                   `json:"uniq"`
 	KanbanNumber   string                   `json:"kanban_number"`
@@ -36,15 +37,18 @@ type RawMaterialInput struct {
 }
 
 type ScanInRequest struct {
-	WOID           int64   `json:"wo_id" binding:"required"`
-	Uniq           string  `json:"uniq" binding:"required"`
-	MachineID      string  `json:"machine_id"`      // optional
-	ProductionLine string  `json:"production_line"` // optional
-	Qty            float64 `json:"qty" binding:"required"`
-	Shift          string  `json:"shift" binding:"required"`
-	DandoriTime    float64 `json:"dandori_time"`  // optional
-	SetupQCTime    float64 `json:"setup_qc_time"` // optional
-	ScannedBy      string  `json:"scanned_by"`    // dari user login / optional override
+	WOID                 int64   `json:"wo_id" binding:"required"`
+	Uniq                 string  `json:"uniq" binding:"required"`
+	MachineID            string  `json:"machine_id"`      // optional
+	ProductionLine       string  `json:"production_line"` // optional
+	Qty                  float64 `json:"qty" binding:"required"`
+	Shift                string  `json:"shift" binding:"required"`
+	DandoriTime          float64 `json:"dandori_time"`  // optional
+	SetupQCTime          float64 `json:"setup_qc_time"` // optional
+	ScannedBy            string  `json:"scanned_by"`    // dari user login / optional override
+	ProductIssue         bool    `json:"product_issue"`
+	ProductIssueType     string  `json:"product_issue_type"`
+	ProductIssueDuration int64   `json:"product_issue_duration"`
 }
 
 type ScanOutRequest struct {

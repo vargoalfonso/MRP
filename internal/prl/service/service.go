@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -196,6 +197,7 @@ func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest, su
 	if err := s.repo.CreatePRLs(ctx, []*models.PRL{item}); err != nil {
 		return nil, err
 	}
+	log.Println("PRL ID:", item.ID)
 	if err := s.createApprovalInstance(ctx, item.ID, submittedBy); err != nil {
 		return nil, err
 	}
