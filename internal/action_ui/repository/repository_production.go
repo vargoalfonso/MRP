@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/ganasa18/go-template/internal/action_ui/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
@@ -32,6 +33,13 @@ type IProductionRepository interface {
 	InsertProductIssue(ctx context.Context, data models.ProductionIssue) error
 
 	CountQCLogs(ctx context.Context, workOrderID int64) (int64, error)
+
+	// WIP
+	FindOrCreateWIP(ctx context.Context, woID int64) (models.WIP, error)
+	FindQueueWIPItem(ctx context.Context, wipID int64, uniq string, processName string) (models.WIPItem, error)
+	CreateWIPItem(ctx context.Context, data *models.WIPItem) error
+	UpdateWIPItem(ctx context.Context, data *models.WIPItem) error
+	CreateWIPLog(ctx context.Context, data *models.WIPLog) error
 }
 
 type productionRepo struct {
@@ -40,6 +48,65 @@ type productionRepo struct {
 
 func NewProductionRepository(db *gorm.DB) IProductionRepository {
 	return &productionRepo{db: db}
+}
+
+func (r *productionRepo) FindOrCreateWIP(ctx context.Context, woID int64) (models.WIP, error) {
+	var row models.WIP
+
+	err := r.db.WithContext(ctx).
+		Where("wo_id = ?", woID).
+		First(&row).Error
+
+	if err == nil {
+		return row, nil
+	}
+
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return row, err
+	}
+
+	now := time.Now()
+
+	row = models.WIP{
+		WoID:      woID,
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	err = r.db.WithContext(ctx).Create(&row).Error
+	return row, err
+}
+
+func (r *productionRepo) FindQueueWIPItem(ctx context.Context, wipID int64, uniq string, processName string) (models.WIPItem, error) {
+	var row models.WIPItem
+
+	err := r.db.WithContext(ctx).
+		Where(`
+			wip_id = ?
+			AND uniq = ?
+			AND process_name = ?
+			AND status = ?
+		`, wipID, uniq, processName, "queue").
+		Order("id asc").
+		First(&row).Error
+
+	return row, err
+}
+
+func (r *productionRepo) CreateWIPItem(ctx context.Context, data *models.WIPItem) error {
+	return r.db.WithContext(ctx).
+		Create(data).Error
+}
+
+func (r *productionRepo) UpdateWIPItem(ctx context.Context, data *models.WIPItem) error {
+	return r.db.WithContext(ctx).
+		Save(data).Error
+}
+
+func (r *productionRepo) CreateWIPLog(ctx context.Context, data *models.WIPLog) error {
+	return r.db.WithContext(ctx).
+		Create(data).Error
 }
 
 //

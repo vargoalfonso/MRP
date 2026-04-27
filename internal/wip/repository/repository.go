@@ -163,7 +163,7 @@ func (r *repository) FindWIPByID(ctx context.Context, id int64) (*models.WIPDeta
 func (r *repository) CreateWIP(ctx context.Context, req models.CreateWIPRequest) (*models.WIP, error) {
 	data := models.WIP{
 		WoID:   req.WoID,
-		Status: "open",
+		Status: "active",
 	}
 
 	err := r.db.WithContext(ctx).Create(&data).Error
