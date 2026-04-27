@@ -555,7 +555,7 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 			QtyDefect:  req.QtyDefect,
 			QtyScrap:   req.QtyScrap,
 
-			Status:    strings.ToUpper(req.Status),
+			Status:    req.Status,
 			CheckedBy: performedBy,
 			CheckedAt: now,
 			CreatedAt: now,

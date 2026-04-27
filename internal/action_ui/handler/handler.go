@@ -165,7 +165,15 @@ func (h *HTTPHandler) ScanOut(ctx *app.Context) *app.CostumeResponse {
 	}
 }
 
-func (h *HTTPHandler) QCSubmit(ctx *app.Context) *app.CostumeResponse {
+func (h *HTTPHandler) QCApprove(ctx *app.Context) *app.CostumeResponse {
+	return h.qcSubmitWithStatus(ctx, "approve")
+}
+
+func (h *HTTPHandler) QCReject(ctx *app.Context) *app.CostumeResponse {
+	return h.qcSubmitWithStatus(ctx, "reject")
+}
+
+func (h *HTTPHandler) qcSubmitWithStatus(ctx *app.Context, status string) *app.CostumeResponse {
 	var req dto.QCSubmitRequest
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -176,7 +184,10 @@ func (h *HTTPHandler) QCSubmit(ctx *app.Context) *app.CostumeResponse {
 		}
 	}
 
+	req.Status = status
+
 	userCtx := userPkg.MustExtractUserContext(ctx)
+
 	err := h.svc.QCSubmit(ctx.Request.Context(), req, userCtx.UserID)
 	if err != nil {
 		return &app.CostumeResponse{
