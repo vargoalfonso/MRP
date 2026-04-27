@@ -193,3 +193,34 @@ func (h *HTTPHandler) QCSubmit(ctx *app.Context) *app.CostumeResponse {
 		Message:   "QC Submit Success",
 	}
 }
+
+func (h *HTTPHandler) ListQCTask(ctx *app.Context) *app.CostumeResponse {
+	var req dto.ListQCTaskRequest
+
+	if err := ctx.ShouldBindQuery(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid query params: " + err.Error(),
+		}
+	}
+
+	data, err := h.svc.ListQCTask(ctx.Request.Context(), req)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "failed get qc task list",
+			Data: map[string]interface{}{
+				"errors": err.Error(),
+			},
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "QC Task List Success",
+		Data:      data,
+	}
+}

@@ -1,5 +1,7 @@
 package dto
 
+import "time"
+
 type ScanContextResponse struct {
 	WOID           int64                    `json:"wo_id"`
 	WONumber       string                   `json:"wo_number"`
@@ -102,4 +104,29 @@ type IncomingScanRequest struct {
 	Warehouse      string
 	ScannedBy      string
 	IdempotencyKey string
+}
+
+type ListQCTaskRequest struct {
+	Page     int    `form:"page"`
+	Limit    int    `form:"limit"`
+	Status   string `form:"status"`    // pending / done
+	TaskType string `form:"task_type"` // production_qc
+	Search   string `form:"search"`    // kanban / uniq / process
+}
+
+type QCTaskListItem struct {
+	ID       int64  `json:"id"`
+	TaskType string `json:"task_type"`
+	Status   string `json:"status"`
+	Round    int    `json:"round"`
+
+	WOID     *int64 `json:"wo_id"`
+	WOItemID *int64 `json:"wo_item_id"`
+
+	Uniq         string  `json:"uniq"`
+	KanbanNumber string  `json:"kanban_number"`
+	ProcessName  string  `json:"process_name"`
+	Qty          float64 `json:"qty"`
+
+	CreatedAt time.Time `json:"created_at"`
 }

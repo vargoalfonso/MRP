@@ -41,6 +41,8 @@ type IService interface {
 
 	// 🔹 QC submit (round 1,2,3)
 	QCSubmit(ctx context.Context, req dto.QCSubmitRequest, performedBy string) error
+
+	ListQCTask(ctx context.Context, req dto.ListQCTaskRequest) (map[string]interface{}, error)
 }
 
 type service struct {
@@ -754,3 +756,96 @@ func getCurrentIndex(step int, total int) int {
 
 // 	return nil
 // }
+
+func (s *service) ListQCTask(ctx context.Context, req dto.ListQCTaskRequest) (map[string]interface{}, error) {
+
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+
+	if req.Limit <= 0 {
+		req.Limit = 10
+	}
+
+	offset := (req.Page - 1) * req.Limit
+
+	db := s.db.WithContext(ctx).Model(&models.QCTask{})
+
+	// =============================
+	// DEFAULT: tampilkan selain done
+	// =============================
+	db = db.Where("LOWER(status) <> ?", "done")
+
+	// =============================
+	// FILTER
+	// =============================
+	if req.Status != "" {
+		db = db.Where("LOWER(status) = LOWER(?)", req.Status)
+	}
+
+	if req.TaskType != "" {
+		db = db.Where("task_type = ?", req.TaskType)
+	}
+
+	if req.Search != "" {
+		db = db.Where(`
+			CAST(id AS TEXT) ILIKE ?
+			OR round_results::text ILIKE ?
+		`, "%"+req.Search+"%", "%"+req.Search+"%")
+	}
+
+	// =============================
+	// COUNT
+	// =============================
+	var total int64
+	if err := db.Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	// =============================
+	// GET DATA
+	// =============================
+	var rows []models.QCTask
+	if err := db.
+		Order("id desc").
+		Limit(req.Limit).
+		Offset(offset).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	items := make([]dto.QCTaskListItem, 0)
+
+	for _, row := range rows {
+
+		var payload struct {
+			Uniq         string  `json:"uniq"`
+			KanbanNumber string  `json:"kanban_number"`
+			ProcessName  string  `json:"process_name"`
+			Qty          float64 `json:"qty"`
+		}
+
+		_ = json.Unmarshal(row.RoundResults, &payload)
+
+		items = append(items, dto.QCTaskListItem{
+			ID:           row.ID,
+			TaskType:     row.TaskType,
+			Status:       row.Status,
+			Round:        row.Round,
+			WOID:         row.WOID,
+			WOItemID:     row.WOItemID,
+			Uniq:         payload.Uniq,
+			KanbanNumber: payload.KanbanNumber,
+			ProcessName:  payload.ProcessName,
+			Qty:          payload.Qty,
+			CreatedAt:    row.CreatedAt,
+		})
+	}
+
+	return map[string]interface{}{
+		"page":  req.Page,
+		"limit": req.Limit,
+		"total": total,
+		"items": items,
+	}, nil
+}

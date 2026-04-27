@@ -78,5 +78,6 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	qc := g.Group("/qc")
 	// ✅ QC Submit (round 1 / 2 / 3)
 	// POST /api/v1/action-ui/qc/submit
+	qc.GET("/list", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.ListQCTask))
 	qc.POST("/submit", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.QCSubmit))
 }
