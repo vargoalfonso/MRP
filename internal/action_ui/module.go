@@ -71,6 +71,9 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	// ⏹️ Scan Out (finish process)
 	// POST /api/v1/action-ui/production/scan-out
 	production.POST("/scan-out", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.ScanOut))
+	// ⏹️ Issue List
+	// POST /api/v1/action-ui/production/scan-out
+	production.GET("/issue/list", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.IssueList))
 
 	// ================================
 	// 🧪 QC
@@ -79,7 +82,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	// POST /api/v1/action-ui/qc/submit
 	qc.GET("/list", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.ListQCTask))
 
-	// ✅ QC Process (round 1 / 2 / 3)
+	// ✅ QC Process (round 1 / 2 / Scan Out Baru Lanjut Round 3/Round Final)
 	qcGroup := qc.Group("/process")
 	qcGroup.POST("/approve", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.QCApprove))
 	qcGroup.POST("/reject", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.QCReject))

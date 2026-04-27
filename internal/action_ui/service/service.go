@@ -43,6 +43,8 @@ type IService interface {
 	QCSubmit(ctx context.Context, req dto.QCSubmitRequest, performedBy string) error
 
 	ListQCTask(ctx context.Context, req dto.ListQCTaskRequest) (map[string]interface{}, error)
+
+	IssueList(ctx context.Context) (map[string]interface{}, error)
 }
 
 type service struct {
@@ -859,5 +861,29 @@ func (s *service) ListQCTask(ctx context.Context, req dto.ListQCTaskRequest) (ma
 		"limit": req.Limit,
 		"total": total,
 		"items": items,
+	}, nil
+}
+
+func (s *service) IssueList(ctx context.Context) (map[string]interface{}, error) {
+
+	type IssueResult struct {
+		IssueType string `json:"issue_type"`
+	}
+
+	var results []IssueResult
+
+	err := s.db.WithContext(ctx).
+		Table("production_issues").
+		Select("issue_type").
+		Group("issue_type").
+		Order("issue_type ASC").
+		Scan(&results).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"items": results,
 	}, nil
 }

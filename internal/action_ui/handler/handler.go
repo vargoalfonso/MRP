@@ -235,3 +235,23 @@ func (h *HTTPHandler) ListQCTask(ctx *app.Context) *app.CostumeResponse {
 		Data:      data,
 	}
 }
+
+func (h *HTTPHandler) IssueList(ctx *app.Context) *app.CostumeResponse {
+
+	result, err := h.svc.IssueList(ctx.Request.Context())
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data:      result,
+	}
+}
