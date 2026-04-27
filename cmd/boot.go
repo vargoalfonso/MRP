@@ -143,6 +143,10 @@ import (
 	stockOpnameHandler "github.com/ganasa18/go-template/internal/stock_opname/handler"
 	stockOpnameRepo "github.com/ganasa18/go-template/internal/stock_opname/repository"
 	stockOpnameService "github.com/ganasa18/go-template/internal/stock_opname/service"
+	stockdaysParameterModule "github.com/ganasa18/go-template/internal/stockdays_parameter"
+	stockdaysParameterHandler "github.com/ganasa18/go-template/internal/stockdays_parameter/handler"
+	stockdaysParameterRepository "github.com/ganasa18/go-template/internal/stockdays_parameter/repository"
+	stockdaysParameterService "github.com/ganasa18/go-template/internal/stockdays_parameter/service"
 	supplierModule "github.com/ganasa18/go-template/internal/supplier"
 	supplierHandler "github.com/ganasa18/go-template/internal/supplier/handler"
 	supplierRepository "github.com/ganasa18/go-template/internal/supplier/repository"
@@ -381,6 +385,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	productReturnSvc := productReturnService.New(productReturnRepo)
 	productReturnHTTPHandler := productReturnHandler.New(productReturnSvc)
 
+	stockDaysRepo := stockdaysParameterRepository.New(db)
+	stockDaysSvc := stockdaysParameterService.New(stockDaysRepo)
+	stockDaysHTTPHandler := stockdaysParameterHandler.New(stockDaysSvc)
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -393,6 +401,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		uploadModule.NewHTTPModule(baseHTTPHandler, uploadHTTPHandler, uploadSvc, authSvc, roleSvc),
 		roleModule.NewHTTPModule(cfg, baseHTTPHandler, roleHTTPHandler, authSvc, roleSvc),
 		departementModule.NewHTTPModule(cfg, baseHTTPHandler, departementHTTPHandler, authSvc, roleSvc, departementSvc),
+		stockdaysParameterModule.NewHTTPModule(cfg, baseHTTPHandler, stockDaysHTTPHandler, authSvc, roleSvc, stockDaysSvc),
 		employeeModule.NewHTTPModule(cfg, baseHTTPHandler, employeeHTTPHandler, authSvc, roleSvc, employeeSvc),
 		userModule.NewHTTPModule(cfg, baseHTTPHandler, userHTTPHandler, authSvc, roleSvc, userSvc),
 		poBudgetModule.NewHTTPModule(cfg, baseHTTPHandler, poBudgetHTTPHandler, authSvc, roleSvc),
