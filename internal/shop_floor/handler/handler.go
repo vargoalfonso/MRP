@@ -7,6 +7,7 @@ import (
 	"github.com/ganasa18/go-template/internal/base/app"
 	shopFloorService "github.com/ganasa18/go-template/internal/shop_floor/service"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/pagination"
 )
 
 type HTTPHandler struct {
@@ -65,16 +66,13 @@ func (h *HTTPHandler) GetProductionIssuesSummary(ctx *app.Context) *app.CostumeR
 }
 
 func (h *HTTPHandler) GetScanEventsSummary(ctx *app.Context) *app.CostumeResponse {
-	limit, err := positiveIntQuery(ctx.Query("limit"), 20)
-	if err != nil {
-		return app.NewError(ctx, err)
-	}
+	pag := pagination.Pagination(ctx)
 	windowHours, err := positiveIntQuery(ctx.Query("window_hours"), 24)
 	if err != nil {
 		return app.NewError(ctx, err)
 	}
 
-	result, err := h.svc.GetScanEventsSummary(ctx.Request.Context(), limit, windowHours)
+	result, err := h.svc.GetScanEventsSummary(ctx.Request.Context(), pag.Limit, pag.Page, pag.Offset(), windowHours)
 	if err != nil {
 		return app.NewError(ctx, err)
 	}

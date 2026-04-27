@@ -14,6 +14,7 @@ import (
 
 type Filter struct {
 	Limit        int
+	Offset       int
 	WindowHours  int
 	StaleMinutes int
 }
@@ -42,6 +43,7 @@ type scanLogSchema struct {
 	productionLineExpr string
 	machineKeyExpr     string
 	joinMachine        string
+	scannedBy          string
 }
 
 func New(db *gorm.DB) IRepository {
@@ -120,6 +122,7 @@ func (r *repository) GetLiveProductionItems(ctx context.Context, filter Filter) 
 		QCPassQty       float64    `gorm:"column:qc_pass_qty"`
 		QCDefectQty     float64    `gorm:"column:qc_defect_qty"`
 		QCScrapQty      float64    `gorm:"column:qc_scrap_qty"`
+		ScannedBy       string     `gorm:"column:scanned_by"`
 	}
 
 	var rows []itemRow
@@ -132,7 +135,8 @@ func (r *repository) GetLiveProductionItems(ctx context.Context, filter Filter) 
 				psl.wo_item_id,
 				psl.process_name,
 				%s AS scan_type,
-				%s AS event_at
+				%s AS event_at,
+				%s AS operator
 			FROM production_scan_logs psl
 			%s
 			ORDER BY %s, %s DESC, psl.id DESC
@@ -173,7 +177,8 @@ func (r *repository) GetLiveProductionItems(ctx context.Context, filter Filter) 
 			COALESCE(qc_summary.qc_checked_qty, 0) AS qc_checked_qty,
 			COALESCE(qc_summary.qc_pass_qty, 0) AS qc_pass_qty,
 			COALESCE(qc_summary.qc_defect_qty, 0) AS qc_defect_qty,
-			COALESCE(qc_summary.qc_scrap_qty, 0) AS qc_scrap_qty
+			COALESCE(qc_summary.qc_scrap_qty, 0) AS qc_scrap_qty,
+			COALESCE(latest.operator, '') AS scanned_by
 		FROM latest
 		LEFT JOIN work_orders wo ON wo.id = latest.wo_id
 		LEFT JOIN work_order_items woi ON woi.id = latest.wo_item_id
@@ -182,7 +187,7 @@ func (r *repository) GetLiveProductionItems(ctx context.Context, filter Filter) 
 		LEFT JOIN qc_summary ON qc_summary.wo_item_id = latest.wo_item_id
 		ORDER BY latest.event_at DESC, latest.machine_number ASC
 		LIMIT ?
-	`, scanSchema.machineKeyExpr, scanSchema.machineDisplayExpr, scanSchema.productionLineExpr, scanSchema.scanTypeExpr, scanSchema.eventAtExpr, scanSchema.joinMachine, scanSchema.machineKeyExpr, scanSchema.eventAtExpr, scanSchema.outputQtyExpr, scanSchema.outputQtyExpr, scanSchema.eventAtExpr, scanSchema.eventAtExpr), startToday, endToday, filter.Limit).Scan(&rows).Error
+	`, scanSchema.machineKeyExpr, scanSchema.machineDisplayExpr, scanSchema.productionLineExpr, scanSchema.scanTypeExpr, scanSchema.eventAtExpr, scanSchema.scannedBy, scanSchema.joinMachine, scanSchema.machineKeyExpr, scanSchema.eventAtExpr, scanSchema.outputQtyExpr, scanSchema.outputQtyExpr, scanSchema.eventAtExpr, scanSchema.eventAtExpr), startToday, endToday, filter.Limit).Scan(&rows).Error
 	if err != nil {
 		return nil, apperror.Internal("shop floor live production items: " + err.Error())
 	}
@@ -209,6 +214,7 @@ func (r *repository) GetLiveProductionItems(ctx context.Context, filter Filter) 
 				Number:         row.MachineNumber,
 				ProductionLine: row.ProductionLine,
 				RuntimeStatus:  runtimeStatus,
+				ScannedBy:      row.ScannedBy,
 			},
 			Production: models.LiveProductionCurrent{
 				WONumber:     row.WONumber,
@@ -657,6 +663,7 @@ func (r *repository) GetScanEventsSummary(ctx context.Context, filter Filter) (*
 		ScanInCount  int64      `gorm:"column:scan_in_count"`
 		ScanOutCount int64      `gorm:"column:scan_out_count"`
 		QCCount      int64      `gorm:"column:qc_count"`
+		TotalRows    int64      `gorm:"column:total_rows"`
 	}
 	var total totalRow
 	err = r.db.WithContext(ctx).Raw(fmt.Sprintf(`
@@ -665,7 +672,8 @@ func (r *repository) GetScanEventsSummary(ctx context.Context, filter Filter) (*
 			COUNT(*) AS total_events,
 			COUNT(*) FILTER (WHERE UPPER(%s) IN ('IN', 'SCAN_IN')) AS scan_in_count,
 			COUNT(*) FILTER (WHERE UPPER(%s) IN ('OUT', 'SCAN_OUT')) AS scan_out_count,
-			COUNT(*) FILTER (WHERE UPPER(%s) IN ('QC', 'SCAN_QC')) AS qc_count
+			COUNT(*) FILTER (WHERE UPPER(%s) IN ('QC', 'SCAN_QC')) AS qc_count,
+			COUNT(*) AS total_rows
 		FROM production_scan_logs psl
 		%s
 		WHERE %s >= ?
@@ -708,8 +716,8 @@ func (r *repository) GetScanEventsSummary(ctx context.Context, filter Filter) (*
 		LEFT JOIN work_order_items woi ON woi.id = psl.wo_item_id
 		WHERE %s >= ?
 		ORDER BY %s DESC, psl.id DESC
-		LIMIT ?
-	`, scanSchema.eventAtExpr, scanSchema.scanTypeExpr, scanSchema.machineDisplayExpr, scanSchema.productionLineExpr, scanSchema.scanTypeExpr, scanSchema.outputQtyExpr, scanSchema.scanTypeExpr, scanSchema.outputQtyExpr, scanSchema.inputQtyExpr, scanSchema.inputQtyExpr, scanSchema.joinMachine, scanSchema.eventAtExpr, scanSchema.eventAtExpr), since, filter.Limit).Scan(&rows).Error
+		LIMIT ? OFFSET ?
+	`, scanSchema.eventAtExpr, scanSchema.scanTypeExpr, scanSchema.machineDisplayExpr, scanSchema.productionLineExpr, scanSchema.scanTypeExpr, scanSchema.outputQtyExpr, scanSchema.scanTypeExpr, scanSchema.outputQtyExpr, scanSchema.inputQtyExpr, scanSchema.inputQtyExpr, scanSchema.joinMachine, scanSchema.eventAtExpr, scanSchema.eventAtExpr), since, filter.Limit, filter.Offset).Scan(&rows).Error
 	if err != nil {
 		return nil, apperror.Internal("shop floor scan events items: " + err.Error())
 	}
@@ -717,6 +725,15 @@ func (r *repository) GetScanEventsSummary(ctx context.Context, filter Filter) (*
 	items := make([]models.ScanEvent, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, models.ScanEvent(row))
+	}
+
+	totalPages := 0
+	if filter.Limit > 0 {
+		totalPages = int((total.TotalRows + int64(filter.Limit) - 1) / int64(filter.Limit))
+	}
+	page := 1
+	if filter.Offset > 0 && filter.Limit > 0 {
+		page = filter.Offset/filter.Limit + 1
 	}
 
 	return &models.ScanEventsSummary{
@@ -727,6 +744,12 @@ func (r *repository) GetScanEventsSummary(ctx context.Context, filter Filter) (*
 		ScanOutCount: total.ScanOutCount,
 		QCCount:      total.QCCount,
 		Items:        items,
+		Pagination: models.PaginationMeta{
+			Total:      total.TotalRows,
+			Page:       page,
+			Limit:      filter.Limit,
+			TotalPages: totalPages,
+		},
 	}, nil
 }
 
@@ -874,6 +897,15 @@ func (r *repository) getScanLogSchema(ctx context.Context) (*scanLogSchema, erro
 
 	machineKeyExpr := fmt.Sprintf("COALESCE(NULLIF(%s::text, ''), CONCAT('line:', COALESCE(NULLIF(%s::text, ''), 'UNASSIGNED'))) ", machineDisplayExpr, productionLineExpr)
 
+	scannedByExpr := firstExistingExpr(cols, map[string]string{
+		"scanned_by": "COALESCE(psl.scanned_by, '')",
+		"operator":   "COALESCE(psl.operator, '')",
+		"created_by": "COALESCE(psl.created_by, '')",
+	})
+	if scannedByExpr == "" {
+		scannedByExpr = "''"
+	}
+
 	return &scanLogSchema{
 		eventAtExpr:        eventAtExpr,
 		scanTypeExpr:       scanTypeExpr,
@@ -883,5 +915,6 @@ func (r *repository) getScanLogSchema(ctx context.Context) (*scanLogSchema, erro
 		productionLineExpr: productionLineExpr,
 		machineKeyExpr:     machineKeyExpr,
 		joinMachine:        joinMachine,
+		scannedBy:          scannedByExpr,
 	}, nil
 }
