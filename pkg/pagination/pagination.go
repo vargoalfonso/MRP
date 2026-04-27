@@ -380,6 +380,19 @@ type QCDashboardPaginationInput struct {
 	GroupBy        string        `json:"group_by"`
 }
 
+// MainDashboardPaginationInput extends PaginationInput with dashboard period filters.
+type MainDashboardPaginationInput struct {
+	Limit          int           `json:"limit"`
+	Page           int           `json:"page"`
+	Search         string        `json:"search"`
+	Filter         []FilterInput `json:"filter"`
+	OrderBy        string        `json:"order_by"`
+	OrderDirection string        `json:"order_direction"`
+	Period         string        `json:"period"`
+	StartDate      string        `json:"start_date"`
+	EndDate        string        `json:"end_date"`
+}
+
 func (p QCTaskPaginationInput) Offset() int {
 	if p.Page < 1 {
 		return 0
@@ -388,6 +401,13 @@ func (p QCTaskPaginationInput) Offset() int {
 }
 
 func (p QCDashboardPaginationInput) Offset() int {
+	if p.Page < 1 {
+		return 0
+	}
+	return (p.Page - 1) * p.Limit
+}
+
+func (p MainDashboardPaginationInput) Offset() int {
 	if p.Page < 1 {
 		return 0
 	}
@@ -436,6 +456,31 @@ func QCDashboardPagination(c *app.Context) QCDashboardPaginationInput {
 		ReasonCode:     c.Query("reason_code"),
 		Status:         c.Query("status"),
 		GroupBy:        c.Query("group_by"),
+	}
+}
+
+// MainDashboardPagination parses dashboard-specific period params.
+//
+//	?period=current_month
+//	?period=custom&start_date=2026-04-01&end_date=2026-04-30
+func MainDashboardPagination(c *app.Context) MainDashboardPaginationInput {
+	base := Pagination(c)
+
+	period := c.Query("period")
+	if period == "" {
+		period = "current_month"
+	}
+
+	return MainDashboardPaginationInput{
+		Limit:          base.Limit,
+		Page:           base.Page,
+		Search:         base.Search,
+		Filter:         base.Filter,
+		OrderBy:        base.OrderBy,
+		OrderDirection: base.OrderDirection,
+		Period:         period,
+		StartDate:      c.Query("start_date"),
+		EndDate:        c.Query("end_date"),
 	}
 }
 

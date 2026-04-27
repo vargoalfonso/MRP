@@ -78,6 +78,10 @@ import (
 	kanbanHandler "github.com/ganasa18/go-template/internal/kanban/handler"
 	kanbanRepository "github.com/ganasa18/go-template/internal/kanban/repository"
 	kanbanService "github.com/ganasa18/go-template/internal/kanban/service"
+	mainDashboardModule "github.com/ganasa18/go-template/internal/main_dashboard"
+	mainDashboardHandler "github.com/ganasa18/go-template/internal/main_dashboard/handler"
+	mainDashboardRepository "github.com/ganasa18/go-template/internal/main_dashboard/repository"
+	mainDashboardService "github.com/ganasa18/go-template/internal/main_dashboard/service"
 	masterMachineModule "github.com/ganasa18/go-template/internal/master_machine"
 	masterMachineHandler "github.com/ganasa18/go-template/internal/master_machine/handler"
 	masterMachineRepository "github.com/ganasa18/go-template/internal/master_machine/repository"
@@ -275,6 +279,9 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	shopFloorRepo := shopFloorRepository.New(db)
 	shopFloorSvc := shopFloorService.New(shopFloorRepo, concurrency.DefaultFanout)
 	shopFloorHTTPHandler := shopFloorHandler.New(shopFloorSvc)
+	mainDashRepo := mainDashboardRepository.New(db)
+	mainDashSvc := mainDashboardService.New(mainDashRepo, concurrency.DefaultFanout)
+	mainDashHTTPHandler := mainDashboardHandler.New(mainDashSvc)
 
 	// QC module (task list + approve/reject)
 	qcRepository := qcRepo.New(db)
@@ -408,6 +415,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		procModule.NewHTTPModule(cfg, baseHTTPHandler, procHTTPHandler, authSvc, roleSvc),
 		actionUIModule.NewHTTPModule(cfg, baseHTTPHandler, actionHTTPHandler, authSvc, roleSvc),
 		shopFloorModule.NewHTTPModule(cfg, baseHTTPHandler, shopFloorHTTPHandler, authSvc, roleSvc, shopFloorSvc),
+		mainDashboardModule.NewHTTPModule(cfg, baseHTTPHandler, mainDashHTTPHandler, authSvc, roleSvc),
 		qcModule.NewHTTPModule(cfg, baseHTTPHandler, qcHTTPHandler, authSvc, roleSvc),
 		qcDashboardModule.NewHTTPModule(cfg, baseHTTPHandler, qcDashboardHTTPHandler, authSvc, roleSvc, qcDashboardSvc),
 		inventoryModule.NewHTTPModule(cfg, baseHTTPHandler, invHTTPHandler, authSvc, roleSvc, invSvc),
