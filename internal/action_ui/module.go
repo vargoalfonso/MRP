@@ -76,8 +76,11 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	// 🧪 QC
 	// ================================
 	qc := g.Group("/qc")
-	// ✅ QC Submit (round 1 / 2 / 3)
 	// POST /api/v1/action-ui/qc/submit
 	qc.GET("/list", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.ListQCTask))
-	qc.POST("/submit", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.QCSubmit))
+
+	// ✅ QC Process (round 1 / 2 / 3)
+	qcGroup := qc.Group("/process")
+	qcGroup.POST("/approve", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.QCApprove))
+	qcGroup.POST("/reject", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.QCReject))
 }

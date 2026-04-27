@@ -82,7 +82,7 @@ type QCSubmitRequest struct {
 	QtyDefect  float64 `json:"qty_defect"`
 	QtyScrap   float64 `json:"qty_scrap"`
 
-	Status string `json:"status" binding:"required"` // PASSED / FAILED
+	Status string `json:"status"`
 }
 
 type FinishedGoodsResponse struct {
