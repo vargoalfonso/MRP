@@ -2,14 +2,19 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/ganasa18/go-template/internal/access_control/models"
 	acmRepo "github.com/ganasa18/go-template/internal/access_control/repository"
+	authModels "github.com/ganasa18/go-template/internal/auth/models"
 	authRepo "github.com/ganasa18/go-template/internal/auth/repository"
 	departmentRepo "github.com/ganasa18/go-template/internal/departement/repository"
 	employeeRepo "github.com/ganasa18/go-template/internal/employee/repository"
 	roleRepo "github.com/ganasa18/go-template/internal/role/repository"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type IACMService interface {
@@ -78,7 +83,29 @@ func (s *service) Create(ctx context.Context, req models.CreateACMRequest) (*mod
 
 		user, err := s.authRepo.FindUserByEmployeeID(ctx, *req.EmployeeID)
 		if err != nil {
-			return nil, fmt.Errorf("user untuk employee ini tidak ditemukan")
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+
+				employeeID := strconv.FormatInt(*req.EmployeeID, 10)
+
+				newUser := &authModels.User{
+					UUID:       uuid.New().String(),
+					Username:   employeeID,
+					Email:      fmt.Sprintf("%s@local.user", employeeID),
+					Roles:      "user",
+					EmployeeID: &employeeID,
+					Provider:   "local",
+					IsVerified: true,
+				}
+
+				if err := s.authRepo.Create(ctx, newUser); err != nil {
+					return nil, err
+				}
+
+				user = newUser
+
+			} else {
+				return nil, err
+			}
 		}
 
 		// ❌ BELUM VERIFIED
