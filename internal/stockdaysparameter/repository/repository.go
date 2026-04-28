@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/ganasa18/go-template/internal/stockdaysparameter/models"
 	"gorm.io/gorm"
@@ -53,4 +55,21 @@ func (r *repository) Update(ctx context.Context, id int64, data map[string]inter
 
 func (r *repository) Delete(ctx context.Context, id int64) error {
 	return r.db.WithContext(ctx).Delete(&models.StockdaysParameter{}, id).Error
+}
+
+func (r *repository) GetSafetyStockByItem(ctx context.Context, itemUniqCode string) (*models.SafetyStockParameter, error) {
+	var data models.SafetyStockParameter
+
+	err := r.db.WithContext(ctx).
+		Where("item_uniq_code = ?", itemUniqCode).
+		First(&data).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("safety stock parameter with item_uniq_code %s not found", itemUniqCode)
+		}
+		return nil, err
+	}
+
+	return &data, nil
 }
