@@ -1,4 +1,4 @@
-package departement
+package po_split_setting
 
 import (
 	"github.com/ganasa18/go-template/config"

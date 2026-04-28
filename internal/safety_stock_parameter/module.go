@@ -1,4 +1,4 @@
-package departement
+package safety_stock_parameter
 
 import (
 	"github.com/ganasa18/go-template/config"

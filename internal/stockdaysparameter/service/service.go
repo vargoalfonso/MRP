@@ -3,8 +3,8 @@ package service
 import (
 	"context"
 
-	"github.com/ganasa18/go-template/internal/stockdays_parameter/models"
-	"github.com/ganasa18/go-template/internal/stockdays_parameter/repository"
+	"github.com/ganasa18/go-template/internal/stockdaysparameter/models"
+	"github.com/ganasa18/go-template/internal/stockdaysparameter/repository"
 )
 
 type IStockdayService interface {

@@ -1,4 +1,4 @@
-package departement
+package approval_workflow
 
 import (
 	"github.com/ganasa18/go-template/config"

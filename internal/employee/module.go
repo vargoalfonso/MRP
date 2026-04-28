@@ -1,4 +1,4 @@
-package departement
+package employee
 
 import (
 	"github.com/ganasa18/go-template/config"

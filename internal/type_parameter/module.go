@@ -1,4 +1,4 @@
-package departement
+package type_parameter
 
 import (
 	"github.com/ganasa18/go-template/config"

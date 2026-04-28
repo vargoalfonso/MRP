@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 
-	"github.com/ganasa18/go-template/internal/stockdays_parameter/models"
+	"github.com/ganasa18/go-template/internal/stockdaysparameter/models"
 	"gorm.io/gorm"
 )
 

@@ -5,8 +5,8 @@ import (
 	"strconv"
 
 	"github.com/ganasa18/go-template/internal/base/app"
-	"github.com/ganasa18/go-template/internal/stockdays_parameter/models"
-	stockdays "github.com/ganasa18/go-template/internal/stockdays_parameter/service"
+	"github.com/ganasa18/go-template/internal/stockdaysparameter/models"
+	stockdays "github.com/ganasa18/go-template/internal/stockdaysparameter/service"
 )
 
 // HTTPHandler holds stockdays parameter endpoints

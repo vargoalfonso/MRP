@@ -1,4 +1,4 @@
-package stockdays_parameter
+package stockdaysparameter
 
 import (
 	"github.com/ganasa18/go-template/config"
@@ -9,8 +9,8 @@ import (
 
 	roleMiddleware "github.com/ganasa18/go-template/internal/role/middleware"
 	roleService "github.com/ganasa18/go-template/internal/role/service"
-	stockdaysHandler "github.com/ganasa18/go-template/internal/stockdays_parameter/handler"
-	stockdaysService "github.com/ganasa18/go-template/internal/stockdays_parameter/service"
+	stockdaysHandler "github.com/ganasa18/go-template/internal/stockdaysparameter/handler"
+	stockdaysService "github.com/ganasa18/go-template/internal/stockdaysparameter/service"
 
 	"github.com/gin-gonic/gin"
 )

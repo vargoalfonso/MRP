@@ -1,4 +1,4 @@
-package departement
+package delivery_note
 
 import (
 	"github.com/ganasa18/go-template/config"

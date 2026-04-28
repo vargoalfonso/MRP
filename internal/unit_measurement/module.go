@@ -1,4 +1,4 @@
-package departement
+package unit_measurement
 
 import (
 	"github.com/ganasa18/go-template/config"
