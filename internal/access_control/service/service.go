@@ -51,10 +51,25 @@ func (s *service) GetByID(ctx context.Context, id int64) (*models.AccessControlM
 
 func (s *service) Create(ctx context.Context, req models.CreateACMRequest) (*models.AccessControlMatrix, error) {
 
+	employeeID, err := strconv.ParseInt(req.EmployeeID, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("employee_id harus angka")
+	}
+
+	roleID, err := strconv.ParseInt(req.RoleID, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("role_id harus angka")
+	}
+
+	departmentID, err := strconv.ParseInt(req.DepartmentID, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("department_id harus angka")
+	}
+
 	// ==============================
 	// 🔥 1. VALIDASI ROLE
 	// ==============================
-	role, err := s.roleRepo.FindByID(ctx, *req.RoleID)
+	role, err := s.roleRepo.FindByID(ctx, roleID)
 	if err != nil {
 		return nil, fmt.Errorf("role not found")
 	}
@@ -62,15 +77,15 @@ func (s *service) Create(ctx context.Context, req models.CreateACMRequest) (*mod
 	// ==============================
 	// 🔥 2. VALIDASI OPTIONAL DATA
 	// ==============================
-	if req.EmployeeID != nil {
-		_, err := s.employeeRepo.FindByID(ctx, *req.EmployeeID)
+	if req.EmployeeID != "" {
+		_, err := s.employeeRepo.FindByID(ctx, employeeID)
 		if err != nil {
 			return nil, fmt.Errorf("employee not found")
 		}
 	}
 
-	if req.DepartmentID != nil {
-		_, err := s.departmentRepo.FindByID(ctx, *req.DepartmentID)
+	if req.DepartmentID != "" {
+		_, err := s.departmentRepo.FindByID(ctx, departmentID)
 		if err != nil {
 			return nil, fmt.Errorf("department not found")
 		}
@@ -79,13 +94,13 @@ func (s *service) Create(ctx context.Context, req models.CreateACMRequest) (*mod
 	// ==============================
 	// 🔥 3. UPDATE ROLE KE USER (NEW LOGIC)
 	// ==============================
-	if req.EmployeeID != nil {
+	if req.EmployeeID != "" {
 
-		user, err := s.authRepo.FindUserByEmployeeID(ctx, *req.EmployeeID)
+		user, err := s.authRepo.FindUserByEmployeeID(ctx, employeeID)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 
-				employeeID := strconv.FormatInt(*req.EmployeeID, 10)
+				employeeID := strconv.FormatInt(employeeID, 10)
 
 				newUser := &authModels.User{
 					UUID:       uuid.New().String(),
@@ -131,7 +146,11 @@ func (s *service) Create(ctx context.Context, req models.CreateACMRequest) (*mod
 	return data, nil
 }
 
-func (s *service) Update(ctx context.Context, id int64, req models.UpdateACMRequest) (*models.AccessControlMatrix, error) {
+func (s *service) Update(
+	ctx context.Context,
+	id int64,
+	req models.UpdateACMRequest,
+) (*models.AccessControlMatrix, error) {
 
 	// ==============================
 	// 🔥 1. CEK ACM EXIST
@@ -141,69 +160,100 @@ func (s *service) Update(ctx context.Context, id int64, req models.UpdateACMRequ
 		return nil, fmt.Errorf("acm not found")
 	}
 
+	var (
+		employeeID   int64
+		roleID       int64
+		departmentID int64
+		roleName     string
+	)
+
 	// ==============================
-	// 🔥 2. VALIDASI ROLE
+	// 🔥 2. PARSE REQUEST STRING -> INT
 	// ==============================
-	var roleName string
-	if req.RoleID != nil {
-		role, err := s.roleRepo.FindByID(ctx, *req.RoleID)
+	if req.EmployeeID != "" {
+		employeeID, err = strconv.ParseInt(req.EmployeeID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("employee_id harus angka")
+		}
+	}
+
+	if req.RoleID != "" {
+		roleID, err = strconv.ParseInt(req.RoleID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("role_id harus angka")
+		}
+	}
+
+	if req.DepartmentID != "" {
+		departmentID, err = strconv.ParseInt(req.DepartmentID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("department_id harus angka")
+		}
+	}
+
+	// ==============================
+	// 🔥 3. VALIDASI ROLE
+	// ==============================
+	if req.RoleID != "" {
+		role, err := s.roleRepo.FindByID(ctx, roleID)
 		if err != nil {
 			return nil, fmt.Errorf("role not found")
 		}
+
 		roleName = role.Name
 	}
 
 	// ==============================
-	// 🔥 3. VALIDASI EMPLOYEE
+	// 🔥 4. VALIDASI EMPLOYEE
 	// ==============================
-	if req.EmployeeID != nil {
-		_, err := s.employeeRepo.FindByID(ctx, *req.EmployeeID)
+	if req.EmployeeID != "" {
+		_, err := s.employeeRepo.FindByID(ctx, employeeID)
 		if err != nil {
 			return nil, fmt.Errorf("employee not found")
 		}
 	}
 
 	// ==============================
-	// 🔥 4. VALIDASI DEPARTMENT
+	// 🔥 5. VALIDASI DEPARTMENT
 	// ==============================
-	if req.DepartmentID != nil {
-		_, err := s.departmentRepo.FindByID(ctx, *req.DepartmentID)
+	if req.DepartmentID != "" {
+		_, err := s.departmentRepo.FindByID(ctx, departmentID)
 		if err != nil {
 			return nil, fmt.Errorf("department not found")
 		}
 	}
 
 	// ==============================
-	// 🔥 5. SYNC USER (IMPORTANT FIX)
+	// 🔥 6. SYNC USER
 	// ==============================
 	targetEmployeeID := existing.EmployeeID
-	if req.EmployeeID != nil {
-		targetEmployeeID = req.EmployeeID
+
+	if req.EmployeeID != "" {
+		targetEmployeeID = employeeID
 	}
 
-	if targetEmployeeID != nil {
+	if req.EmployeeID != "" {
+		targetEmployeeID = employeeID
+	}
 
-		user, err := s.authRepo.FindUserByEmployeeID(ctx, *targetEmployeeID)
+	user, err := s.authRepo.FindUserByEmployeeID(ctx, targetEmployeeID)
+	if err != nil {
+		return nil, fmt.Errorf("user tidak ditemukan untuk employee ini")
+	}
+
+	if !user.IsVerified {
+		return nil, fmt.Errorf("user belum aktivasi akun")
+	}
+
+	if req.RoleID != "" {
+		err = s.authRepo.UpdateUserRole(ctx, user.ID, roleName)
 		if err != nil {
-			return nil, fmt.Errorf("user tidak ditemukan untuk employee ini")
-		}
-
-		// ❌ BELUM VERIFIED → TOLAK
-		if !user.IsVerified {
-			return nil, fmt.Errorf("user belum aktivasi akun")
-		}
-
-		// 🔥 UPDATE ROLE
-		if req.RoleID != nil {
-			err = s.authRepo.UpdateUserRole(ctx, user.ID, roleName)
-			if err != nil {
-				return nil, err
-			}
+			return nil, err
 		}
 	}
 
 	// ==============================
-	// 🔥 6. UPDATE ACM
+	// 🔥 7. UPDATE ACM
 	// ==============================
 	data, err := s.repo.Update(ctx, id, req)
 	if err != nil {
@@ -226,24 +276,19 @@ func (s *service) Delete(ctx context.Context, id int64) error {
 	// ==============================
 	// 🔥 2. AMBIL USER DARI EMPLOYEE
 	// ==============================
-	if existing.EmployeeID != nil {
+	user, err := s.authRepo.FindUserByEmployeeID(ctx, existing.EmployeeID)
+	if err == nil && user != nil {
 
-		user, err := s.authRepo.FindUserByEmployeeID(ctx, *existing.EmployeeID)
-		if err == nil && user != nil {
-
-			// 🔥 DOWNGRADE ROLE → "user"
-			err = s.authRepo.UpdateUserRole(ctx, user.ID, "user")
-			if err != nil {
-				return err
-			}
+		// 🔥 DOWNGRADE ROLE → "user"
+		if err := s.authRepo.UpdateUserRole(ctx, user.ID, "user"); err != nil {
+			return err
 		}
 	}
 
 	// ==============================
 	// 🔥 3. DELETE ACM
 	// ==============================
-	err = s.repo.Delete(ctx, id)
-	if err != nil {
+	if err := s.repo.Delete(ctx, id); err != nil {
 		return err
 	}
 
