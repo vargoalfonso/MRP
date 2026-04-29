@@ -39,7 +39,7 @@ func (s *service) Create(ctx context.Context, req models.CreateStockdaysRequest)
 	}
 
 	data := models.StockdaysParameter{
-		IventoryType:    req.IventoryType,
+		InventoryType:   req.InventoryType,
 		ItemCode:        req.ItemCode,
 		CalculationType: req.CalculationType,
 		Constanta:       req.Constanta,
@@ -56,8 +56,8 @@ func (s *service) Create(ctx context.Context, req models.CreateStockdaysRequest)
 func (s *service) Update(ctx context.Context, id int64, req models.UpdateStockdaysRequest) (*models.StockdaysParameter, error) {
 	updateData := map[string]interface{}{}
 
-	if req.IventoryType != "" {
-		updateData["ivertory_type"] = req.IventoryType
+	if req.InventoryType != "" {
+		updateData["inventory_type"] = req.InventoryType
 	}
 
 	if req.ItemCode != "" {
@@ -92,7 +92,7 @@ func (s *service) BulkCreate(ctx context.Context, req models.BulkCreateStockdays
 
 	for _, item := range req.Items {
 		data = append(data, models.StockdaysParameter{
-			IventoryType:    item.IventoryType,
+			InventoryType:   item.InventoryType,
 			ItemCode:        item.ItemCode,
 			CalculationType: item.CalculationType,
 			Constanta:       item.Constanta,

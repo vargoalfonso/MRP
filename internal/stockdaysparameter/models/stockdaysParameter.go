@@ -6,7 +6,7 @@ import (
 
 type StockdaysParameter struct {
 	ID              int64     `gorm:"primaryKey" json:"id"`
-	IventoryType    string    `json:"inventory_type"`
+	InventoryType   string    `json:"inventory_type"`
 	ItemCode        string    `json:"item_code"`
 	CalculationType string    `json:"calculation_type"`
 	Constanta       int       `json:"constanta"`

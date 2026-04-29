@@ -1,7 +1,7 @@
 package models
 
 type CreateStockdaysRequest struct {
-	IventoryType    string  `json:"inventory_type" binding:"required"`
+	InventoryType   string  `json:"inventory_type" binding:"required"`
 	ItemCode        string  `json:"item_code" binding:"required"`
 	CalculationType string  `json:"calculation_type"`
 	Constanta       int     `json:"constanta"`
@@ -9,7 +9,7 @@ type CreateStockdaysRequest struct {
 }
 
 type UpdateStockdaysRequest struct {
-	IventoryType    string  `json:"inventory_type"`
+	InventoryType   string  `json:"inventory_type"`
 	ItemCode        string  `json:"item_code" binding:"required"`
 	CalculationType string  `json:"calculation_type"`
 	Constanta       int     `json:"constanta"`
