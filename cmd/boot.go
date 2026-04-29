@@ -78,6 +78,10 @@ import (
 	kanbanHandler "github.com/ganasa18/go-template/internal/kanban/handler"
 	kanbanRepository "github.com/ganasa18/go-template/internal/kanban/repository"
 	kanbanService "github.com/ganasa18/go-template/internal/kanban/service"
+	machinePatternModule "github.com/ganasa18/go-template/internal/machine_pattern"
+	machinePatternHandler "github.com/ganasa18/go-template/internal/machine_pattern/handler"
+	machinePatternRepository "github.com/ganasa18/go-template/internal/machine_pattern/repository"
+	machinePatternService "github.com/ganasa18/go-template/internal/machine_pattern/service"
 	mainDashboardModule "github.com/ganasa18/go-template/internal/main_dashboard"
 	mainDashboardHandler "github.com/ganasa18/go-template/internal/main_dashboard/handler"
 	mainDashboardRepository "github.com/ganasa18/go-template/internal/main_dashboard/repository"
@@ -139,6 +143,10 @@ import (
 	scrapHandler "github.com/ganasa18/go-template/internal/scrap_stock/handler"
 	scrapRepo "github.com/ganasa18/go-template/internal/scrap_stock/repository"
 	scrapService "github.com/ganasa18/go-template/internal/scrap_stock/service"
+	scrapTypeModule "github.com/ganasa18/go-template/internal/scrap_type"
+	scrapTypeHandler "github.com/ganasa18/go-template/internal/scrap_type/handler"
+	scrapTypeRepository "github.com/ganasa18/go-template/internal/scrap_type/repository"
+	scrapTypeService "github.com/ganasa18/go-template/internal/scrap_type/service"
 	shopFloorModule "github.com/ganasa18/go-template/internal/shop_floor"
 	shopFloorHandler "github.com/ganasa18/go-template/internal/shop_floor/handler"
 	shopFloorRepository "github.com/ganasa18/go-template/internal/shop_floor/repository"
@@ -340,6 +348,16 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	kanbanSvc := kanbanService.New(kanbanRepo)
 	kanbanHTTPHandler := kanbanHandler.New(kanbanSvc)
 
+	// Machine Pattern module
+	machinePatternRepo := machinePatternRepository.New(db)
+	machinePatternSvc := machinePatternService.New(machinePatternRepo)
+	machinePatternHTTPHandler := machinePatternHandler.New(machinePatternSvc)
+
+	// Scrap Type module
+	scrapTypeRepo := scrapTypeRepository.New(db)
+	scrapTypeSvc := scrapTypeService.New(scrapTypeRepo)
+	scrapTypeHTTPHandler := scrapTypeHandler.New(scrapTypeSvc)
+
 	deliveryNoteRepo := deliveryNoteRepository.New(db)
 	deliveryNoteSvc := deliveryNoteService.New(deliveryNoteRepo, db, approvalWorkflowRepo)
 	deliveryNoteHTTPHandler := deliveryNoteHandler.New(deliveryNoteSvc)
@@ -430,6 +448,8 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		processParameterModule.NewHTTPModule(cfg, baseHTTPHandler, processParameterHTTPHandler, authSvc, roleSvc, processParameterSvc),
 		masterMachineModule.NewHTTPModule(cfg, baseHTTPHandler, masterMachineHTTPHandler, authSvc, roleSvc, masterMachineSvc),
 		kanbanModule.NewHTTPModule(cfg, baseHTTPHandler, kanbanHTTPHandler, authSvc, roleSvc, kanbanSvc),
+		machinePatternModule.NewHTTPModule(cfg, baseHTTPHandler, machinePatternHTTPHandler, authSvc, roleSvc, machinePatternSvc),
+		scrapTypeModule.NewHTTPModule(cfg, baseHTTPHandler, scrapTypeHTTPHandler, authSvc, roleSvc, scrapTypeSvc),
 		deliveryNoteModule.NewHTTPModule(cfg, baseHTTPHandler, deliveryNoteHTTPHandler, authSvc, roleSvc, deliveryNoteSvc),
 		productionModule.NewHTTPModule(cfg, baseHTTPHandler, productionHTTPHandler, authSvc, roleSvc, productionSvc),
 		outgoingModule.NewHTTPModule(cfg, baseHTTPHandler, outgoingHTTPHandler, authSvc, roleSvc, outgoingSvc),
