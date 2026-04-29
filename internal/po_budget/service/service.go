@@ -446,17 +446,88 @@ func (s *svc) ApproveEntry(ctx context.Context, id int64, req models.ApproveRequ
 	}
 
 	now := time.Now()
-	e.Status = req.Status
-	e.ApprovedBy = &req.ApprovedBy
-	e.ApprovedAt = &now
 
-	if err := s.repo.UpdateEntry(ctx, e); err != nil {
-		return nil, apperror.InternalWrap("database error", err)
+	// Update in transaction: po_budget_entries + approval_instances
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Find and update approval instance with proper multi-level logic
+		var instance struct {
+			ID               int64
+			Status           string
+			CurrentLevel     int
+			MaxLevel         int
+			ApprovalProgress interface{} // JSONB column
+		}
+		if err := tx.WithContext(ctx).
+			Table("approval_instances").
+			Where("action_name = 'po-budget' AND reference_table = 'po_budget_entries' AND reference_id = ?", id).
+			Select("id, status, current_level, max_level, approval_progress").
+			Scan(&instance).Error; err != nil {
+			return apperror.InternalWrap("find approval instance failed", err)
+		}
+
+		if instance.ID == 0 {
+			return apperror.NotFound("approval instance not found")
+		}
+		if !strings.EqualFold(instance.Status, "pending") {
+			return apperror.BadRequest("approval instance is not pending")
+		}
+
+		// Multi-level approval logic: only mark as approved when at final level
+		var entryStatus string
+		var approvalStatus string
+		var newCurrentLevel int
+
+		if req.Status == "Rejected" {
+			// Rejected: set status immediately, don't advance levels
+			entryStatus = "Rejected"
+			approvalStatus = "Rejected"
+			newCurrentLevel = instance.MaxLevel // Mark all levels as processed
+		} else {
+			// Approved: check if at final level
+			if instance.CurrentLevel >= instance.MaxLevel {
+				entryStatus = "Approved"
+				approvalStatus = "Approved"
+				newCurrentLevel = instance.MaxLevel
+			} else {
+				// Not at final level - advance to next level
+				entryStatus = "Pending"
+				approvalStatus = "Pending"
+				newCurrentLevel = instance.CurrentLevel + 1
+			}
+		}
+
+		// Update po_budget_entries status
+		e.Status = entryStatus
+		e.ApprovedBy = &req.ApprovedBy
+		e.ApprovedAt = &now
+
+		if err := s.repo.UpdateEntry(ctx, e); err != nil {
+			return apperror.InternalWrap("update entry failed", err)
+		}
+
+		// Update approval instance
+		approvalUpdates := map[string]interface{}{
+			"status":        approvalStatus,
+			"current_level": newCurrentLevel,
+			"updated_at":    now,
+		}
+		if err := tx.WithContext(ctx).
+			Table("approval_instances").
+			Where("id = ?", instance.ID).
+			Updates(approvalUpdates).Error; err != nil {
+			return apperror.InternalWrap("update approval instance failed", err)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
+
 	user := req.ApprovedBy
 	notes := req.Notes
 	// Best-effort history log
-	_ = s.repo.CreateLog(ctx, &models.POBudgetEntryLog{EntryID: id, Action: req.Status, Username: &user, Notes: notes})
+	_ = s.repo.CreateLog(ctx, &models.POBudgetEntryLog{EntryID: id, Action: e.Status, Username: &user, Notes: notes})
 
 	updated, err := s.repo.GetEntryByID(ctx, id)
 	if err != nil {

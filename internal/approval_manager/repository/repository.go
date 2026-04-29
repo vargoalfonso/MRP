@@ -23,7 +23,7 @@ func New(db *gorm.DB) IRepository { return &repository{db: db} }
 
 func (r *repository) GetSummary(ctx context.Context, filterType string) (*approvalModels.SummaryResponse, error) {
 	base, args := approvalManagerBaseQuery(filterType, "", "", 0)
-	query := `SELECT COALESCE(COUNT(*) FILTER (WHERE src.status = 'pending'), 0) AS pending, COALESCE(COUNT(*) FILTER (WHERE src.status = 'approved'), 0) AS approved, COALESCE(COUNT(*) FILTER (WHERE src.status = 'rejected'), 0) AS rejected, COALESCE(COUNT(*), 0) AS total FROM (` + base + `) src`
+	query := `SELECT COALESCE(COUNT(*) FILTER (WHERE LOWER(src.status) = 'pending'), 0) AS pending, COALESCE(COUNT(*) FILTER (WHERE LOWER(src.status) = 'approved'), 0) AS approved, COALESCE(COUNT(*) FILTER (WHERE LOWER(src.status) = 'rejected'), 0) AS rejected, COALESCE(COUNT(*), 0) AS total FROM (` + base + `) src`
 	var row struct {
 		Pending  int64 `gorm:"column:pending"`
 		Approved int64 `gorm:"column:approved"`

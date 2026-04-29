@@ -587,6 +587,7 @@ func (s *service) createApprovalInstance(ctx context.Context, referenceID int64,
 		ReferenceTable: "prls",
 		ReferenceID:    referenceID,
 		SubmittedBy:    submittedBy,
+		MinLevels:      1,
 	})
 	return err
 }
