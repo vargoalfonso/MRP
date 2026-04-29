@@ -41,6 +41,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	g.GET("/product-return-qc", perm("qc_dashboard", "view"), m.base.RunAction(m.handler.ListProductReturnQC))
 	g.GET("/defects", perm("qc_dashboard", "view"), m.base.RunAction(m.handler.ListDefects))
 	g.GET("/issue-list", perm("qc_dashboard", "view"), m.base.RunAction(m.handler.ListIssueTypes))
+	g.GET("/form-options/manual-references", perm("qc_dashboard", "view"), m.base.RunAction(m.handler.ManualReferenceFormOptions))
 	g.POST("/reports/manual", perm("qc_dashboard", "create"), m.base.RunAction(m.handler.CreateManualQCReport))
 	g.POST("/defects/:defect_id/create-rework", perm("qc_dashboard", "create"), m.base.RunAction(m.handler.CreateReworkTask))
 }
