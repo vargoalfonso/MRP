@@ -1820,7 +1820,7 @@ func (s *service) ApproveBom(ctx context.Context, bomID int64, userID string, us
 	if instance == nil {
 		return nil, apperror.NotFound("approval record not found for this BOM")
 	}
-	if instance.Status == "approved" || instance.Status == "rejected" {
+	if strings.EqualFold(instance.Status, "approved") || strings.EqualFold(instance.Status, "rejected") {
 		return nil, apperror.BadRequest(fmt.Sprintf("BOM is already %s", instance.Status))
 	}
 
@@ -1854,9 +1854,12 @@ func (s *service) ApproveBom(ctx context.Context, bomID int64, userID string, us
 		instance.ApprovalProgress.Levels[lvlIdx].Note = note
 		instance.Status = "rejected"
 
-		if bom, _ := s.repo.GetBomByID(ctx, bomID); bom != nil {
-			bom.Status = "Draft"
-			_ = s.repo.UpdateBomItem(ctx, bom)
+		bom, err := s.repo.GetBomByID(ctx, bomID)
+		if err == nil && bom != nil {
+			bom.Status = "Rejected"
+			if err := s.repo.UpdateBomItem(ctx, bom); err != nil {
+				return nil, apperror.InternalWrap("failed to update bom item status to rejected", err)
+			}
 		}
 	} else {
 		instance.ApprovalProgress.Levels[lvlIdx].Status = "approved"

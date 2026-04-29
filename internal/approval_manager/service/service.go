@@ -49,7 +49,7 @@ func (s *service) GetDetail(ctx context.Context, instanceID int64, userRoles []s
 
 func applyPermissions(item *approvalModels.Item, userRoles []string) {
 	item.CanView = true
-	item.IsMyTurn = item.Status == "pending" && hasRole(userRoles, item.CurrentLevelRole)
+	item.IsMyTurn = strings.EqualFold(item.Status, "pending") && hasRole(userRoles, item.CurrentLevelRole)
 	item.CanApprove = item.IsMyTurn
 	item.CanReject = item.IsMyTurn
 	item.ViewMode = "read_only"
@@ -71,7 +71,7 @@ func applyDetailPermissions(item *approvalModels.DetailResponse, userRoles []str
 		levelRole = item.Workflow.Level4Role
 	}
 	item.CanView = true
-	item.IsMyTurn = item.Status == "pending" && hasRole(userRoles, levelRole)
+	item.IsMyTurn = strings.EqualFold(item.Status, "pending") && hasRole(userRoles, levelRole)
 	item.CanApprove = item.IsMyTurn
 	item.CanReject = item.IsMyTurn
 	item.ViewMode = "read_only"
