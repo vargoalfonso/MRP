@@ -90,6 +90,10 @@ import (
 	masterMachineHandler "github.com/ganasa18/go-template/internal/master_machine/handler"
 	masterMachineRepository "github.com/ganasa18/go-template/internal/master_machine/repository"
 	masterMachineService "github.com/ganasa18/go-template/internal/master_machine/service"
+	mechinParameterModule "github.com/ganasa18/go-template/internal/mechin_parameter"
+	mechinParameterHandler "github.com/ganasa18/go-template/internal/mechin_parameter/handler"
+	mechinParameterRepository "github.com/ganasa18/go-template/internal/mechin_parameter/repository"
+	mechinParameterService "github.com/ganasa18/go-template/internal/mechin_parameter/service"
 	appmodule "github.com/ganasa18/go-template/internal/module"
 	outgoingModule "github.com/ganasa18/go-template/internal/outgoing_material"
 	outgoingHandler "github.com/ganasa18/go-template/internal/outgoing_material/handler"
@@ -352,6 +356,9 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	machinePatternRepo := machinePatternRepository.New(db)
 	machinePatternSvc := machinePatternService.New(machinePatternRepo)
 	machinePatternHTTPHandler := machinePatternHandler.New(machinePatternSvc)
+	mechinParameterRepo := mechinParameterRepository.New(db)
+	mechinParameterSvc := mechinParameterService.New(mechinParameterRepo)
+	mechinParameterHTTPHandler := mechinParameterHandler.New(mechinParameterSvc)
 
 	// Scrap Type module
 	scrapTypeRepo := scrapTypeRepository.New(db)
@@ -449,6 +456,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		masterMachineModule.NewHTTPModule(cfg, baseHTTPHandler, masterMachineHTTPHandler, authSvc, roleSvc, masterMachineSvc),
 		kanbanModule.NewHTTPModule(cfg, baseHTTPHandler, kanbanHTTPHandler, authSvc, roleSvc, kanbanSvc),
 		machinePatternModule.NewHTTPModule(cfg, baseHTTPHandler, machinePatternHTTPHandler, authSvc, roleSvc, machinePatternSvc),
+		mechinParameterModule.NewHTTPModule(cfg, baseHTTPHandler, mechinParameterHTTPHandler, authSvc, roleSvc, mechinParameterSvc),
 		scrapTypeModule.NewHTTPModule(cfg, baseHTTPHandler, scrapTypeHTTPHandler, authSvc, roleSvc, scrapTypeSvc),
 		deliveryNoteModule.NewHTTPModule(cfg, baseHTTPHandler, deliveryNoteHTTPHandler, authSvc, roleSvc, deliveryNoteSvc),
 		productionModule.NewHTTPModule(cfg, baseHTTPHandler, productionHTTPHandler, authSvc, roleSvc, productionSvc),
