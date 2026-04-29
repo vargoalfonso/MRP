@@ -39,10 +39,11 @@ func (s *service) Create(ctx context.Context, req models.CreateStockdaysRequest)
 	}
 
 	data := models.StockdaysParameter{
-		ItemUniqCode: req.ItemUniqCode,
-		StockDays:    req.StockDays,
-		SafetyStock:  req.SafetyStock,
-		Status:       status,
+		InventoryType:   req.InventoryType,
+		ItemCode:        req.ItemCode,
+		CalculationType: req.CalculationType,
+		Constanta:       req.Constanta,
+		Status:          status,
 	}
 
 	if err := s.repo.Create(ctx, &data); err != nil {
@@ -53,17 +54,29 @@ func (s *service) Create(ctx context.Context, req models.CreateStockdaysRequest)
 }
 
 func (s *service) Update(ctx context.Context, id int64, req models.UpdateStockdaysRequest) (*models.StockdaysParameter, error) {
-	status := "active"
-	if req.Status != nil {
-		status = *req.Status
+	updateData := map[string]interface{}{}
+
+	if req.InventoryType != "" {
+		updateData["inventory_type"] = req.InventoryType
 	}
 
-	err := s.repo.Update(ctx, id, map[string]interface{}{
-		"stock_days":   req.StockDays,
-		"safety_stock": req.SafetyStock,
-		"status":       status,
-	})
-	if err != nil {
+	if req.ItemCode != "" {
+		updateData["item_code"] = req.ItemCode
+	}
+
+	if req.CalculationType != "" {
+		updateData["calculation_type"] = req.CalculationType
+	}
+
+	if req.Constanta != 0 {
+		updateData["constanta"] = req.Constanta
+	}
+
+	if req.Status != nil {
+		updateData["status"] = *req.Status
+	}
+
+	if err := s.repo.Update(ctx, id, updateData); err != nil {
 		return nil, err
 	}
 
@@ -79,10 +92,11 @@ func (s *service) BulkCreate(ctx context.Context, req models.BulkCreateStockdays
 
 	for _, item := range req.Items {
 		data = append(data, models.StockdaysParameter{
-			ItemUniqCode: item.ItemUniqCode,
-			StockDays:    item.StockDays,
-			SafetyStock:  item.SafetyStock,
-			Status:       "active",
+			InventoryType:   item.InventoryType,
+			ItemCode:        item.ItemCode,
+			CalculationType: item.CalculationType,
+			Constanta:       item.Constanta,
+			Status:          "active",
 		})
 	}
 

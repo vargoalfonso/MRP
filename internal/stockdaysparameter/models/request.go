@@ -1,16 +1,19 @@
 package models
 
 type CreateStockdaysRequest struct {
-	ItemUniqCode string  `json:"item_code" binding:"required"`
-	StockDays    int     `json:"stock_days"`
-	SafetyStock  int     `json:"safety_stock"`
-	Status       *string `json:"status"`
+	InventoryType   string  `json:"inventory_type" binding:"required"`
+	ItemCode        string  `json:"item_code" binding:"required"`
+	CalculationType string  `json:"calculation_type"`
+	Constanta       int     `json:"constanta"`
+	Status          *string `json:"status"`
 }
 
 type UpdateStockdaysRequest struct {
-	StockDays   int     `json:"stock_days"`
-	SafetyStock int     `json:"safety_stock"`
-	Status      *string `json:"status"`
+	InventoryType   string  `json:"inventory_type"`
+	ItemCode        string  `json:"item_code" binding:"required"`
+	CalculationType string  `json:"calculation_type"`
+	Constanta       int     `json:"constanta"`
+	Status          *string `json:"status"`
 }
 
 type BulkCreateStockdaysRequest struct {
