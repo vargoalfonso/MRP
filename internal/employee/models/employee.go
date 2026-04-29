@@ -15,7 +15,7 @@ type Employee struct {
 	UnitCost     float64    `json:"unit_cost" db:"unit_cost"`
 	JoinDate     *time.Time `json:"join_date" db:"join_date"`
 	RoleID       int64      `json:"role_id" db:"role_id"`
-	DepartmentID int64      `json:"department_id" db:"department_id"`
+	DepartmentID *int64     `json:"department_id" db:"department_id"`
 	ReportsToID  *int64     `json:"reports_to_id" db:"reports_to_id"`
 	Status       string     `json:"status" db:"status"`
 	Notes        string     `json:"notes" db:"notes"`

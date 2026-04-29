@@ -10,7 +10,7 @@ import (
 
 const (
 	WarehouseTypeRawMaterial   = "raw_material"
-	WarehouseTypeWIP           = "wip"
+	WarehouseTypeIRM           = "indirect_raw_material"
 	WarehouseTypeFinishedGoods = "finished_goods"
 	WarehouseTypeSubcon        = "subcon"
 	WarehouseTypeGeneral       = "general"
@@ -18,7 +18,7 @@ const (
 
 var AllowedWarehouseTypes = []string{
 	WarehouseTypeRawMaterial,
-	WarehouseTypeWIP,
+	WarehouseTypeIRM,
 	WarehouseTypeFinishedGoods,
 	WarehouseTypeSubcon,
 	WarehouseTypeGeneral,
@@ -41,13 +41,13 @@ func (Warehouse) TableName() string {
 
 type CreateWarehouseRequest struct {
 	WarehouseName string `json:"warehouse_name" validate:"required,max=255"`
-	TypeWarehouse string `json:"type_warehouse" validate:"required,oneof=raw_material wip finished_goods subcon general"`
+	TypeWarehouse string `json:"type_warehouse" validate:"required,oneof=raw_material indirect_raw_material finished_goods subcon general"`
 	PlantID       string `json:"plant_id" validate:"required,max=100"`
 }
 
 type UpdateWarehouseRequest struct {
 	WarehouseName string `json:"warehouse_name" validate:"required,max=255"`
-	TypeWarehouse string `json:"type_warehouse" validate:"required,oneof=raw_material wip finished_goods subcon general"`
+	TypeWarehouse string `json:"type_warehouse" validate:"required,oneof=raw_material indirect_raw_material finished_goods subcon general"`
 	PlantID       string `json:"plant_id" validate:"required,max=100"`
 }
 

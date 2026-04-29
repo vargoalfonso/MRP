@@ -11,6 +11,7 @@ import (
 	authRepo "github.com/ganasa18/go-template/internal/auth/repository"
 	"github.com/ganasa18/go-template/internal/employee/models"
 	employeeRepo "github.com/ganasa18/go-template/internal/employee/repository"
+	"github.com/ganasa18/go-template/pkg/apperror"
 	email "github.com/ganasa18/go-template/pkg/email"
 	"github.com/google/uuid"
 )
@@ -66,6 +67,13 @@ func (s *service) Delete(ctx context.Context, id int64) error {
 func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) (*models.Employee, error) {
 	var employee *models.Employee
 
+	if req.DepartmentID != nil && *req.DepartmentID <= 0 {
+		req.DepartmentID = nil
+	}
+	if req.ReportsToID != nil && *req.ReportsToID <= 0 {
+		req.ReportsToID = nil
+	}
+
 	err := s.repo.Tx(ctx, func(txRepo employeeRepo.IEmployeeRepository) error {
 
 		// ==============================
@@ -76,7 +84,23 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 			return err
 		}
 		if exist {
-			return fmt.Errorf("email sudah terdaftar")
+			return apperror.Conflict("email sudah terdaftar")
+		}
+
+		_, err = s.authRepo.FindByEmail(ctx, req.Email)
+		if err == nil {
+			return apperror.Conflict("email sudah terdaftar")
+		}
+		if err != nil {
+			if appErr, ok := apperror.As(err); !ok || appErr.Code != apperror.CodeNotFound {
+				return err
+			}
+		}
+
+		if req.ReportsToID != nil {
+			if _, err := txRepo.FindByID(ctx, *req.ReportsToID); err != nil {
+				return apperror.BadRequest("reports_to_id tidak valid")
+			}
 		}
 
 		// ==============================

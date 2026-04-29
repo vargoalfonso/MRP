@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS public.warehouse (
     CONSTRAINT warehouse_pkey PRIMARY KEY (id),
     CONSTRAINT warehouse_uuid_key UNIQUE (uuid),
     CONSTRAINT warehouse_name_plant_key UNIQUE (warehouse_name, plant_id),
-    CONSTRAINT warehouse_type_check CHECK (type_warehouse IN ('raw_material', 'wip', 'finished_goods', 'subcon', 'general'))
+    CONSTRAINT warehouse_type_check CHECK (type_warehouse IN ('raw_material', 'indirect_raw_material', 'finished_goods', 'subcon', 'general'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_warehouse_deleted_at ON public.warehouse (deleted_at);

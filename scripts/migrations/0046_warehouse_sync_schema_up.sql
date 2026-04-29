@@ -71,7 +71,7 @@ BEGIN
         SELECT 1 FROM pg_constraint WHERE conname = 'warehouse_type_check'
     ) THEN
         ALTER TABLE public.warehouse
-            ADD CONSTRAINT warehouse_type_check CHECK (type_warehouse IN ('raw_material', 'wip', 'finished_goods', 'subcon', 'general'));
+            ADD CONSTRAINT warehouse_type_check CHECK (type_warehouse IN ('raw_material', 'indirect_raw_material', 'finished_goods', 'subcon', 'general'));
     END IF;
 END $$;
 

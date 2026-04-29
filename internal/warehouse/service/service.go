@@ -131,12 +131,12 @@ func normalizeType(value string) (string, error) {
 
 	switch cleaned {
 	case models.WarehouseTypeRawMaterial,
-		models.WarehouseTypeWIP,
+		models.WarehouseTypeIRM,
 		models.WarehouseTypeFinishedGoods,
 		models.WarehouseTypeSubcon,
 		models.WarehouseTypeGeneral:
 		return cleaned, nil
 	default:
-		return "", apperror.BadRequest("type_warehouse must be one of: raw_material, wip, finished_goods, subcon, general")
+		return "", apperror.BadRequest("type_warehouse must be one of: raw_material, IRM, finished_goods, subcon, general")
 	}
 }

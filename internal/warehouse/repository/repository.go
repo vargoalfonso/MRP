@@ -37,6 +37,23 @@ func wrapWarehouseDBError(msg string, err error) error {
 			}
 			return apperror.Conflict("duplicate value violates unique constraint")
 		}
+
+		// Check constraint violation (e.g. invalid enum value)
+		if pgErr.Code == "23514" {
+			if strings.Contains(pgErr.ConstraintName, "warehouse_type_check") {
+				return apperror.BadRequest("type_warehouse is not valid; allowed: raw_material, indirect_raw_material, finished_goods, subcon, general")
+			}
+			return apperror.BadRequest("check constraint violated: " + pgErr.Message)
+		}
+
+		// Not-null violation
+		if pgErr.Code == "23502" {
+			col := pgErr.ColumnName
+			if col == "" {
+				return apperror.BadRequest("missing required value")
+			}
+			return apperror.BadRequest("missing required value: " + col)
+		}
 	}
 
 	return apperror.InternalWrap(msg, err)

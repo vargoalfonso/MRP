@@ -3,9 +3,12 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/ganasa18/go-template/internal/employee/models"
+	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -104,7 +107,7 @@ func (r *repository) Update(ctx context.Context, id int64, req models.UpdateEmpl
 	if err := r.db.WithContext(ctx).
 		Model(&employee).
 		Updates(updateData).Error; err != nil {
-		return nil, err
+		return nil, mapWriteError(err)
 	}
 
 	// ambil data terbaru
@@ -132,6 +135,9 @@ func (r *repository) Delete(ctx context.Context, id int64) error {
 }
 
 func (r *repository) Create(ctx context.Context, req models.CreateEmployeeRequest) (*models.Employee, error) {
+	if req.DepartmentID != nil && *req.DepartmentID <= 0 {
+		req.DepartmentID = nil
+	}
 
 	emp := models.Employee{
 		FullName:     req.FullName,
@@ -150,7 +156,7 @@ func (r *repository) Create(ctx context.Context, req models.CreateEmployeeReques
 	}
 
 	if err := r.db.WithContext(ctx).Create(&emp).Error; err != nil {
-		return nil, err
+		return nil, mapWriteError(err)
 	}
 
 	return &emp, nil
@@ -173,4 +179,42 @@ func (r *repository) SaveActivationToken(ctx context.Context, token *models.User
 
 func (r *repository) CreateUserTx(ctx context.Context, tx *gorm.DB, user *models.User) error {
 	return tx.WithContext(ctx).Create(user).Error
+}
+
+func mapWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.ConstraintName {
+		case "fk_employee_role":
+			return apperror.BadRequest("role_id tidak valid")
+		case "fk_employee_department":
+			return apperror.BadRequest("department_id tidak valid")
+		case "fk_employee_manager":
+			return apperror.BadRequest("reports_to_id tidak valid")
+		}
+
+		switch pgErr.Code {
+		case "23503":
+			return apperror.BadRequest("referensi data employee tidak valid")
+		case "23505":
+			return apperror.Conflict("data employee sudah terdaftar")
+		}
+	}
+
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "fk_employee_role") {
+		return apperror.BadRequest("role_id tidak valid")
+	}
+	if strings.Contains(msg, "fk_employee_department") {
+		return apperror.BadRequest("department_id tidak valid")
+	}
+	if strings.Contains(msg, "fk_employee_manager") {
+		return apperror.BadRequest("reports_to_id tidak valid")
+	}
+
+	return err
 }
