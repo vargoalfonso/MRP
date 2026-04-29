@@ -44,6 +44,7 @@ type IRepository interface {
 	ListIncomingQC(ctx context.Context, filter Filter) (*models.IncomingQCListResponse, error)
 	ListProductReturnQC(ctx context.Context, filter Filter) (*models.ProductReturnQCListResponse, error)
 	ListDefects(ctx context.Context, filter Filter) (*models.DefectListResponse, error)
+	ListManualReferenceOptions(ctx context.Context, qcType, q string, limit int) (*models.ManualReferenceOptionsResponse, error)
 	CreateManualQCReport(ctx context.Context, req models.CreateManualQCReportRequest, performedBy string) error
 	CreateReworkTask(ctx context.Context, defectID int64, performedBy string) error
 }
@@ -335,6 +336,147 @@ func (r *repository) ListDefects(ctx context.Context, filter Filter) (*models.De
 		Pagination:         buildPagination(total, filter.Page, filter.Limit),
 		ImplementationNote: "Defect report mencakup production, incoming, dan product return sesuai data QC yang sudah tercatat.",
 	}, nil
+}
+
+func (r *repository) ListManualReferenceOptions(ctx context.Context, qcType, q string, limit int) (*models.ManualReferenceOptionsResponse, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	qcType = strings.ToLower(strings.TrimSpace(qcType))
+	if qcType == "" {
+		qcType = "production"
+	}
+
+	type row struct {
+		QCType             string  `gorm:"column:qc_type"`
+		ReferenceNumber    string  `gorm:"column:reference_number"`
+		SecondaryReference string  `gorm:"column:secondary_reference"`
+		UniqCode           string  `gorm:"column:uniq_code"`
+		ContextID          string  `gorm:"column:context_id"`
+		KanbanOrPacking    string  `gorm:"column:kanban_or_packing_number"`
+		PartName           string  `gorm:"column:part_name"`
+		UOM                string  `gorm:"column:uom"`
+		ItemQty            float64 `gorm:"column:item_qty"`
+	}
+
+	args := []interface{}{}
+	query := ""
+	if qcType == "production" {
+		where := ""
+		if strings.TrimSpace(q) != "" {
+			where = `
+				WHERE (
+					wo.wo_number ILIKE ? OR
+					woi.item_uniq_code ILIKE ? OR
+					COALESCE(woi.kanban_number, '') ILIKE ? OR
+					COALESCE(woi.part_name, '') ILIKE ? OR
+					COALESCE(woi.part_number, '') ILIKE ?
+				)`
+			search := like(q)
+			args = append(args, search, search, search, search, search)
+		}
+		query = `
+			SELECT
+				'production' AS qc_type,
+				COALESCE(wo.wo_number, '') AS reference_number,
+				'' AS secondary_reference,
+				COALESCE(woi.item_uniq_code, '') AS uniq_code,
+				COALESCE(woi.uuid::text, '') AS context_id,
+				COALESCE(woi.kanban_number, '') AS kanban_or_packing_number,
+				COALESCE(woi.part_name, '') AS part_name,
+				COALESCE(woi.uom, '') AS uom,
+				COALESCE(woi.quantity, 0) AS item_qty
+			FROM work_order_items woi
+			JOIN work_orders wo ON wo.id = woi.wo_id
+			` + where + `
+			ORDER BY wo.created_at DESC, woi.id DESC
+			LIMIT ?`
+		args = append(args, limit)
+	} else if qcType == "incoming" {
+		where := ""
+		if strings.TrimSpace(q) != "" {
+			where = `
+				WHERE (
+					COALESCE(dn.dn_number, '') ILIKE ? OR
+					COALESCE(dn.po_number, '') ILIKE ? OR
+					dni.item_uniq_code ILIKE ? OR
+					COALESCE(dni.packing_number, '') ILIKE ?
+				)`
+			search := like(q)
+			args = append(args, search, search, search, search)
+		}
+		query = `
+			SELECT
+				'incoming' AS qc_type,
+				COALESCE(dn.dn_number, '') AS reference_number,
+				COALESCE(dn.po_number, '') AS secondary_reference,
+				COALESCE(dni.item_uniq_code, '') AS uniq_code,
+				COALESCE(dni.id::text, '') AS context_id,
+				COALESCE(dni.packing_number, '') AS kanban_or_packing_number,
+				'' AS part_name,
+				COALESCE(dni.uom, '') AS uom,
+				COALESCE(NULLIF(dni.qty_received, 0), dni.quantity, 0) AS item_qty
+			FROM delivery_note_items dni
+			JOIN delivery_notes dn ON dn.id = dni.dn_id
+			` + where + `
+			ORDER BY dn.created_at DESC, dni.id DESC
+			LIMIT ?`
+		args = append(args, limit)
+	} else if qcType == "product_return" {
+		where := ""
+		if strings.TrimSpace(q) != "" {
+			where = `
+				WHERE (
+					COALESCE(pr.uniq, '') ILIKE ? OR
+					COALESCE(pr.dn_number, '') ILIKE ?
+				)`
+			search := like(q)
+			args = append(args, search, search)
+		}
+		query = `
+			SELECT
+				'product_return' AS qc_type,
+				COALESCE(pr.uniq, '') AS reference_number,
+				COALESCE(pr.dn_number, '') AS secondary_reference,
+				COALESCE(pr.uniq, '') AS uniq_code,
+				COALESCE(pr.id::text, '') AS context_id,
+				'' AS kanban_or_packing_number,
+				'' AS part_name,
+				'' AS uom,
+				COALESCE(pr.quantity_rework, 0) + COALESCE(pr.quantity_scrap, 0) AS item_qty
+			FROM product_returns pr
+			` + where + `
+			ORDER BY pr.updated_at DESC NULLS LAST, pr.created_at DESC, pr.id DESC
+			LIMIT ?`
+		args = append(args, limit)
+	} else {
+		return nil, apperror.BadRequest("qc_type must be production, incoming, or product_return")
+	}
+
+	rows := make([]row, 0)
+	if err := r.db.WithContext(ctx).Raw(query, args...).Scan(&rows).Error; err != nil {
+		return nil, apperror.Internal("list manual reference options: " + err.Error())
+	}
+
+	items := make([]models.ManualReferenceOptionItem, 0, len(rows))
+	for _, rr := range rows {
+		items = append(items, models.ManualReferenceOptionItem{
+			QCType:                rr.QCType,
+			ReferenceNumber:       rr.ReferenceNumber,
+			SecondaryReference:    rr.SecondaryReference,
+			UniqCode:              rr.UniqCode,
+			ContextID:             rr.ContextID,
+			KanbanOrPackingNumber: rr.KanbanOrPacking,
+			PartName:              rr.PartName,
+			UOM:                   rr.UOM,
+			ItemQty:               rr.ItemQty,
+		})
+	}
+
+	return &models.ManualReferenceOptionsResponse{Items: items}, nil
 }
 
 func (r *repository) CreateManualQCReport(ctx context.Context, req models.CreateManualQCReportRequest, performedBy string) error {

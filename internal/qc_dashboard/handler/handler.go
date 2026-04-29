@@ -113,6 +113,18 @@ func (h *HTTPHandler) ListIssueTypes(ctx *app.Context) *app.CostumeResponse {
 	return app.NewSuccess(ctx, http.StatusOK, map[string]interface{}{"items": h.svc.ListIssueTypes()})
 }
 
+func (h *HTTPHandler) ManualReferenceFormOptions(ctx *app.Context) *app.CostumeResponse {
+	limit, err := positiveIntQuery(ctx.Query("limit"), 20)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	data, err := h.svc.ListManualReferenceOptions(ctx.Request.Context(), ctx.Query("qc_type"), ctx.Query("q"), limit)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return app.NewSuccess(ctx, http.StatusOK, data)
+}
+
 func (h *HTTPHandler) CreateManualQCReport(ctx *app.Context) *app.CostumeResponse {
 	var req qcDashboardModels.CreateManualQCReportRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {

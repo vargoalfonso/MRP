@@ -144,3 +144,19 @@ type CreateManualQCReportRequest struct {
 	NumberOfScrap     float64 `json:"number_of_scrap"`
 	Status            string  `json:"status"`
 }
+
+type ManualReferenceOptionItem struct {
+	QCType                string  `json:"qc_type"`
+	ReferenceNumber       string  `json:"reference_number"`
+	SecondaryReference    string  `json:"secondary_reference"`
+	UniqCode              string  `json:"uniq_code"`
+	ContextID             string  `json:"context_id"`
+	KanbanOrPackingNumber string  `json:"kanban_or_packing_number"`
+	PartName              string  `json:"part_name"`
+	UOM                   string  `json:"uom"`
+	ItemQty               float64 `json:"item_qty"`
+}
+
+type ManualReferenceOptionsResponse struct {
+	Items []ManualReferenceOptionItem `json:"items"`
+}

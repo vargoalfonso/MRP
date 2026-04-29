@@ -16,6 +16,7 @@ type IService interface {
 	ListProductReturnQC(ctx context.Context, filter repository.Filter) (*models.ProductReturnQCListResponse, error)
 	ListDefects(ctx context.Context, filter repository.Filter) (*models.DefectListResponse, error)
 	ListIssueTypes() []models.IssueListItem
+	ListManualReferenceOptions(ctx context.Context, qcType, q string, limit int) (*models.ManualReferenceOptionsResponse, error)
 	CreateManualQCReport(ctx context.Context, req models.CreateManualQCReportRequest, performedBy string) error
 	CreateReworkTask(ctx context.Context, defectID int64, performedBy string) error
 }
@@ -105,6 +106,10 @@ func (s *service) ListDefects(ctx context.Context, filter repository.Filter) (*m
 }
 
 func (s *service) ListIssueTypes() []models.IssueListItem { return models.IssueList }
+
+func (s *service) ListManualReferenceOptions(ctx context.Context, qcType, q string, limit int) (*models.ManualReferenceOptionsResponse, error) {
+	return s.repo.ListManualReferenceOptions(ctx, qcType, q, limit)
+}
 
 func (s *service) CreateManualQCReport(ctx context.Context, req models.CreateManualQCReportRequest, performedBy string) error {
 	return s.repo.CreateManualQCReport(ctx, req, performedBy)
