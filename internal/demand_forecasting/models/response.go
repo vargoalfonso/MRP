@@ -63,6 +63,7 @@ type InferenceResultResponse struct {
 	Horizon         int                    `json:"horizon"`
 	LookbackPoints  int                    `json:"lookback_points,omitempty"`
 	Mode            string                 `json:"mode"`
+	AvgMean         float64                `json:"avg_mean"` // Calculated from forecasts mean
 	RequestPayload  map[string]interface{} `json:"request_payload"`
 	ResponsePayload map[string]interface{} `json:"response_payload"`
 	Status          string                 `json:"status"`
@@ -76,9 +77,10 @@ type InferenceResultResponse struct {
 // ---------------------------------------------------------------------------
 
 type PredictResponse struct {
-	RequestID      string            `json:"request_id"`
-	ModelVersionID string            `json:"model_version_id"`
-	Forecasts      []ForecastDTO     `json:"forecasts"`
+	RequestID      string        `json:"request_id"`
+	ModelVersionID string        `json:"model_version_id"`
+	Forecasts      []ForecastDTO `json:"forecasts"`
+	AvgMean        float64       `json:"avg_mean"` // Average of all forecast means
 }
 
 type ForecastDTO struct {
@@ -204,6 +206,20 @@ func ToInferenceResultResponse(result *ForecastingInferenceResult) InferenceResu
 		var m map[string]interface{}
 		if err := json.Unmarshal(result.ResponsePayload, &m); err == nil {
 			resp.ResponsePayload = m
+			// Calculate avg_mean from forecasts
+			if forecasts, ok := m["forecasts"].([]interface{}); ok {
+				var totalMean float64
+				for _, f := range forecasts {
+					if forecast, ok := f.(map[string]interface{}); ok {
+						if mean, ok := forecast["mean"].(float64); ok {
+							totalMean += mean
+						}
+					}
+				}
+				if len(forecasts) > 0 {
+					resp.AvgMean = totalMean / float64(len(forecasts))
+				}
+			}
 		}
 	}
 	return resp

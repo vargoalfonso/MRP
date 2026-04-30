@@ -401,6 +401,7 @@ func (s *service) Predict(ctx context.Context, req models.PredictRequest, create
 
 	// Build response
 	forecasts := make([]models.ForecastDTO, len(externalResp.Forecasts))
+	var totalMean float64
 	for i, f := range externalResp.Forecasts {
 		forecasts[i] = models.ForecastDTO{
 			ItemID:    f.ItemID,
@@ -410,12 +411,19 @@ func (s *service) Predict(ctx context.Context, req models.PredictRequest, create
 			P50:       f.P50,
 			P90:       f.P90,
 		}
+		totalMean += f.Mean
+	}
+
+	var avgMean float64
+	if len(externalResp.Forecasts) > 0 {
+		avgMean = totalMean / float64(len(externalResp.Forecasts))
 	}
 
 	return &models.PredictResponse{
 		RequestID:      externalResp.RequestID,
 		ModelVersionID: externalResp.ModelVersionID,
 		Forecasts:      forecasts,
+		AvgMean:        avgMean,
 	}, nil
 }
 
