@@ -206,6 +206,20 @@ func ToInferenceResultResponse(result *ForecastingInferenceResult) InferenceResu
 		var m map[string]interface{}
 		if err := json.Unmarshal(result.ResponsePayload, &m); err == nil {
 			resp.ResponsePayload = m
+			// Calculate avg_mean from forecasts
+			if forecasts, ok := m["forecasts"].([]interface{}); ok {
+				var totalMean float64
+				for _, f := range forecasts {
+					if forecast, ok := f.(map[string]interface{}); ok {
+						if mean, ok := forecast["mean"].(float64); ok {
+							totalMean += mean
+						}
+					}
+				}
+				if len(forecasts) > 0 {
+					resp.AvgMean = totalMean / float64(len(forecasts))
+				}
+			}
 		}
 	}
 	return resp
