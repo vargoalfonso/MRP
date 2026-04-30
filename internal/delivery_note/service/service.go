@@ -565,10 +565,9 @@ func (s *deliveryNoteService) Scan(ctx context.Context, req models.QRPayload) (s
 }
 
 func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.PreviewDNRequest) (*models.PreviewDNResponse, error) {
-	req.Period = strings.Trim(req.Period, `"`)
 
-	if req.PONumber == "" || req.Period == "" {
-		return nil, fmt.Errorf("po_number dan period wajib diisi")
+	if req.PONumber == "" {
+		return nil, fmt.Errorf("po_number wajib diisi")
 	}
 
 	// 🔥 1. ambil PO
@@ -637,7 +636,7 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.PreviewD
 
 	// 🔥 8. response
 	return &models.PreviewDNResponse{
-		Period:        req.Period,
+		Period:        po.Period,
 		PONumber:      po.PoNumber,
 		Supplier:      supplier.SupplierName,
 		TotalPO:       int64(totalQty),
