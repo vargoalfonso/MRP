@@ -13,7 +13,6 @@ import (
 	"github.com/ganasa18/go-template/internal/billmaterial/models"
 	"github.com/ganasa18/go-template/internal/billmaterial/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
-
 	"github.com/ganasa18/go-template/pkg/approval"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/google/uuid"
@@ -295,26 +294,32 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 		return nil, err
 	}
 
-	// 6a. Auto-create approval instance if workflow is configured.
+	// 6a. Auto-create approval instance — one row in approval_instances tracks
+	// this BOM through all configured levels. Progress is stored as JSONB so
+	// the frontend can render per-level status without parsing complex state.
 	wf, err := s.repo.GetApprovalWorkflowByActionName(ctx, "bom")
 	if err != nil {
 		return nil, err
 	}
-	if wf != nil {
-		maxLevel := approval.MaxLevel(wf)
-		instance := &awmodels.ApprovalInstance{
-			ActionName:         "bom",
-			ReferenceTable:     "bom_item",
-			ReferenceID:        bom.ID,
-			ApprovalWorkflowID: wf.ID,
-			CurrentLevel:       1,
-			MaxLevel:           maxLevel,
-			Status:             "pending",
-			ApprovalProgress:   approval.BuildProgress(wf, maxLevel),
-		}
-		if err := s.repo.CreateApprovalInstance(ctx, instance); err != nil {
-			return nil, err
-		}
+	if wf == nil {
+		return nil, apperror.BadRequest("no active approval workflow configured for action 'bom'")
+	}
+	maxLevel := approval.MaxLevel(wf)
+	if maxLevel < 2 {
+		return nil, apperror.BadRequest("approval workflow 'bom' must have at least 2 levels configured")
+	}
+	instance := &awmodels.ApprovalInstance{
+		ActionName:         "bom",
+		ReferenceTable:     "bom_item",
+		ReferenceID:        bom.ID,
+		ApprovalWorkflowID: wf.ID,
+		CurrentLevel:       1,
+		MaxLevel:           maxLevel,
+		Status:             "pending",
+		ApprovalProgress:   approval.BuildProgress(wf, maxLevel),
+	}
+	if err := s.repo.CreateApprovalInstance(ctx, instance); err != nil {
+		return nil, err
 	}
 
 	// 7. Recurse children
@@ -1820,7 +1825,7 @@ func (s *service) ApproveBom(ctx context.Context, bomID int64, userID string, us
 	if instance == nil {
 		return nil, apperror.NotFound("approval record not found for this BOM")
 	}
-	if strings.EqualFold(instance.Status, "approved") || strings.EqualFold(instance.Status, "rejected") {
+	if instance.Status == "approved" || instance.Status == "rejected" {
 		return nil, apperror.BadRequest(fmt.Sprintf("BOM is already %s", instance.Status))
 	}
 
@@ -1854,12 +1859,9 @@ func (s *service) ApproveBom(ctx context.Context, bomID int64, userID string, us
 		instance.ApprovalProgress.Levels[lvlIdx].Note = note
 		instance.Status = "rejected"
 
-		bom, err := s.repo.GetBomByID(ctx, bomID)
-		if err == nil && bom != nil {
-			bom.Status = "Rejected"
-			if err := s.repo.UpdateBomItem(ctx, bom); err != nil {
-				return nil, apperror.InternalWrap("failed to update bom item status to rejected", err)
-			}
+		if bom, _ := s.repo.GetBomByID(ctx, bomID); bom != nil {
+			bom.Status = "Draft"
+			_ = s.repo.UpdateBomItem(ctx, bom)
 		}
 	} else {
 		instance.ApprovalProgress.Levels[lvlIdx].Status = "approved"
