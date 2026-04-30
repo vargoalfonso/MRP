@@ -55,6 +55,17 @@ func Wrap(httpStatus int, code Code, message string, cause error) *AppError {
 	return &AppError{HTTPStatus: httpStatus, Code: code, Message: message, Cause: cause}
 }
 
+// IsNotFound returns true if the error is a NotFound AppError.
+func IsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if appErr, ok := As(err); ok {
+		return appErr.HTTPStatus == http.StatusNotFound
+	}
+	return false
+}
+
 // As extracts an *AppError from err if one exists in the chain.
 func As(err error) (*AppError, bool) {
 	var appErr *AppError
@@ -104,4 +115,8 @@ func TokenExpired() *AppError {
 
 func TokenInvalid() *AppError {
 	return New(http.StatusUnauthorized, CodeTokenInvalid, "token is invalid")
+}
+
+func GatewayTimeout(msg string, cause error) *AppError {
+	return Wrap(http.StatusGatewayTimeout, CodeServiceUnavail, msg, cause)
 }
