@@ -45,7 +45,8 @@ func New(cfg *config.Config, modules []appmodule.HTTPModule) *Server {
 	// Apply body size limit globally, but skip for chunk upload routes
 	// (chunks are binary streams with their own size semantics).
 	r.Use(func(c *gin.Context) {
-		if !strings.Contains(c.FullPath(), "/chunks/") {
+		path := c.FullPath()
+		if !strings.Contains(path, "/chunks/") && !strings.Contains(path, "/forecasting/datasets/upload") {
 			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, cfg.MaxBodyBytes)
 		}
 		c.Next()

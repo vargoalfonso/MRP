@@ -78,6 +78,12 @@ type Config struct {
 	// Admin job basic auth (used by cron-triggered endpoints)
 	AdminJobUser string
 	AdminJobPass string
+
+	// Forecasting API (external AI pipeline)
+	ForecastingAPIURL     string
+	ForecastingAPIUser    string
+	ForecastingAPIPass    string
+	ForecastingAPITimeout time.Duration
 }
 
 // IsDevelopment returns true when AppEnv == "development".
@@ -151,6 +157,12 @@ func InitAppConfig() *Config {
 
 		AdminJobUser: getEnv("ADMIN_JOB_USER", "admin_job"),
 		AdminJobPass: mustEnv("ADMIN_JOB_PASS"),
+
+			// Forecasting API (external AI pipeline)
+			ForecastingAPIURL: getEnv("FORECASTING_API_URL", "https://dev-mrp-forecasting-482804304.asia-southeast1.run.app"),
+			ForecastingAPIUser: getEnv("FORECASTING_API_USER", ""),
+			ForecastingAPIPass: getEnv("FORECASTING_API_PASS", ""),
+			ForecastingAPITimeout: getEnvDuration("FORECASTING_API_TIMEOUT", 60*time.Second),
 	}
 
 	// Stateful mode requires a separate refresh secret.

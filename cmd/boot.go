@@ -58,6 +58,10 @@ import (
 	departementHandler "github.com/ganasa18/go-template/internal/departement/handler"
 	departementRepository "github.com/ganasa18/go-template/internal/departement/repository"
 	departementService "github.com/ganasa18/go-template/internal/departement/service"
+	demandForecastingModule "github.com/ganasa18/go-template/internal/demand_forecasting"
+	demandForecastingHandler "github.com/ganasa18/go-template/internal/demand_forecasting/handler"
+	demandForecastingRepository "github.com/ganasa18/go-template/internal/demand_forecasting/repository"
+	demandForecastingService "github.com/ganasa18/go-template/internal/demand_forecasting/service"
 	employeeModule "github.com/ganasa18/go-template/internal/employee"
 	employeeHandler "github.com/ganasa18/go-template/internal/employee/handler"
 	employeeRepository "github.com/ganasa18/go-template/internal/employee/repository"
@@ -199,6 +203,7 @@ import (
 	workOrderHandler "github.com/ganasa18/go-template/internal/work_order/handler"
 	workOrderRepository "github.com/ganasa18/go-template/internal/work_order/repository"
 	workOrderService "github.com/ganasa18/go-template/internal/work_order/service"
+	forecastingclient "github.com/ganasa18/go-template/pkg/forecastingclient"
 	"github.com/ganasa18/go-template/pkg/concurrency"
 )
 
@@ -421,6 +426,17 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	stockDaysSvc := stockdaysParameterService.New(stockDaysRepo)
 	stockDaysHTTPHandler := stockdaysParameterHandler.New(stockDaysSvc)
 
+	// Demand Forecasting module
+	forecastingClient := forecastingclient.New(forecastingclient.Options{
+		BaseURL:       cfg.ForecastingAPIURL,
+		BasicAuthUser: cfg.ForecastingAPIUser,
+		BasicAuthPass: cfg.ForecastingAPIPass,
+		Timeout:       cfg.ForecastingAPITimeout,
+	})
+	dfRepo := demandForecastingRepository.New(db)
+	dfSvc := demandForecastingService.New(dfRepo, forecastingClient)
+	dfHTTPHandler := demandForecastingHandler.New(dfSvc)
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -470,6 +486,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		dscModule.NewHTTPModule(baseHTTPHandler, dscHTTPHandler, authSvc, roleSvc, dscSvc),
 		spModule.NewHTTPModule(baseHTTPHandler, spHTTPHandler, authSvc, roleSvc),
 		productReturnModule.NewHTTPModule(cfg, baseHTTPHandler, productReturnHTTPHandler, authSvc, roleSvc, productReturnSvc),
+		demandForecastingModule.NewHTTPModule(cfg, baseHTTPHandler, dfHTTPHandler, authSvc, roleSvc),
 	}
 
 	// --- Server ---
