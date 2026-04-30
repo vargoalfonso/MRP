@@ -124,36 +124,36 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 			return err
 		}
 
-		workflow, err := s.approvalRepo.FindByActionName(ctx, "Delivery Note")
-		if err != nil {
-			return fmt.Errorf("workflow belum dibuat oleh operator")
-		}
+		// workflow, err := s.approvalRepo.FindByActionName(ctx, "Delivery Note")
+		// if err != nil {
+		// 	return fmt.Errorf("workflow belum dibuat oleh operator")
+		// }
 
 		// ==============================
 		// 🔥 BUILD APPROVAL
 		// ==============================
-		progress, maxLevel := BuildApprovalProgress(*workflow)
+		// progress, maxLevel := BuildApprovalProgress(*workflow)
 
 		// ==============================
 		// 🔥 CREATE APPROVAL INSTANCE
 		// ==============================
-		instance := workflowModels.ApprovalInstance{
-			ActionName:         workflow.ActionName,
-			ReferenceTable:     "delivery_notes",
-			ReferenceID:        dn.ID,
-			ApprovalWorkflowID: workflow.ID,
-			CurrentLevel:       1,
-			MaxLevel:           maxLevel,
-			Status:             "pending",
-			SubmittedBy:        "system",
-			ApprovalProgress:   progress,
-			CreatedAt:          time.Now(),
-			UpdatedAt:          time.Now(),
-		}
+		// instance := workflowModels.ApprovalInstance{
+		// 	ActionName:         workflow.ActionName,
+		// 	ReferenceTable:     "delivery_notes",
+		// 	ReferenceID:        dn.ID,
+		// 	ApprovalWorkflowID: workflow.ID,
+		// 	CurrentLevel:       1,
+		// 	MaxLevel:           maxLevel,
+		// 	Status:             "pending",
+		// 	SubmittedBy:        "system",
+		// 	ApprovalProgress:   progress,
+		// 	CreatedAt:          time.Now(),
+		// 	UpdatedAt:          time.Now(),
+		// }
 
-		if err := s.approvalRepo.CreateInstance(ctx, tx, &instance); err != nil {
-			return err
-		}
+		// if err := s.approvalRepo.CreateInstance(ctx, tx, &instance); err != nil {
+		// 	return err
+		// }
 
 		// ==============================
 		// 🔥 VALIDASI ITEMS
