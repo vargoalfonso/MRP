@@ -160,25 +160,22 @@ func (h *HTTPHandler) ScanDeliveryNoteItem(appCtx *app.Context) *app.CostumeResp
 }
 
 func (h *HTTPHandler) PreviewDN(appCtx *app.Context) *app.CostumeResponse {
-	var req models.CreateDNRequest
+	poNumber := appCtx.Query("po_number")
+	period := appCtx.Query("period")
 
-	// bind request
-	if err := appCtx.ShouldBindJSON(&req); err != nil {
+	// validation manual
+	if poNumber == "" || period == "" {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusBadRequest,
-			Message:   "invalid request body",
+			Message:   "po_number and period are required",
 		}
 	}
 
-	// validate
-	if errs := validator.Validate(req); errs != nil {
-		return &app.CostumeResponse{
-			RequestID: appCtx.APIReqID,
-			Status:    http.StatusUnprocessableEntity,
-			Message:   "validation failed",
-			Data:      map[string]interface{}{"errors": errs},
-		}
+	// kalau service masih butuh struct, tinggal mapping
+	req := models.PreviewDNRequest{
+		PONumber: poNumber,
+		Period:   period,
 	}
 
 	data, err := h.service.PreviewDN(appCtx.Request.Context(), req)

@@ -26,7 +26,7 @@ type IDeliveryNoteService interface {
 	GetAll(ctx context.Context, page, limit int) ([]models.DeliveryNote, models.Pagination, error)
 	GetByID(ctx context.Context, id int64) (*models.DeliveryNote, error)
 	Scan(ctx context.Context, req models.QRPayload) (string, error)
-	PreviewDN(ctx context.Context, req models.CreateDNRequest) (*models.PreviewDNResponse, error)
+	PreviewDN(ctx context.Context, req models.PreviewDNRequest) (*models.PreviewDNResponse, error)
 	PreviewItem(ctx context.Context, req models.PreviewDNItem) (*models.PreviewDNItemRespons, error)
 	ScanDelivery(ctx context.Context, req models.ScanDeliveryRequest) error
 	SubmitDelivery(ctx context.Context, req models.SubmitDeliveryRequest) error
@@ -564,63 +564,69 @@ func (s *deliveryNoteService) Scan(ctx context.Context, req models.QRPayload) (s
 	return result, nil
 }
 
-func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.CreateDNRequest) (*models.PreviewDNResponse, error) {
+func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.PreviewDNRequest) (*models.PreviewDNResponse, error) {
+	req.Period = strings.Trim(req.Period, `"`)
+
+	if req.PONumber == "" || req.Period == "" {
+		return nil, fmt.Errorf("po_number dan period wajib diisi")
+	}
 
 	// 🔥 1. ambil PO
 	po, err := s.repo.GetPOByPONumber(ctx, req.PONumber)
 	if err != nil {
-		return nil, fmt.Errorf("PO tidak ditemukan")
+		return nil, fmt.Errorf("failed get PO: %w", err)
 	}
 
+	// 🔥 2. supplier
 	supplier, err := s.repo.GetSupplierByID(ctx, po.SupplierID)
 	if err != nil {
-		return nil, fmt.Errorf("Supplier tidak ditemukan")
+		return nil, fmt.Errorf("failed get supplier: %w", err)
 	}
 
-	// 🔥 2. ambil item PO
+	// 🔥 3. items
 	poItems, err := s.repo.GetPOItemsByPOID(ctx, po.PoID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed get PO items: %w", err)
 	}
 
-	// 🔥 3. total qty PO
+	// 🔥 4. total qty
 	totalQty, err := s.repo.GetTotalQtyByPOID(ctx, po.PoID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed get total qty: %w", err)
 	}
 
-	// 🔥 4. total incoming DN
+	// 🔥 5. DN incoming
 	totalIncoming, err := s.repo.CountDNIncomingByPONumber(ctx, req.PONumber)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed count DN incoming: %w", err)
 	}
-	prefix := fmt.Sprintf("DN-%s", req.Type)
+
+	// 🔥 6. generate DN number
+	dnType := "DN-"
+
+	prefix := fmt.Sprintf("DN-%s", dnType)
 
 	count, err := s.repo.CountDNByPrefix(ctx, prefix)
-
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed count DN: %w", err)
 	}
 
-	fmt.Printf("count existing DN with prefix %s: %d\n", req.Type, count)
 	next := count + 1
+	dnNumber := fmt.Sprintf("%s-%04d", prefix, next)
 
-	dnNumber := fmt.Sprintf("DN-%s-%04d", req.Type, next)
-
-	// 🔥 5. mapping items
-	var items []models.PreviewDNItemResponse
+	// 🔥 7. mapping items
+	items := make([]models.PreviewDNItemResponse, 0, len(poItems))
 
 	for i, poItem := range poItems {
 
 		seq := fmt.Sprintf("%04d", i+1)
-
 		packingNumber := fmt.Sprintf("%s-PKG-%s", dnNumber, seq)
 
 		items = append(items, models.PreviewDNItemResponse{
 			ItemUniqCode:  poItem.ItemUniqCode,
-			MaterialInfo:  poItem.ItemUniqCode, // atau gabung
+			MaterialInfo:  poItem.ItemUniqCode,
 			TotalQty:      int64(poItem.OrderedQty),
-			RemainingQty:  int64(0), // sesuaikan dengan logika bisnis Anda
+			RemainingQty:  int64(poItem.OrderedQty), // lebih masuk akal daripada 0
 			UOM:           poItem.UOM,
 			OrderQty:      int64(poItem.OrderedQty),
 			PcsPerKanban:  poItem.PcsPerKanban,
@@ -629,15 +635,15 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.CreateDN
 		})
 	}
 
+	// 🔥 8. response
 	return &models.PreviewDNResponse{
-		Period:          req.Period,
-		PONumber:        po.PoNumber,
-		Supplier:        supplier.SupplierName,
-		TotalPO:         int64(totalQty),
-		TotalIncoming:   int64(totalIncoming),
-		TotalDNCreatd:   int64(len(poItems)),
-		TotalDNIncoming: int64(totalIncoming),
-		Items:           items,
+		Period:        req.Period,
+		PONumber:      po.PoNumber,
+		Supplier:      supplier.SupplierName,
+		TotalPO:       int64(totalQty),
+		TotalIncoming: int64(totalIncoming),
+		TotalDNCreatd: int64(len(items)),
+		Items:         items,
 	}, nil
 }
 
