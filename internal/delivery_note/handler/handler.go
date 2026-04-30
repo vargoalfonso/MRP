@@ -161,21 +161,19 @@ func (h *HTTPHandler) ScanDeliveryNoteItem(appCtx *app.Context) *app.CostumeResp
 
 func (h *HTTPHandler) PreviewDN(appCtx *app.Context) *app.CostumeResponse {
 	poNumber := appCtx.Query("po_number")
-	period := appCtx.Query("period")
 
 	// validation manual
-	if poNumber == "" || period == "" {
+	if poNumber == "" {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusBadRequest,
-			Message:   "po_number and period are required",
+			Message:   "po_number are required",
 		}
 	}
 
 	// kalau service masih butuh struct, tinggal mapping
 	req := models.PreviewDNRequest{
 		PONumber: poNumber,
-		Period:   period,
 	}
 
 	data, err := h.service.PreviewDN(appCtx.Request.Context(), req)

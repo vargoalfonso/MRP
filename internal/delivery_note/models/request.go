@@ -2,7 +2,6 @@ package models
 
 type PreviewDNRequest struct {
 	PONumber string `json:"po_number" validate:"required"`
-	Period   string `json:"period" validate:"required"`
 }
 type CreateDNRequest struct {
 	PONumber string `json:"po_number" validate:"required"`
