@@ -11,6 +11,7 @@ type ProcessParameter struct {
 	Category    string    `gorm:"column:category"`
 	Sequence    int       `gorm:"column:sequence"`
 	Status      string    `gorm:"column:status"`
+	Subcon      bool      `gorm:"column:sub_con;default:false"`
 	CreatedAt   time.Time `gorm:"column:created_at"`
 	UpdatedAt   time.Time `gorm:"column:updated_at"`
 }
