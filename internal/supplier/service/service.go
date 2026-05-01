@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/ganasa18/go-template/internal/supplier/models"
 	supplierRepo "github.com/ganasa18/go-template/internal/supplier/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	emailpkg "github.com/ganasa18/go-template/pkg/email"
 	"github.com/google/uuid"
 )
 
@@ -60,6 +62,18 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierRequest) 
 
 	if err := s.repo.Create(ctx, supplier); err != nil {
 		return nil, err
+	}
+
+	// Send notification email to supplier if email provided (async, non-blocking)
+	if strings.TrimSpace(supplier.EmailAddress) != "" {
+		go func(to, name string) {
+			subject := "Selamat datang sebagai Supplier"
+			body := fmt.Sprintf(`<h2>Halo %s 👋</h2><p>Anda telah terdaftar sebagai supplier di sistem kami.</p>`, name)
+			if err := emailpkg.SendEmail(to, subject, body); err != nil {
+				// Do not fail creation; log to stdout
+				fmt.Println("failed send supplier email:", err)
+			}
+		}(supplier.EmailAddress, supplier.SupplierName)
 	}
 
 	return supplier, nil
