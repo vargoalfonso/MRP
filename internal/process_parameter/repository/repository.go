@@ -61,6 +61,7 @@ func (r *repository) Create(ctx context.Context, req models.CreateProcessRequest
 		Category:    req.Category,
 		Sequence:    req.Sequence,
 		Status:      req.Status,
+		Subcon:      req.Subcon,
 	}
 
 	if err := r.db.WithContext(ctx).
@@ -90,6 +91,7 @@ func (r *repository) Update(ctx context.Context, id int64, req models.UpdateProc
 		"category":     req.Category,
 		"sequence":     req.Sequence,
 		"status":       req.Status,
+		"sub_con":      req.Subcon,
 	}
 
 	if err := r.db.WithContext(ctx).
