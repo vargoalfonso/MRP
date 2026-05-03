@@ -54,14 +54,14 @@ import (
 	dscHandler "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/handler"
 	dscRepository "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/repository"
 	dscService "github.com/ganasa18/go-template/internal/delivery_scheduling_customer/service"
-	departementModule "github.com/ganasa18/go-template/internal/departement"
-	departementHandler "github.com/ganasa18/go-template/internal/departement/handler"
-	departementRepository "github.com/ganasa18/go-template/internal/departement/repository"
-	departementService "github.com/ganasa18/go-template/internal/departement/service"
 	demandForecastingModule "github.com/ganasa18/go-template/internal/demand_forecasting"
 	demandForecastingHandler "github.com/ganasa18/go-template/internal/demand_forecasting/handler"
 	demandForecastingRepository "github.com/ganasa18/go-template/internal/demand_forecasting/repository"
 	demandForecastingService "github.com/ganasa18/go-template/internal/demand_forecasting/service"
+	departementModule "github.com/ganasa18/go-template/internal/departement"
+	departementHandler "github.com/ganasa18/go-template/internal/departement/handler"
+	departementRepository "github.com/ganasa18/go-template/internal/departement/repository"
+	departementService "github.com/ganasa18/go-template/internal/departement/service"
 	employeeModule "github.com/ganasa18/go-template/internal/employee"
 	employeeHandler "github.com/ganasa18/go-template/internal/employee/handler"
 	employeeRepository "github.com/ganasa18/go-template/internal/employee/repository"
@@ -74,6 +74,10 @@ import (
 	globalParameterHandler "github.com/ganasa18/go-template/internal/global_parameter/handler"
 	globalParameterRepository "github.com/ganasa18/go-template/internal/global_parameter/repository"
 	globalParameterService "github.com/ganasa18/go-template/internal/global_parameter/service"
+	importModule "github.com/ganasa18/go-template/internal/import_file"
+	importHandler "github.com/ganasa18/go-template/internal/import_file/handler"
+	importRepo "github.com/ganasa18/go-template/internal/import_file/repository"
+	importService "github.com/ganasa18/go-template/internal/import_file/service"
 	inventoryModule "github.com/ganasa18/go-template/internal/inventory"
 	inventoryHandler "github.com/ganasa18/go-template/internal/inventory/handler"
 	inventoryRepo "github.com/ganasa18/go-template/internal/inventory/repository"
@@ -203,8 +207,8 @@ import (
 	workOrderHandler "github.com/ganasa18/go-template/internal/work_order/handler"
 	workOrderRepository "github.com/ganasa18/go-template/internal/work_order/repository"
 	workOrderService "github.com/ganasa18/go-template/internal/work_order/service"
-	forecastingclient "github.com/ganasa18/go-template/pkg/forecastingclient"
 	"github.com/ganasa18/go-template/pkg/concurrency"
+	forecastingclient "github.com/ganasa18/go-template/pkg/forecastingclient"
 )
 
 // initHTTP wires every module inside the modular monolith and returns an HTTP server.
@@ -437,6 +441,10 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	dfSvc := demandForecastingService.New(dfRepo, forecastingClient)
 	dfHTTPHandler := demandForecastingHandler.New(dfSvc)
 
+	importRepo := importRepo.New(db)
+	importSvc := importService.New(importRepo)
+	importHTTPHandler := importHandler.New(importSvc, authSvc)
+
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -487,6 +495,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		spModule.NewHTTPModule(baseHTTPHandler, spHTTPHandler, authSvc, roleSvc),
 		productReturnModule.NewHTTPModule(cfg, baseHTTPHandler, productReturnHTTPHandler, authSvc, roleSvc, productReturnSvc),
 		demandForecastingModule.NewHTTPModule(cfg, baseHTTPHandler, dfHTTPHandler, authSvc, roleSvc),
+		importModule.NewHTTPModule(cfg, baseHTTPHandler, importHTTPHandler, authSvc, roleSvc, importSvc),
 	}
 
 	// --- Server ---
