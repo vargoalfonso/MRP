@@ -272,7 +272,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 
 	// BOM module
 	bomRepo := bomRepository.New(db)
-	bomSvc := bomService.New(bomRepo)
+	bomSvc := bomService.New(bomRepo, nil)
 	bomHTTPHandler := bomHandler.New(bomSvc)
 
 	// Upload module (chunked / resumable)

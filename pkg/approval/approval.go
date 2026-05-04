@@ -19,11 +19,45 @@ package approval
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/bulkimport"
 	"gorm.io/gorm"
 )
+
+// BulkImportResponseData is the standard payload used by import endpoints.
+type BulkImportResponseData struct {
+	ImportStatus string `json:"import_status"`
+	Total        int    `json:"total"`
+	SuccessCount int    `json:"success_count"`
+	FailedCount  int    `json:"failed_count"`
+	DownloadURL  string `json:"download_url,omitempty"`
+}
+
+// BuildBulkImportResponse standardises success/partial/failed import responses.
+// This helper intentionally lives in pkg/approval for cross-module reuse.
+func BuildBulkImportResponse(result bulkimport.BulkResult, downloadURL string) (int, string, BulkImportResponseData) {
+	data := BulkImportResponseData{
+		ImportStatus: string(result.Status),
+		Total:        result.Total,
+		SuccessCount: result.SuccessCount,
+		FailedCount:  result.FailedCount,
+		DownloadURL:  downloadURL,
+	}
+
+	switch result.Status {
+	case bulkimport.StatusSuccess:
+		data.FailedCount = 0
+		data.DownloadURL = ""
+		return http.StatusOK, "import berhasil", data
+	case bulkimport.StatusPartial:
+		return http.StatusMultiStatus, "import sebagian berhasil", data
+	default:
+		return http.StatusUnprocessableEntity, "import gagal", data
+	}
+}
 
 // ---------------------------------------------------------------------------
 // CreateInstance
@@ -55,7 +89,7 @@ type CreateInstanceParams struct {
 func CreateInstance(ctx context.Context, db *gorm.DB, p CreateInstanceParams) (*awmodels.ApprovalInstance, error) {
 	minLevels := p.MinLevels
 	if minLevels <= 0 {
-		minLevels = 2
+		minLevels = 1
 	}
 
 	wf, err := getWorkflowByActionName(ctx, db, p.ActionName)

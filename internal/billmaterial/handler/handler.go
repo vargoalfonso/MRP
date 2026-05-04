@@ -6,16 +6,23 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 
 	authModels "github.com/ganasa18/go-template/internal/auth/models"
 	"github.com/ganasa18/go-template/internal/base/app"
 	"github.com/ganasa18/go-template/internal/billmaterial/models"
 	"github.com/ganasa18/go-template/internal/billmaterial/service"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/approval"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/ganasa18/go-template/pkg/validator"
+	"github.com/gin-gonic/gin"
 )
 
 type HTTPHandler struct {
@@ -358,4 +365,77 @@ func (h *HTTPHandler) ApproveBom(ctx *app.Context) *app.CostumeResponse {
 		return app.NewError(ctx, err)
 	}
 	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: result}
+}
+
+// ImportBomExcel POST /api/v1/products/bom/import
+func (h *HTTPHandler) ImportBomExcel(ctx *app.Context) *app.CostumeResponse {
+	file, err := ctx.FormFile("file")
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "file wajib diisi"}
+	}
+	if !strings.HasSuffix(strings.ToLower(file.Filename), ".xlsx") {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "file harus format .xlsx"}
+	}
+
+	tmpPath := filepath.Join("tmp", fmt.Sprintf("bom_import_%d_%s", time.Now().UnixNano(), filepath.Base(file.Filename)))
+	if err := ctx.SaveUploadedFile(file, tmpPath); err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusInternalServerError, Message: "gagal menyimpan file"}
+	}
+	defer os.Remove(tmpPath)
+
+	result, err := h.svc.ImportFromExcel(ctx.Request.Context(), tmpPath)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+
+	downloadURL := ""
+	if result.ErrorToken != "" {
+		scheme := "http"
+		if proto := ctx.GetHeader("X-Forwarded-Proto"); proto != "" {
+			scheme = proto
+		} else if ctx.Request.TLS != nil {
+			scheme = "https"
+		}
+		downloadURL = fmt.Sprintf("%s://%s/api/v1/products/bom/import/errors/%s", scheme, ctx.Request.Host, result.ErrorToken)
+	}
+
+	status, message, data := approval.BuildBulkImportResponse(result, downloadURL)
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: status, Message: message, Data: data}
+}
+
+// DownloadImportTemplateRaw GET /api/v1/products/bom/import/template
+func (h *HTTPHandler) DownloadImportTemplateRaw(c *gin.Context) {
+	data, err := h.svc.DownloadImportTemplate(c.Request.Context())
+	if err != nil {
+		status := http.StatusInternalServerError
+		msg := "gagal generate template"
+		if appErr, ok := apperror.As(err); ok {
+			status = appErr.HTTPStatus
+			msg = appErr.Message
+		}
+		c.JSON(status, gin.H{"status": status, "message": msg})
+		return
+	}
+	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	c.Header("Content-Disposition", "attachment; filename=bom_template.xlsx")
+	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
+}
+
+// DownloadImportErrorsRaw GET /api/v1/products/bom/import/errors/:token
+func (h *HTTPHandler) DownloadImportErrorsRaw(c *gin.Context) {
+	token := c.Param("token")
+	data, err := h.svc.DownloadImportErrors(c.Request.Context(), token)
+	if err != nil {
+		status := http.StatusInternalServerError
+		msg := "gagal download error file"
+		if appErr, ok := apperror.As(err); ok {
+			status = appErr.HTTPStatus
+			msg = appErr.Message
+		}
+		c.JSON(status, gin.H{"status": status, "message": msg})
+		return
+	}
+	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	c.Header("Content-Disposition", "attachment; filename=bom_errors.xlsx")
+	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
 }

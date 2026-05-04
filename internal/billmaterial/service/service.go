@@ -2,8 +2,10 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,8 +16,10 @@ import (
 	"github.com/ganasa18/go-template/internal/billmaterial/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/ganasa18/go-template/pkg/approval"
+	"github.com/ganasa18/go-template/pkg/bulkimport"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/google/uuid"
+	"github.com/xuri/excelize/v2"
 )
 
 type IService interface {
@@ -54,9 +58,17 @@ type IService interface {
 	// userRoles are the caller's JWT roles used to verify the current-level role.
 	// On full approval, bom_item.status and all child items.status are set to Active.
 	ApproveBom(ctx context.Context, bomID int64, userID string, userRoles []string, req models.ApproveBomRequest) (*awmodels.ApprovalInstance, error)
+
+	// Import BOM from Excel, download template, and download generated error file.
+	DownloadImportTemplate(ctx context.Context) ([]byte, error)
+	ImportFromExcel(ctx context.Context, filePath string) (bulkimport.BulkResult, error)
+	DownloadImportErrors(ctx context.Context, token string) ([]byte, error)
 }
 
-type service struct{ repo repository.IRepository }
+type service struct {
+	repo       repository.IRepository
+	errorStore bulkimport.ErrorStore
+}
 
 type lineTreeKey struct {
 	parentItemID int64
@@ -73,7 +85,15 @@ type bomPreload struct {
 	children        map[lineTreeKey][]models.BomLine
 }
 
-func New(repo repository.IRepository) IService { return &service{repo: repo} }
+func New(repo repository.IRepository, store bulkimport.ErrorStore) IService {
+	if store == nil {
+		s, err := bulkimport.NewFileStore("")
+		if err == nil {
+			store = s
+		}
+	}
+	return &service{repo: repo, errorStore: store}
+}
 
 // ---------------------------------------------------------------------------
 // List
@@ -305,8 +325,8 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 		return nil, apperror.BadRequest("no active approval workflow configured for action 'bom'")
 	}
 	maxLevel := approval.MaxLevel(wf)
-	if maxLevel < 2 {
-		return nil, apperror.BadRequest("approval workflow 'bom' must have at least 2 levels configured")
+	if maxLevel < 1 {
+		return nil, apperror.BadRequest("no approval levels configured for workflow 'bom'")
 	}
 	instance := &awmodels.ApprovalInstance{
 		ActionName:         "bom",
@@ -1885,4 +1905,627 @@ func (s *service) ApproveBom(ctx context.Context, bomID int64, userID string, us
 		return nil, err
 	}
 	return instance, nil
+}
+
+var bomImportItemHeaders = []string{
+	"bom_group", "row_type", "uniq_code", "parent_uniq_code", "part_name", "part_number", "uom", "level",
+	"is_phantom", "status", "description", "material_grade", "form",
+	"width_mm", "thickness_mm", "length_mm", "diameter_mm", "weight_kg",
+}
+
+var bomImportRouteHeaders = []string{
+	"uniq_code", "op_seq", "process_id", "machine_id", "cycle_time_sec", "setup_time_min", "machine_stroke", "tooling_ref",
+}
+
+func (s *service) DownloadImportTemplate(ctx context.Context) ([]byte, error) {
+	f, err := bulkimport.BuildBomTemplate()
+	if err != nil {
+		return nil, apperror.InternalWrap("build bom template", err)
+	}
+	defer f.Close()
+
+	var buf bytes.Buffer
+	if _, err := f.WriteTo(&buf); err != nil {
+		return nil, apperror.InternalWrap("write bom template", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func (s *service) DownloadImportErrors(ctx context.Context, token string) ([]byte, error) {
+	if strings.TrimSpace(token) == "" {
+		return nil, apperror.BadRequest("invalid error token")
+	}
+	if s.errorStore == nil {
+		return nil, apperror.NotFound("error file not found or expired")
+	}
+	data, err := s.errorStore.Get(token)
+	if err != nil {
+		return nil, apperror.InternalWrap("download error file", err)
+	}
+	if len(data) == 0 {
+		return nil, apperror.NotFound("error file not found or expired")
+	}
+	return data, nil
+}
+
+func (s *service) ImportFromExcel(ctx context.Context, filePath string) (bulkimport.BulkResult, error) {
+	f, err := excelize.OpenFile(filePath)
+	if err != nil {
+		return bulkimport.BulkResult{}, apperror.BadRequest("failed to open excel file")
+	}
+	defer f.Close()
+
+	itemRows, itemErrs, allGroups, err := s.parseItemRows(ctx, f)
+	if err != nil {
+		return bulkimport.BulkResult{}, err
+	}
+	routeRows, routeErrs, err := s.parseRouteRows(ctx, f, itemRows)
+	if err != nil {
+		return bulkimport.BulkResult{}, err
+	}
+
+	rowErrs := append(itemErrs, routeErrs...)
+	invalidGroups := make(map[string]struct{})
+	for _, e := range rowErrs {
+		for _, r := range itemRows {
+			if e.Sheet == "Items" && e.Row == r.SheetRow {
+				invalidGroups[r.BomGroup] = struct{}{}
+			}
+		}
+	}
+
+	routesByUniq := make(map[string][]models.BomImportRouteRow)
+	for _, r := range routeRows {
+		routesByUniq[r.UniqCode] = append(routesByUniq[r.UniqCode], r)
+	}
+	for uniqCode := range routesByUniq {
+		sort.Slice(routesByUniq[uniqCode], func(i, j int) bool {
+			return routesByUniq[uniqCode][i].OpSeq < routesByUniq[uniqCode][j].OpSeq
+		})
+	}
+
+	groups := make(map[string][]models.BomImportItemRow)
+	for _, row := range itemRows {
+		groups[row.BomGroup] = append(groups[row.BomGroup], row)
+	}
+
+	totalGroups := len(allGroups)
+	successCount := 0
+
+	for groupName, rows := range groups {
+		if _, bad := invalidGroups[groupName]; bad {
+			continue
+		}
+
+		req, buildErr := buildCreateBomRequest(rows, routesByUniq)
+		if buildErr != nil {
+			rootRow := rows[0]
+			rowErrs = append(rowErrs, bulkimport.RowError{
+				Sheet:   "Items",
+				Row:     rootRow.SheetRow,
+				Field:   "bom_group",
+				Message: buildErr.Error(),
+				RawData: rootRow.RawData,
+			})
+			continue
+		}
+
+		if _, err := s.CreateBom(ctx, req); err != nil {
+			root := findGroupRoot(rows)
+			if root != nil {
+				rowErrs = append(rowErrs, bulkimport.RowError{
+					Sheet:   "Items",
+					Row:     root.SheetRow,
+					Field:   "bom_group",
+					Message: err.Error(),
+					RawData: root.RawData,
+				})
+			}
+			continue
+		}
+		successCount++
+	}
+
+	failedCount := totalGroups - successCount
+	status := bulkimport.StatusSuccess
+	if failedCount == totalGroups {
+		status = bulkimport.StatusFailed
+	} else if failedCount > 0 || len(rowErrs) > 0 {
+		status = bulkimport.StatusPartial
+	}
+
+	result := bulkimport.BulkResult{
+		Status:       status,
+		Total:        totalGroups,
+		SuccessCount: successCount,
+		FailedCount:  failedCount,
+		Errors:       mergeRowErrors(rowErrs),
+	}
+
+	if len(result.Errors) == 0 {
+		return result, nil
+	}
+
+	errFile, err := bulkimport.GenerateErrorExcel([]bulkimport.SheetDef{
+		{Name: "Items", Headers: bomImportItemHeaders},
+		{Name: "Routes", Headers: bomImportRouteHeaders},
+	}, result.Errors)
+	if err != nil {
+		return bulkimport.BulkResult{}, apperror.InternalWrap("generate error excel", err)
+	}
+	defer errFile.Close()
+
+	var b bytes.Buffer
+	if _, err := errFile.WriteTo(&b); err != nil {
+		return bulkimport.BulkResult{}, apperror.InternalWrap("write error excel", err)
+	}
+
+	if s.errorStore == nil {
+		store, err := bulkimport.NewFileStore("")
+		if err != nil {
+			return bulkimport.BulkResult{}, apperror.InternalWrap("init error store", err)
+		}
+		s.errorStore = store
+	}
+	token, err := s.errorStore.Save(b.Bytes())
+	if err != nil {
+		return bulkimport.BulkResult{}, apperror.InternalWrap("save error excel", err)
+	}
+	result.ErrorToken = token
+	return result, nil
+}
+
+func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models.BomImportItemRow, []bulkimport.RowError, map[string]struct{}, error) {
+	rows, err := f.GetRows("Items")
+	if err != nil {
+		return nil, nil, nil, apperror.BadRequest("sheet Items tidak ditemukan")
+	}
+	if len(rows) < 2 {
+		return nil, nil, map[string]struct{}{}, nil
+	}
+
+	result := make([]models.BomImportItemRow, 0, len(rows)-1)
+	errRows := make([]bulkimport.RowError, 0)
+	allGroups := make(map[string]struct{})
+	uniqSeen := make(map[string]int)
+	headerIndex := mapImportHeaderIndex(rows[0])
+
+	for i := 1; i < len(rows); i++ {
+		raw := readImportRaw(rows[i], 1, len(rows[0])-1)
+		sheetRow := i + 1
+
+		row := models.BomImportItemRow{
+			SheetRow:       sheetRow,
+			RawData:        raw,
+			BomGroup:       strings.TrimSpace(getImportValue(raw, headerIndex, "bom_group")),
+			RowType:        strings.ToUpper(strings.TrimSpace(getImportValue(raw, headerIndex, "row_type"))),
+			UniqCode:       strings.TrimSpace(getImportValue(raw, headerIndex, "uniq_code")),
+			ParentUniqCode: strings.TrimSpace(getImportValue(raw, headerIndex, "parent_uniq_code")),
+			PartName:       strings.TrimSpace(getImportValue(raw, headerIndex, "part_name")),
+			PartNumber:     strings.TrimSpace(getImportValue(raw, headerIndex, "part_number")),
+			Uom:            strings.TrimSpace(getImportValue(raw, headerIndex, "uom")),
+			Status:         strings.TrimSpace(getImportValue(raw, headerIndex, "status")),
+			Description:    strings.TrimSpace(getImportValue(raw, headerIndex, "description")),
+			MaterialGrade:  strings.TrimSpace(getImportValue(raw, headerIndex, "material_grade")),
+			Form:           strings.TrimSpace(getImportValue(raw, headerIndex, "form")),
+			QtyPerUniq:     1,
+			ScrapFactor:    0,
+		}
+
+		if row.BomGroup == "" && row.UniqCode == "" && row.PartName == "" {
+			continue
+		}
+		if row.BomGroup != "" {
+			allGroups[row.BomGroup] = struct{}{}
+		}
+
+		if row.BomGroup == "" {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "bom_group", Message: "wajib diisi", RawData: raw})
+			continue
+		}
+		if row.RowType != "ROOT" && row.RowType != "CHILD" {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "row_type", Message: "harus ROOT atau CHILD", RawData: raw})
+			continue
+		}
+		if row.UniqCode == "" {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "uniq_code", Message: "wajib diisi", RawData: raw})
+			continue
+		}
+		if prev, ok := uniqSeen[row.UniqCode]; ok {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "uniq_code", Message: fmt.Sprintf("duplikat dengan baris %d", prev), RawData: raw})
+			continue
+		}
+		uniqSeen[row.UniqCode] = sheetRow
+
+		if row.PartName == "" {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "part_name", Message: "wajib diisi", RawData: raw})
+			continue
+		}
+		if row.Uom == "" {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "uom", Message: "wajib diisi", RawData: raw})
+			continue
+		}
+		if row.Status != "Active" && row.Status != "Inactive" {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "status", Message: "harus Active atau Inactive", RawData: raw})
+			continue
+		}
+
+		if row.RowType == "CHILD" {
+			if row.ParentUniqCode == "" {
+				errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "parent_uniq_code", Message: "wajib diisi untuk CHILD", RawData: raw})
+				continue
+			}
+			lvl, err := strconv.Atoi(strings.TrimSpace(getImportValue(raw, headerIndex, "level")))
+			if err != nil || lvl < 1 || lvl > 4 {
+				errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "level", Message: "harus 1-4", RawData: raw})
+				continue
+			}
+			if rawQPU := strings.TrimSpace(getImportValue(raw, headerIndex, "qty_per_uniq")); rawQPU != "" {
+				qpu, err := strconv.ParseFloat(rawQPU, 64)
+				if err != nil || qpu <= 0 {
+					errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "qty_per_uniq", Message: "harus angka > 0", RawData: raw})
+					continue
+				}
+				row.QtyPerUniq = qpu
+			}
+			row.Level = int16(lvl)
+		}
+
+		if v := strings.TrimSpace(getImportValue(raw, headerIndex, "scrap_factor")); v != "" {
+			if sf, err := strconv.ParseFloat(v, 64); err == nil {
+				row.ScrapFactor = sf
+			}
+		}
+		if v := strings.TrimSpace(getImportValue(raw, headerIndex, "is_phantom")); v != "" {
+			parsed, ok := parseBoolLike(v)
+			if !ok {
+				errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "is_phantom", Message: "harus TRUE/FALSE", RawData: raw})
+				continue
+			}
+			row.IsPhantom = parsed
+		}
+
+		row.WidthMM = parseOptionalFloat(getImportValue(raw, headerIndex, "width_mm"))
+		row.ThicknessMM = parseOptionalFloat(getImportValue(raw, headerIndex, "thickness_mm"))
+		row.LengthMM = parseOptionalFloat(getImportValue(raw, headerIndex, "length_mm"))
+		row.DiameterMM = parseOptionalFloat(getImportValue(raw, headerIndex, "diameter_mm"))
+		row.WeightKG = parseOptionalFloat(getImportValue(raw, headerIndex, "weight_kg"))
+
+		result = append(result, row)
+	}
+
+	return result, errRows, allGroups, nil
+}
+
+func (s *service) parseRouteRows(ctx context.Context, f *excelize.File, itemRows []models.BomImportItemRow) ([]models.BomImportRouteRow, []bulkimport.RowError, error) {
+	rows, err := f.GetRows("Routes")
+	if err != nil {
+		return nil, []bulkimport.RowError{{Sheet: "Routes", Row: 1, Field: "sheet", Message: "sheet Routes tidak ditemukan", RawData: []string{}}}, nil
+	}
+
+	itemUniq := make(map[string]struct{}, len(itemRows))
+	for _, it := range itemRows {
+		itemUniq[it.UniqCode] = struct{}{}
+	}
+
+	result := make([]models.BomImportRouteRow, 0)
+	errRows := make([]bulkimport.RowError, 0)
+
+	for i := 1; i < len(rows); i++ {
+		raw := readImportRaw(rows[i], 1, 8)
+		sheetRow := i + 1
+
+		row := models.BomImportRouteRow{
+			SheetRow:  sheetRow,
+			RawData:   raw,
+			UniqCode:  strings.TrimSpace(raw[0]),
+			MachineID: parseOptionalInt64(raw[3]),
+		}
+		if v := strings.TrimSpace(raw[6]); v != "" {
+			row.MachineStroke = &v
+		}
+		if v := strings.TrimSpace(raw[7]); v != "" {
+			row.ToolingRef = &v
+		}
+		row.CycleTimeSec = parseOptionalFloat(raw[4])
+		row.SetupTimeMin = parseOptionalFloat(raw[5])
+
+		if row.UniqCode == "" && strings.TrimSpace(raw[1]) == "" && strings.TrimSpace(raw[2]) == "" {
+			continue
+		}
+		if row.UniqCode == "" {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Routes", Row: sheetRow, Field: "uniq_code", Message: "wajib diisi", RawData: raw})
+			continue
+		}
+		if _, ok := itemUniq[row.UniqCode]; !ok {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Routes", Row: sheetRow, Field: "uniq_code", Message: "tidak ada di sheet Items", RawData: raw})
+			continue
+		}
+
+		opSeq, err := strconv.Atoi(strings.TrimSpace(raw[1]))
+		if err != nil || opSeq <= 0 {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Routes", Row: sheetRow, Field: "op_seq", Message: "harus angka > 0", RawData: raw})
+			continue
+		}
+		row.OpSeq = opSeq
+
+		processID, err := strconv.ParseInt(strings.TrimSpace(raw[2]), 10, 64)
+		if err != nil || processID <= 0 {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Routes", Row: sheetRow, Field: "process_id", Message: "harus angka valid", RawData: raw})
+			continue
+		}
+		row.ProcessID = processID
+
+		if s.repo.GetProcessName(ctx, row.ProcessID) == "" {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Routes", Row: sheetRow, Field: "process_id", Message: fmt.Sprintf("%d tidak ditemukan", row.ProcessID), RawData: raw})
+			continue
+		}
+		if row.MachineID != nil && s.repo.GetMachineName(ctx, *row.MachineID) == "" {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Routes", Row: sheetRow, Field: "machine_id", Message: fmt.Sprintf("%d tidak ditemukan", *row.MachineID), RawData: raw})
+			continue
+		}
+
+		result = append(result, row)
+	}
+
+	return result, errRows, nil
+}
+
+func buildCreateBomRequest(rows []models.BomImportItemRow, routesByUniq map[string][]models.BomImportRouteRow) (models.CreateBomRequest, error) {
+	root := findGroupRoot(rows)
+	if root == nil {
+		return models.CreateBomRequest{}, fmt.Errorf("bom_group tidak punya ROOT")
+	}
+
+	byParent := make(map[string][]models.BomImportItemRow)
+	uniqMap := make(map[string]models.BomImportItemRow)
+	for _, r := range rows {
+		uniqMap[r.UniqCode] = r
+		if r.RowType == "CHILD" {
+			byParent[r.ParentUniqCode] = append(byParent[r.ParentUniqCode], r)
+		}
+	}
+	for _, r := range rows {
+		if r.RowType == "CHILD" {
+			if _, ok := uniqMap[r.ParentUniqCode]; !ok {
+				return models.CreateBomRequest{}, fmt.Errorf("parent_uniq_code %s tidak ditemukan", r.ParentUniqCode)
+			}
+		}
+	}
+
+	children, err := buildChildren(root.UniqCode, 1, byParent, routesByUniq)
+	if err != nil {
+		return models.CreateBomRequest{}, err
+	}
+
+	req := models.CreateBomRequest{
+		UniqCode:      root.UniqCode,
+		PartName:      root.PartName,
+		Uom:           root.Uom,
+		Status:        root.Status,
+		ProcessRoutes: toProcessInputs(routesByUniq[root.UniqCode]),
+		MaterialSpec:  toMaterialSpec(root),
+		Children:      children,
+	}
+	if root.PartNumber != "" {
+		v := root.PartNumber
+		req.PartNumber = &v
+	}
+	if root.Description != "" {
+		v := root.Description
+		req.Description = &v
+	}
+
+	return req, nil
+}
+
+func buildChildren(parentUniq string, level int16, byParent map[string][]models.BomImportItemRow, routesByUniq map[string][]models.BomImportRouteRow) ([]models.ChildInput, error) {
+	childrenRows := byParent[parentUniq]
+	if len(childrenRows) == 0 {
+		return nil, nil
+	}
+
+	res := make([]models.ChildInput, 0, len(childrenRows))
+	for _, r := range childrenRows {
+		if r.Level != level {
+			return nil, fmt.Errorf("level child %s tidak sesuai parent", r.UniqCode)
+		}
+		nested, err := buildChildren(r.UniqCode, level+1, byParent, routesByUniq)
+		if err != nil {
+			return nil, err
+		}
+
+		uniq := r.UniqCode
+		name := r.PartName
+		uom := r.Uom
+		scrap := r.ScrapFactor
+		phantom := r.IsPhantom
+
+		child := models.ChildInput{
+			UniqCode:      &uniq,
+			PartName:      &name,
+			Uom:           &uom,
+			Level:         r.Level,
+			QtyPerUniq:    r.QtyPerUniq,
+			ScrapFactor:   &scrap,
+			IsPhantom:     &phantom,
+			ProcessRoutes: toProcessInputs(routesByUniq[r.UniqCode]),
+			MaterialSpec:  toMaterialSpec(&r),
+			Children:      nested,
+		}
+		if r.PartNumber != "" {
+			v := r.PartNumber
+			child.PartNumber = &v
+		}
+		res = append(res, child)
+	}
+
+	return res, nil
+}
+
+func toProcessInputs(routes []models.BomImportRouteRow) []models.ProcessRouteInput {
+	if len(routes) == 0 {
+		return nil
+	}
+	result := make([]models.ProcessRouteInput, 0, len(routes))
+	for _, r := range routes {
+		result = append(result, models.ProcessRouteInput{
+			OpSeq:         r.OpSeq,
+			ProcessID:     r.ProcessID,
+			MachineID:     r.MachineID,
+			CycleTimeSec:  r.CycleTimeSec,
+			SetupTimeMin:  r.SetupTimeMin,
+			MachineStroke: r.MachineStroke,
+			ToolingRef:    r.ToolingRef,
+		})
+	}
+	return result
+}
+
+func toMaterialSpec(row *models.BomImportItemRow) *models.MaterialSpecInput {
+	if row == nil {
+		return nil
+	}
+	hasAny := row.MaterialGrade != "" || row.Form != "" || row.WidthMM != nil || row.ThicknessMM != nil || row.LengthMM != nil || row.DiameterMM != nil || row.WeightKG != nil
+	if !hasAny {
+		return nil
+	}
+	ms := &models.MaterialSpecInput{
+		WidthMm:     row.WidthMM,
+		ThicknessMm: row.ThicknessMM,
+		LengthMm:    row.LengthMM,
+		DiameterMm:  row.DiameterMM,
+		WeightKg:    row.WeightKG,
+	}
+	if row.MaterialGrade != "" {
+		v := row.MaterialGrade
+		ms.MaterialGrade = &v
+	}
+	if row.Form != "" {
+		v := row.Form
+		ms.Form = &v
+	}
+	return ms
+}
+
+func readImportRaw(row []string, start, count int) []string {
+	raw := make([]string, count)
+	for i := 0; i < count; i++ {
+		idx := start + i
+		if idx < len(row) {
+			raw[i] = strings.TrimSpace(row[idx])
+		}
+	}
+	return raw
+}
+
+func parseOptionalFloat(v string) *float64 {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return nil
+	}
+	return &f
+}
+
+func parseOptionalInt64(v string) *int64 {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	i, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return nil
+	}
+	return &i
+}
+
+func parseBoolLike(v string) (bool, bool) {
+	s := strings.ToLower(strings.TrimSpace(v))
+	switch s {
+	case "true", "1", "yes", "y":
+		return true, true
+	case "false", "0", "no", "n":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func findGroupRoot(rows []models.BomImportItemRow) *models.BomImportItemRow {
+	for i := range rows {
+		if rows[i].RowType == "ROOT" {
+			return &rows[i]
+		}
+	}
+	return nil
+}
+
+func mergeRowErrors(in []bulkimport.RowError) []bulkimport.RowError {
+	if len(in) == 0 {
+		return nil
+	}
+	type key struct {
+		sheet string
+		row   int
+	}
+	acc := make(map[key]bulkimport.RowError)
+	order := make([]key, 0)
+
+	for _, e := range in {
+		k := key{sheet: e.Sheet, row: e.Row}
+		if ex, ok := acc[k]; ok {
+			ex.Message = ex.Message + "; " + e.Field + ": " + e.Message
+			acc[k] = ex
+			continue
+		}
+		msg := e.Message
+		if e.Field != "" {
+			msg = e.Field + ": " + e.Message
+		}
+		acc[k] = bulkimport.RowError{Sheet: e.Sheet, Row: e.Row, Field: e.Field, Message: msg, RawData: e.RawData}
+		order = append(order, k)
+	}
+
+	out := make([]bulkimport.RowError, 0, len(order))
+	for _, k := range order {
+		out = append(out, acc[k])
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Sheet == out[j].Sheet {
+			return out[i].Row < out[j].Row
+		}
+		return out[i].Sheet < out[j].Sheet
+	})
+	return out
+}
+
+func mapImportHeaderIndex(headerRow []string) map[string]int {
+	idx := make(map[string]int, len(headerRow))
+	for i := 1; i < len(headerRow); i++ {
+		h := strings.ToLower(strings.TrimSpace(headerRow[i]))
+		if h == "" {
+			continue
+		}
+		idx[h] = i - 1
+	}
+	return idx
+}
+
+func getImportValue(raw []string, idx map[string]int, key string) string {
+	pos, ok := idx[strings.ToLower(key)]
+	if !ok || pos < 0 || pos >= len(raw) {
+		return ""
+	}
+	return raw[pos]
+}
+
+func cleanupTempFile(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	_ = os.Remove(path)
 }
