@@ -174,6 +174,20 @@ type ListPRLQuery struct {
 	Limit          int    `form:"limit"`
 }
 
+type ListPRLHistoryQuery struct {
+	Search         string `form:"search"`
+	ForecastPeriod string `form:"forecast_period"`
+	UniqCode       string `form:"uniq_code"`
+	Page           int    `form:"page"`
+	Limit          int    `form:"limit"`
+}
+
+type PRLHistoryDetailQuery struct {
+	UniqCode       string `form:"uniq_code" validate:"required,max=100"`
+	ForecastPeriod string `form:"forecast_period" validate:"required,max=100"`
+	Limit          int    `form:"limit"`
+}
+
 type PaginationMeta struct {
 	Page       int   `json:"page"`
 	Limit      int   `json:"limit"`
@@ -189,6 +203,56 @@ type UniqBOMListResult struct {
 type PRLListResult struct {
 	Items      []PRL          `json:"items"`
 	Pagination PaginationMeta `json:"pagination"`
+}
+
+type PRLHistoryListItem struct {
+	ForecastPeriod string    `json:"forecast_period"`
+	UniqCode       string    `json:"uniq_code"`
+	PRLQuantity    float64   `json:"prl_quantity"`
+	DeliveryQty    float64   `json:"delivery_qty"`
+	LastUpdated    time.Time `json:"last_updated"`
+}
+
+type PRLHistoryListResponse struct {
+	Items      []PRLHistoryListItem `json:"items"`
+	Pagination PaginationMeta       `json:"pagination"`
+}
+
+type PRLMachinePatternListItem struct {
+	ForecastPeriod   string  `json:"forecast_period"`
+	UniqCode         string  `json:"uniq_code"`
+	MachinePattern   string  `json:"machine_pattern"`
+	ProductionOutput float64 `json:"production_output"`
+}
+
+type PRLMachinePatternListResponse struct {
+	Items      []PRLMachinePatternListItem `json:"items"`
+	Pagination PaginationMeta              `json:"pagination"`
+}
+
+type PRLHistoryLogItem struct {
+	Activity    string    `json:"activity"`
+	Description string    `json:"description"`
+	Actor       string    `json:"actor"`
+	EventTime   time.Time `json:"event_time"`
+	Source      string    `json:"source"`
+	OldValue    *float64  `json:"old_value,omitempty"`
+	NewValue    *float64  `json:"new_value,omitempty"`
+}
+
+type PRLHistoryDetailSummary struct {
+	UniqCode       string    `json:"uniq_code"`
+	ForecastPeriod string    `json:"forecast_period"`
+	TotalLogs      int64     `json:"total_logs"`
+	PRLQuantity    float64   `json:"prl_quantity"`
+	DeliveryQty    float64   `json:"delivery_qty"`
+	LastUpdated    time.Time `json:"last_updated"`
+	MachinePattern string    `json:"machine_pattern"`
+}
+
+type PRLHistoryDetailResponse struct {
+	Summary  PRLHistoryDetailSummary `json:"summary"`
+	Timeline []PRLHistoryLogItem     `json:"timeline"`
 }
 
 type PRLDetailResponse struct {
@@ -228,6 +292,15 @@ type PRLListFilters struct {
 	ForecastPeriod *string
 	CustomerUUID   *string
 	UniqCode       *string
+	Page           int
+	Limit          int
+	Offset         int
+}
+
+type PRLHistoryFilters struct {
+	Search         string
+	ForecastPeriod string
+	UniqCode       string
 	Page           int
 	Limit          int
 	Offset         int

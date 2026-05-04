@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
@@ -17,6 +18,7 @@ import (
 	prlRepo "github.com/ganasa18/go-template/internal/prl/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/ganasa18/go-template/pkg/approval"
+	"github.com/ganasa18/go-template/pkg/concurrency"
 	"github.com/google/uuid"
 	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
@@ -35,6 +37,9 @@ type Service interface {
 	BulkCreatePRLs(ctx context.Context, req models.BulkCreatePRLRequest, submittedBy string) (*models.BulkCreatePRLResponse, error)
 	GetPRLByUUID(ctx context.Context, uuid string) (*models.PRL, error)
 	GetPRLDetail(ctx context.Context, id string) (*models.PRLDetailResponse, error)
+	ListPRLHistoryVsDelivery(ctx context.Context, query models.ListPRLHistoryQuery) (*models.PRLHistoryListResponse, error)
+	GetPRLHistoryVsDeliveryDetail(ctx context.Context, query models.PRLHistoryDetailQuery) (*models.PRLHistoryDetailResponse, error)
+	ListPRLMachinePatterns(ctx context.Context, query models.ListPRLHistoryQuery) (*models.PRLMachinePatternListResponse, error)
 	ListPRLs(ctx context.Context, query models.ListPRLQuery) (*models.PRLListResult, error)
 	UpdatePRL(ctx context.Context, uuid string, req models.UpdatePRLRequest) (*models.PRL, error)
 	DeletePRL(ctx context.Context, uuid string) error
@@ -315,6 +320,121 @@ func (s *service) resolvePRLDetailTarget(ctx context.Context, id string) (*model
 		return s.repo.FindPRLByID(ctx, numericID)
 	}
 	return s.repo.FindPRLByUUID(ctx, trimmed)
+}
+
+func (s *service) ListPRLHistoryVsDelivery(ctx context.Context, query models.ListPRLHistoryQuery) (*models.PRLHistoryListResponse, error) {
+	page, limit := normalizePageLimit(query.Page, query.Limit)
+	filters := models.PRLHistoryFilters{
+		Search:         models.Trimmed(query.Search),
+		ForecastPeriod: models.Trimmed(query.ForecastPeriod),
+		UniqCode:       models.Trimmed(query.UniqCode),
+		Page:           page,
+		Limit:          limit,
+		Offset:         (page - 1) * limit,
+	}
+
+	items, total, err := s.repo.ListPRLHistoryVsDelivery(ctx, filters)
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.PRLHistoryListResponse{
+		Items:      items,
+		Pagination: models.NewPaginationMeta(page, limit, total),
+	}, nil
+}
+
+func (s *service) GetPRLHistoryVsDeliveryDetail(ctx context.Context, query models.PRLHistoryDetailQuery) (*models.PRLHistoryDetailResponse, error) {
+	uniqCode := models.Trimmed(query.UniqCode)
+	forecastPeriod := models.Trimmed(query.ForecastPeriod)
+	if uniqCode == "" {
+		return nil, apperror.BadRequest("uniq_code is required")
+	}
+	if forecastPeriod == "" {
+		return nil, apperror.BadRequest("forecast_period is required")
+	}
+	if query.Limit <= 0 {
+		query.Limit = 50
+	}
+
+	var (
+		summary *models.PRLHistoryDetailSummary
+		logs    []models.PRLHistoryLogItem
+		pattern string
+		mu      sync.Mutex
+	)
+
+	tasks := []concurrency.Task{
+		func(taskCtx context.Context) error {
+			item, err := s.repo.GetPRLHistorySummary(taskCtx, uniqCode, forecastPeriod)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			summary = item
+			mu.Unlock()
+			return nil
+		},
+		func(taskCtx context.Context) error {
+			items, err := s.repo.ListPRLHistoryTimeline(taskCtx, uniqCode, forecastPeriod, query.Limit)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			logs = items
+			mu.Unlock()
+			return nil
+		},
+		func(taskCtx context.Context) error {
+			value, err := s.repo.GetMachinePatternByUniqCode(taskCtx, uniqCode)
+			if err != nil {
+				return err
+			}
+			mu.Lock()
+			pattern = value
+			mu.Unlock()
+			return nil
+		},
+	}
+
+	if err := concurrency.Run(ctx, tasks, concurrency.DefaultFanout); err != nil {
+		return nil, err
+	}
+
+	if summary == nil {
+		return nil, apperror.NotFound("prl history not found")
+	}
+	if pattern == "" {
+		pattern = "-"
+	}
+	summary.MachinePattern = pattern
+
+	return &models.PRLHistoryDetailResponse{
+		Summary:  *summary,
+		Timeline: logs,
+	}, nil
+}
+
+func (s *service) ListPRLMachinePatterns(ctx context.Context, query models.ListPRLHistoryQuery) (*models.PRLMachinePatternListResponse, error) {
+	page, limit := normalizePageLimit(query.Page, query.Limit)
+	filters := models.PRLHistoryFilters{
+		Search:         models.Trimmed(query.Search),
+		ForecastPeriod: models.Trimmed(query.ForecastPeriod),
+		UniqCode:       models.Trimmed(query.UniqCode),
+		Page:           page,
+		Limit:          limit,
+		Offset:         (page - 1) * limit,
+	}
+
+	items, total, err := s.repo.ListPRLMachinePatterns(ctx, filters)
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.PRLMachinePatternListResponse{
+		Items:      items,
+		Pagination: models.NewPaginationMeta(page, limit, total),
+	}, nil
 }
 
 func (s *service) ListPRLs(ctx context.Context, query models.ListPRLQuery) (*models.PRLListResult, error) {
