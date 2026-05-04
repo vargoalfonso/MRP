@@ -153,6 +153,66 @@ func (h *HTTPHandler) ListPRLs(appCtx *app.Context) *app.CostumeResponse {
 	return ok(appCtx, result)
 }
 
+func (h *HTTPHandler) ListPRLHistoryVsDelivery(appCtx *app.Context) *app.CostumeResponse {
+	var query models.ListPRLHistoryQuery
+	if err := appCtx.ShouldBindQuery(&query); err != nil {
+		return badRequest(appCtx, "invalid query params")
+	}
+
+	result, err := h.service.ListPRLHistoryVsDelivery(appCtx.Request.Context(), query)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      result,
+	}
+}
+
+func (h *HTTPHandler) GetPRLHistoryVsDeliveryDetail(appCtx *app.Context) *app.CostumeResponse {
+	var query models.PRLHistoryDetailQuery
+	if err := appCtx.ShouldBindQuery(&query); err != nil {
+		return badRequest(appCtx, "invalid query params")
+	}
+	if errs := validator.Validate(query); errs != nil {
+		return validationError(appCtx, errs)
+	}
+
+	result, err := h.service.GetPRLHistoryVsDeliveryDetail(appCtx.Request.Context(), query)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      result,
+	}
+}
+
+func (h *HTTPHandler) ListPRLMachinePatterns(appCtx *app.Context) *app.CostumeResponse {
+	var query models.ListPRLHistoryQuery
+	if err := appCtx.ShouldBindQuery(&query); err != nil {
+		return badRequest(appCtx, "invalid query params")
+	}
+
+	result, err := h.service.ListPRLMachinePatterns(appCtx.Request.Context(), query)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      result,
+	}
+}
+
 func (h *HTTPHandler) GetPRL(appCtx *app.Context) *app.CostumeResponse {
 	item, err := h.service.GetPRLByUUID(appCtx.Request.Context(), appCtx.Param("id"))
 	if err != nil {
