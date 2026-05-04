@@ -61,6 +61,10 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	g := r.Group("/api/v1/products/bom")
 	g.Use(authMiddleware.JWTMiddleware(m.authenticator))
 	{
+		g.GET("/import/template", roleMiddleware.RequirePermission(m.roleService, "bom", "view"), m.handler.DownloadImportTemplateRaw)
+		g.POST("/import", roleMiddleware.RequirePermission(m.roleService, "bom", "create"), m.base.RunAction(m.handler.ImportBomExcel))
+		g.GET("/import/errors/:token", roleMiddleware.RequirePermission(m.roleService, "bom", "view"), m.handler.DownloadImportErrorsRaw)
+
 		g.GET("", roleMiddleware.RequirePermission(m.roleService, "bom", "view"), m.base.RunAction(m.handler.ListBom))
 		g.POST("", roleMiddleware.RequirePermission(m.roleService, "bom", "create"), m.base.RunAction(m.handler.CreateBom))
 		g.GET("/:id", roleMiddleware.RequirePermission(m.roleService, "bom", "view"), m.base.RunAction(m.handler.GetBomDetail))
