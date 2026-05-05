@@ -23,7 +23,7 @@ func New(service importService.ImportService, auth registerService.Authenticator
 }
 
 func (h *HTTPHandler) DownloadTemplate(appCtx *app.Context) *app.CostumeResponse {
-	file, err := h.service.GenerateTemplateExcelPrls()
+	file, err := h.service.GenerateTemplatePrls()
 	if err != nil {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
@@ -64,7 +64,7 @@ func (h *HTTPHandler) BulkImportPRL(appCtx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{Status: http.StatusInternalServerError, Message: "gagal simpan file"}
 	}
 
-	data, err := h.service.ImportExcel(appCtx.Request.Context(), filePath)
+	data, err := h.service.ParsingPRL(appCtx.Request.Context(), filePath)
 	if err != nil {
 		os.Remove(filePath)
 		return &app.CostumeResponse{Status: http.StatusBadRequest, Message: "gagal parsing excel", Data: err.Error()}

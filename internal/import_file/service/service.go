@@ -4,12 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/ganasa18/go-template/internal/import_file/helper"
 	"github.com/ganasa18/go-template/internal/import_file/models"
 	"github.com/ganasa18/go-template/internal/import_file/repository"
 	"github.com/google/uuid"
@@ -17,8 +14,10 @@ import (
 )
 
 type ImportService interface {
-	GenerateTemplateExcelPrls() (*bytes.Buffer, error)
-	ImportExcel(ctx context.Context, filePath string) ([]models.ImportDataRequest, error)
+	GenerateTemplatePrls() (*bytes.Buffer, error)
+
+	ParsingPRL(ctx context.Context, filePath string) ([]models.ImportDataRequest, error)
+
 	BulkInsertPRL(ctx context.Context, data []models.ImportDataRequest, filePath string) (*models.BulkInsertResponse, error)
 }
 
@@ -28,144 +27,6 @@ type importService struct {
 
 func New(repo repository.ImportRepository) ImportService {
 	return &importService{repo: repo}
-}
-
-func (s *importService) GenerateTemplateExcelPrls() (*bytes.Buffer, error) {
-	f := excelize.NewFile()
-	sheetName := "Template"
-
-	f.SetSheetName("Sheet1", sheetName)
-
-	headers := []string{
-		"no",
-		"customer_name",
-		"uniq_code",
-		"product_model",
-		"part_name",
-		"part_number",
-		"forecast_period",
-		"quantity",
-	}
-
-	// 🔹 styling header
-	style, _ := f.NewStyle(&excelize.Style{
-		Font: &excelize.Font{
-			Bold: true,
-		},
-	})
-
-	// set header
-	for i, h := range headers {
-		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
-		f.SetCellValue(sheetName, cell, h)
-		f.SetCellStyle(sheetName, cell, cell, style)
-	}
-
-	// 🔹 set column width biar enak dilihat
-	f.SetColWidth(sheetName, "A", "H", 20)
-
-	// 🔹 kasih contoh data (optional tapi recommended)
-	example := []interface{}{
-		1,
-		"PT Customer Beta",
-		"EMA-001-LV2",
-		"LV2",
-		"Engine Mount Assembly",
-		"EMA-001-LV2",
-		"Mei 2026",
-		100,
-	}
-
-	for i, val := range example {
-		cell, _ := excelize.CoordinatesToCellName(i+1, 2)
-		f.SetCellValue(sheetName, cell, val)
-	}
-
-	// 🔹 freeze header (biar enak scroll)
-	f.SetPanes(sheetName, &excelize.Panes{
-		Freeze:      true,
-		Split:       false,
-		YSplit:      1,
-		TopLeftCell: "A2",
-	})
-
-	// 🔹 convert ke buffer
-	buf, err := f.WriteToBuffer()
-	if err != nil {
-		return nil, err
-	}
-
-	return buf, nil
-}
-
-func (s *importService) ImportExcel(ctx context.Context, filePath string) ([]models.ImportDataRequest, error) {
-	f, err := excelize.OpenFile(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	sheet := f.GetSheetName(0)
-
-	rows, err := f.GetRows(sheet)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(rows) < 2 {
-		return nil, fmt.Errorf("file kosong")
-	}
-
-	var result []models.ImportDataRequest
-
-	for i := 1; i < len(rows); i++ {
-		row := rows[i]
-
-		item := models.ImportDataRequest{
-			CustomerName:   helper.SafeGet(row, 1), // skip kolom "no"
-			UniqCode:       helper.SafeGet(row, 2),
-			ProductModel:   helper.SafeGet(row, 3),
-			PartName:       helper.SafeGet(row, 4),
-			PartNumber:     helper.SafeGet(row, 5),
-			ForecastPeriod: helper.SafeGet(row, 6),
-		}
-
-		qtyStr := helper.SafeGet(row, 7)
-
-		qty, err := strconv.ParseFloat(cleanNumber(qtyStr), 64)
-		if err != nil {
-			return nil, fmt.Errorf("row %d: quantity tidak valid (%s)", i+2, qtyStr)
-		}
-
-		item.Quantity = qty
-
-		if item.CustomerName == "" {
-			continue
-		}
-
-		result = append(result, item)
-	}
-
-	return result, nil
-}
-
-func cleanNumber(val string) string {
-	val = strings.TrimSpace(val)
-
-	// hapus spasi
-	val = strings.ReplaceAll(val, " ", "")
-
-	// handle format indo
-	if strings.Contains(val, ",") {
-		val = strings.ReplaceAll(val, ".", "")
-		val = strings.ReplaceAll(val, ",", ".")
-	}
-
-	// hapus selain angka & titik
-	re := regexp.MustCompile(`[^\d\.]`)
-	val = re.ReplaceAllString(val, "")
-
-	return val
 }
 
 func (s *importService) BulkInsertPRL(ctx context.Context, data []models.ImportDataRequest, filePath string) (*models.BulkInsertResponse, error) {
