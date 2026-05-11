@@ -55,41 +55,59 @@ func Validate(s interface{}) []FieldError {
 func humanMessage(fe validator.FieldError) string {
 	switch fe.Tag() {
 	case "required":
-		return fmt.Sprintf("%s is required", fe.Field())
+		return fmt.Sprintf("%s wajib diisi", fe.Field())
+
 	case "email":
-		return fmt.Sprintf("%s must be a valid email address", fe.Field())
+		return fmt.Sprintf("%s harus berupa alamat email yang valid", fe.Field())
+
 	case "min":
 		if fe.Type().Kind().String() == "string" {
-			return fmt.Sprintf("%s must be at least %s characters", fe.Field(), fe.Param())
+			return fmt.Sprintf("%s minimal %s karakter", fe.Field(), fe.Param())
 		}
-		return fmt.Sprintf("%s must be at least %s", fe.Field(), fe.Param())
+		return fmt.Sprintf("%s minimal %s", fe.Field(), fe.Param())
+
 	case "max":
 		if fe.Type().Kind().String() == "string" {
-			return fmt.Sprintf("%s must be at most %s characters", fe.Field(), fe.Param())
+			return fmt.Sprintf("%s maksimal %s karakter", fe.Field(), fe.Param())
 		}
-		return fmt.Sprintf("%s must be at most %s", fe.Field(), fe.Param())
+		return fmt.Sprintf("%s maksimal %s", fe.Field(), fe.Param())
+
 	case "len":
-		return fmt.Sprintf("%s must be exactly %s characters", fe.Field(), fe.Param())
+		return fmt.Sprintf("%s harus terdiri dari %s karakter", fe.Field(), fe.Param())
+
 	case "oneof":
-		return fmt.Sprintf("%s must be one of: %s", fe.Field(), strings.ReplaceAll(fe.Param(), " ", ", "))
+		return fmt.Sprintf(
+			"%s harus salah satu dari: %s",
+			fe.Field(),
+			strings.ReplaceAll(fe.Param(), " ", ", "),
+		)
+
 	case "url":
-		return fmt.Sprintf("%s must be a valid URL", fe.Field())
+		return fmt.Sprintf("%s harus berupa URL yang valid", fe.Field())
+
 	case "uuid4":
-		return fmt.Sprintf("%s must be a valid UUID", fe.Field())
+		return fmt.Sprintf("%s harus berupa UUID yang valid", fe.Field())
+
 	case "numeric":
-		return fmt.Sprintf("%s must contain only numbers", fe.Field())
+		return fmt.Sprintf("%s hanya boleh berisi angka", fe.Field())
+
 	case "alphanum":
-		return fmt.Sprintf("%s must contain only letters and numbers", fe.Field())
+		return fmt.Sprintf("%s hanya boleh berisi huruf dan angka", fe.Field())
+
 	case "gt":
-		return fmt.Sprintf("%s must be greater than %s", fe.Field(), fe.Param())
+		return fmt.Sprintf("%s harus lebih besar dari %s", fe.Field(), fe.Param())
+
 	case "gte":
-		return fmt.Sprintf("%s must be greater than or equal to %s", fe.Field(), fe.Param())
+		return fmt.Sprintf("%s harus lebih besar atau sama dengan %s", fe.Field(), fe.Param())
+
 	case "lt":
-		return fmt.Sprintf("%s must be less than %s", fe.Field(), fe.Param())
+		return fmt.Sprintf("%s harus lebih kecil dari %s", fe.Field(), fe.Param())
+
 	case "lte":
-		return fmt.Sprintf("%s must be less than or equal to %s", fe.Field(), fe.Param())
+		return fmt.Sprintf("%s harus lebih kecil atau sama dengan %s", fe.Field(), fe.Param())
+
 	default:
-		return fmt.Sprintf("%s is invalid", fe.Field())
+		return fmt.Sprintf("%s tidak valid", fe.Field())
 	}
 }
 
