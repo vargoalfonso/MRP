@@ -77,7 +77,7 @@ func (r *repository) GetByID(ctx context.Context, id int64) (*models.MachinePatt
 		First(&p, id).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("machine pattern not found")
+			return nil, apperror.NotFound("machine pattern tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("get machine pattern by id", err)
 	}

@@ -52,11 +52,11 @@ type ExternalTrainingRunDetail struct {
 }
 
 type TrainingRunFilters struct {
-	Scope   string
-	Tenant  string
-	Uniq    string
-	Domain  string
-	Status  string
+	Scope  string
+	Tenant string
+	Uniq   string
+	Domain string
+	Status string
 }
 
 type InferenceResultFilters struct {
@@ -97,7 +97,7 @@ func (r *repository) FindTrainingRunByUUID(ctx context.Context, uuid string) (*m
 	err := r.db.WithContext(ctx).Where("uuid = ?", uuid).First(&run).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("training run not found")
+			return nil, apperror.NotFound("training run tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find training run failed", err)
 	}
@@ -109,7 +109,7 @@ func (r *repository) FindTrainingRunByExternalID(ctx context.Context, trainingRu
 	err := r.db.WithContext(ctx).Where("training_run_id = ?", trainingRunID).First(&run).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("training run not found")
+			return nil, apperror.NotFound("training run tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find training run by external id failed", err)
 	}
@@ -121,7 +121,7 @@ func (r *repository) FindTrainingRunByRequestID(ctx context.Context, requestID s
 	err := r.db.WithContext(ctx).Where("request_id = ?", requestID).First(&run).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("training run not found")
+			return nil, apperror.NotFound("training run tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find training run by request id failed", err)
 	}
@@ -220,7 +220,7 @@ func (r *repository) FindInferenceResultByUUID(ctx context.Context, uuid string)
 	err := r.db.WithContext(ctx).Where("uuid = ?", uuid).First(&result).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("inference result not found")
+			return nil, apperror.NotFound("inference result tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find inference result failed", err)
 	}
@@ -232,7 +232,7 @@ func (r *repository) FindInferenceResultByRequestID(ctx context.Context, request
 	err := r.db.WithContext(ctx).Where("request_id = ?", requestID).First(&result).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("inference result not found")
+			return nil, apperror.NotFound("inference result tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find inference result by request id failed", err)
 	}

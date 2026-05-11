@@ -39,7 +39,7 @@ func (r *repository) FindByUUID(ctx context.Context, uuid string) (*models.Suppl
 	err := r.db.WithContext(ctx).Where("uuid = ?", uuid).First(&item).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("supplier item not found")
+			return nil, apperror.NotFound("supplier item tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find supplier item failed", err)
 	}
@@ -98,7 +98,7 @@ func (r *repository) FindSupplierByUUID(ctx context.Context, uuid string) (*supp
 	err := r.db.WithContext(ctx).Where("uuid = ?", uuid).First(&supplier).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("supplier not found")
+			return nil, apperror.NotFound("supplier tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find supplier failed", err)
 	}

@@ -402,7 +402,7 @@ func (s *service) GetPRLHistoryVsDeliveryDetail(ctx context.Context, query model
 	}
 
 	if summary == nil {
-		return nil, apperror.NotFound("prl history not found")
+		return nil, apperror.NotFound("prl history tidak ditemukan")
 	}
 	if pattern == "" {
 		pattern = "-"
@@ -759,7 +759,7 @@ func (s *service) processPRLApprovalAction(ctx context.Context, tx *gorm.DB, prl
 		Where("action_name = ? AND reference_table = ? AND reference_id = ?", "prl", "prls", item.ID).
 		First(&instance).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.BadRequest("approval instance for prl not found")
+			return nil, apperror.BadRequest("approval instance for prl tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find approval instance failed", err)
 	}
@@ -769,7 +769,7 @@ func (s *service) processPRLApprovalAction(ctx context.Context, tx *gorm.DB, prl
 		Where("id = ? AND status = ?", instance.ApprovalWorkflowID, "active").
 		First(&workflow).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.BadRequest("active approval workflow for prl not found")
+			return nil, apperror.BadRequest("active approval workflow for prl tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find approval workflow failed", err)
 	}
@@ -863,7 +863,7 @@ func (s *service) findPRLByAnyID(ctx context.Context, tx *gorm.DB, id string) (*
 	if numericID, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
 		if err := query.Where("id = ?", numericID).First(&item).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
-				return nil, apperror.NotFound("prl not found")
+				return nil, apperror.NotFound("prl tidak ditemukan")
 			}
 			return nil, apperror.InternalWrap("find prl failed", err)
 		}
@@ -872,7 +872,7 @@ func (s *service) findPRLByAnyID(ctx context.Context, tx *gorm.DB, id string) (*
 
 	if err := query.Where("uuid = ?", trimmed).First(&item).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("prl not found")
+			return nil, apperror.NotFound("prl tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find prl failed", err)
 	}

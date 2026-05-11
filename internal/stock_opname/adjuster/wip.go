@@ -21,7 +21,7 @@ func (a *WIPAdjuster) ResolveUniq(ctx context.Context, tx *gorm.DB, uniqCode str
 	var row wipModels.WIPItem
 	err := tx.WithContext(ctx).Where("uniq = ?", uniqCode).Take(&row).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("wip uniq %s not found", uniqCode))
+		return nil, apperror.NotFound(fmt.Sprintf("wip uniq %s tidak ditemukan", uniqCode))
 	}
 	if err != nil {
 		return nil, apperror.Internal("resolve WIP uniq: " + err.Error())
@@ -56,7 +56,7 @@ func (a *WIPAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *s
 	var row wipModels.WIPItem
 	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", entry.EntityID).Take(&row).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("wip item not found during stock opname")
+			return nil, apperror.NotFound("wip item tidak ditemukan during stock opname")
 		}
 		return nil, apperror.Internal("lock WIP row: " + err.Error())
 	}

@@ -183,12 +183,12 @@ func (s *service) GetTrainingRun(ctx context.Context, trainingRunID string) (*mo
 	externalDetail, extErr := s.client.GetTrainingRun(ctx, trainingRunID)
 
 	if extErr != nil && apperror.IsNotFound(extErr) {
-		// External not found — if we have local record, return it
+		// External tidak ditemukan — if we have local record, return it
 		if localRun != nil {
 			resp := models.ToTrainingRunResponse(localRun)
 			return &resp, nil
 		}
-		return nil, apperror.NotFound("training run not found")
+		return nil, apperror.NotFound("training run tidak ditemukan")
 	}
 	if extErr != nil {
 		return nil, extErr
@@ -244,7 +244,7 @@ func (s *service) GetTrainingRun(ctx context.Context, trainingRunID string) (*mo
 		return &resp, nil
 	}
 
-	return nil, apperror.NotFound("training run not found")
+	return nil, apperror.NotFound("training run tidak ditemukan")
 }
 
 func (s *service) ListTrainingRuns(ctx context.Context, filters repository.TrainingRunFilters, pagination repository.PaginationInput) (*models.TrainingRunListResponse, error) {
@@ -342,34 +342,34 @@ func (s *service) Predict(ctx context.Context, req models.PredictRequest, create
 
 	// Call external API
 	externalResp, err := s.client.Predict(ctx, forecastingclient.PredictRequest{
-		RequestID:         req.RequestID,
-		Domain:            req.Domain,
-		Tenant:            req.Tenant,
-		AutoObservations:  req.AutoObservations,
-		ItemID:            req.ItemID,
-		Horizon:           req.Horizon,
-		LookbackPoints:    req.LookbackPoints,
-		Observations:      observations,
-		FutureCovariates:  futureCovariates,
+		RequestID:        req.RequestID,
+		Domain:           req.Domain,
+		Tenant:           req.Tenant,
+		AutoObservations: req.AutoObservations,
+		ItemID:           req.ItemID,
+		Horizon:          req.Horizon,
+		LookbackPoints:   req.LookbackPoints,
+		Observations:     observations,
+		FutureCovariates: futureCovariates,
 	})
 	if err != nil {
 		// Still persist the failed attempt
 		reqBytes, _ := json.Marshal(req)
 		result := &models.ForecastingInferenceResult{
-			UUID:           uuid.New().String(),
-			RequestID:      req.RequestID,
-			Domain:         req.Domain,
-			Tenant:         req.Tenant,
-			ItemID:         req.ItemID,
-			ModelVersionID: "",
-			Horizon:        req.Horizon,
-			LookbackPoints: req.LookbackPoints,
-			Mode:           mode,
-			RequestPayload: reqBytes,
+			UUID:            uuid.New().String(),
+			RequestID:       req.RequestID,
+			Domain:          req.Domain,
+			Tenant:          req.Tenant,
+			ItemID:          req.ItemID,
+			ModelVersionID:  "",
+			Horizon:         req.Horizon,
+			LookbackPoints:  req.LookbackPoints,
+			Mode:            mode,
+			RequestPayload:  reqBytes,
 			ResponsePayload: []byte("{}"),
-			Status:         "FAILED",
-			ErrorMessage:   err.Error(),
-			CreatedBy:      createdBy,
+			Status:          "FAILED",
+			ErrorMessage:    err.Error(),
+			CreatedBy:       createdBy,
 		}
 		_ = s.repo.CreateInferenceResult(ctx, result)
 		return nil, err

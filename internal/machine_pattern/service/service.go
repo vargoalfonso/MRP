@@ -102,7 +102,7 @@ func (s *service) Create(ctx context.Context, req models.CreateMachinePatternReq
 		return nil, err
 	}
 	if !exists {
-		return nil, apperror.BadRequest("machine not found")
+		return nil, apperror.BadRequest("machine tidak ditemukan")
 	}
 
 	// Check duplicate: uniq_code + machine_id unique

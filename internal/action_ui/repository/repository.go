@@ -46,7 +46,7 @@ func (r *repo) LookupByPackingNumber(ctx context.Context, packingNumber, itemUni
 		Where("packing_number = ?", packingNumber).
 		First(&dnItem).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, apperror.NotFound("packing_number not found")
+			return nil, apperror.NotFound("packing_number tidak ditemukan")
 		}
 		return nil, fmt.Errorf("lookup packing_number: %w", err)
 	}
@@ -89,7 +89,7 @@ func (r *repo) CreateIncomingScan(ctx context.Context, req models.IncomingScanRe
 		Where("packing_number = ?", req.PackingNumber).
 		First(&resolvedItem).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, false, apperror.NotFound(fmt.Sprintf("packing_number '%s' not found", req.PackingNumber))
+			return nil, false, apperror.NotFound(fmt.Sprintf("packing_number '%s' tidak ditemukan", req.PackingNumber))
 		}
 		return nil, false, fmt.Errorf("lookup dn item: %w", err)
 	}
@@ -294,7 +294,7 @@ func normalizeActor(actor string) string {
 func (r *repo) writeScanMovementLogTx(tx *gorm.DB, dnItem procModels.IncomingDNItem, req models.IncomingScanRequest, scannedBy string) error {
 	var dn procModels.IncomingDN
 	if err := tx.First(&dn, "id = ?", dnItem.IncomingDNID).Error; err != nil {
-		// Non-fatal: if DN not found just skip the log
+		// Non-fatal: if DN tidak ditemukan just skip the log
 		return nil
 	}
 	movCat := dnTypeToMovementCategory(dn.DnType)

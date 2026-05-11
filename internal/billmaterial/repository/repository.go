@@ -160,7 +160,7 @@ func (r *repository) GetAssetByID(ctx context.Context, assetID int64) (*models.I
 	var a models.ItemAsset
 	if err := r.db.WithContext(ctx).First(&a, "id = ?", assetID).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("asset not found")
+			return nil, apperror.NotFound("asset tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("GetAssetByID", err)
 	}
@@ -261,7 +261,7 @@ func (r *repository) DeleteBomItem(ctx context.Context, bomID int64) error {
 		return apperror.InternalWrap("DeleteBomItem", res.Error)
 	}
 	if res.RowsAffected == 0 {
-		return apperror.NotFound("bom item not found")
+		return apperror.NotFound("bom item tidak ditemukan")
 	}
 	return nil
 }
@@ -907,7 +907,7 @@ func safeOrder(col, dir string) string {
 func one[T any](v *T, err error, entity string) (*T, error) {
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound(entity + " not found")
+			return nil, apperror.NotFound(entity + " tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("get "+entity, err)
 	}

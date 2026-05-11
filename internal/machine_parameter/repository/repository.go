@@ -62,7 +62,7 @@ func (r *repository) FindByID(ctx context.Context, id int64) (*models.MechinPara
 	err := r.db.WithContext(ctx).First(&data, id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("mechin parameter not found")
+			return nil, errors.New("mechin parameter tidak ditemukan")
 		}
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (r *repository) Update(ctx context.Context, id int64, req models.UpdateMech
 	var data models.MechinParameter
 	if err := r.db.WithContext(ctx).First(&data, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("mechin parameter not found")
+			return nil, errors.New("mechin parameter tidak ditemukan")
 		}
 		return nil, err
 	}
@@ -127,7 +127,7 @@ func (r *repository) Delete(ctx context.Context, id int64) error {
 		return res.Error
 	}
 	if res.RowsAffected == 0 {
-		return errors.New("mechin parameter not found")
+		return errors.New("mechin parameter tidak ditemukan")
 	}
 	return nil
 }

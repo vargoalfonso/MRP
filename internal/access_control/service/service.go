@@ -71,7 +71,7 @@ func (s *service) Create(ctx context.Context, req models.CreateACMRequest) (*mod
 	// ==============================
 	role, err := s.roleRepo.FindByID(ctx, roleID)
 	if err != nil {
-		return nil, fmt.Errorf("role not found")
+		return nil, fmt.Errorf("role tidak ditemukan")
 	}
 
 	// ==============================
@@ -80,14 +80,14 @@ func (s *service) Create(ctx context.Context, req models.CreateACMRequest) (*mod
 	if req.EmployeeID != "" {
 		_, err := s.employeeRepo.FindByID(ctx, employeeID)
 		if err != nil {
-			return nil, fmt.Errorf("employee not found")
+			return nil, fmt.Errorf("employee tidak ditemukan")
 		}
 	}
 
 	if req.DepartmentID != "" {
 		_, err := s.departmentRepo.FindByID(ctx, departmentID)
 		if err != nil {
-			return nil, fmt.Errorf("department not found")
+			return nil, fmt.Errorf("department tidak ditemukan")
 		}
 	}
 
@@ -157,7 +157,7 @@ func (s *service) Update(
 	// ==============================
 	existing, err := s.repo.FindByID(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("acm not found")
+		return nil, fmt.Errorf("acm tidak ditemukan")
 	}
 
 	var (
@@ -197,7 +197,7 @@ func (s *service) Update(
 	if req.RoleID != "" {
 		role, err := s.roleRepo.FindByID(ctx, roleID)
 		if err != nil {
-			return nil, fmt.Errorf("role not found")
+			return nil, fmt.Errorf("role tidak ditemukan")
 		}
 
 		roleName = role.Name
@@ -209,7 +209,7 @@ func (s *service) Update(
 	if req.EmployeeID != "" {
 		_, err := s.employeeRepo.FindByID(ctx, employeeID)
 		if err != nil {
-			return nil, fmt.Errorf("employee not found")
+			return nil, fmt.Errorf("employee tidak ditemukan")
 		}
 	}
 
@@ -219,7 +219,7 @@ func (s *service) Update(
 	if req.DepartmentID != "" {
 		_, err := s.departmentRepo.FindByID(ctx, departmentID)
 		if err != nil {
-			return nil, fmt.Errorf("department not found")
+			return nil, fmt.Errorf("department tidak ditemukan")
 		}
 	}
 
@@ -270,7 +270,7 @@ func (s *service) Delete(ctx context.Context, id int64) error {
 	// ==============================
 	existing, err := s.repo.FindByID(ctx, id)
 	if err != nil {
-		return fmt.Errorf("acm not found")
+		return fmt.Errorf("acm tidak ditemukan")
 	}
 
 	// ==============================

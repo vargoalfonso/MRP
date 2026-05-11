@@ -86,7 +86,7 @@ func (r *repository) FindByUUID(ctx context.Context, uuid string) (*models.Wareh
 	var warehouse models.Warehouse
 	if err := r.db.WithContext(ctx).Where("uuid = ?", uuid).First(&warehouse).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("warehouse not found")
+			return nil, apperror.NotFound("warehouse tidak ditemukan")
 		}
 		return nil, wrapWarehouseDBError("find warehouse failed", err)
 	}

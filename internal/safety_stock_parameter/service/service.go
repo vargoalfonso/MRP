@@ -114,7 +114,7 @@ func (s *service) Calculate(ctx context.Context, itemCode string, prl, po, worki
 
 	param, err := s.repo.FindByItemCode(ctx, itemCode)
 	if err != nil {
-		return 0, errors.New("parameter not found")
+		return 0, errors.New("parameter tidak ditemukan")
 	}
 
 	var forecast float64

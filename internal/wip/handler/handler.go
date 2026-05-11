@@ -70,7 +70,7 @@ func (h *HTTPHandler) GetByID(appCtx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusNotFound,
-			Message:   "WIP not found",
+			Message:   "WIP tidak ditemukan",
 		}
 	}
 

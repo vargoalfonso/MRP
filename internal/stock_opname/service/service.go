@@ -360,7 +360,7 @@ func (s *service) UpdateEntry(ctx context.Context, sessionID, entryID int64, req
 			return err
 		}
 		if entry.SessionID != sessionID {
-			return apperror.NotFound("stock opname entry not found for session")
+			return apperror.NotFound("stock opname entry tidak ditemukan for session")
 		}
 		adj, err := s.getAdjuster(session.InventoryType)
 		if err != nil {
@@ -429,7 +429,7 @@ func (s *service) DeleteEntry(ctx context.Context, sessionID, entryID int64, act
 			return err
 		}
 		if entry.SessionID != sessionID {
-			return apperror.NotFound("stock opname entry not found for session")
+			return apperror.NotFound("stock opname entry tidak ditemukan for session")
 		}
 		if err := s.repo.DeleteEntry(ctx, tx, entryID); err != nil {
 			return err
@@ -628,7 +628,7 @@ func (s *service) ApproveEntry(ctx context.Context, sessionID, entryID int64, re
 			return err
 		}
 		if entry.SessionID != sessionID {
-			return apperror.NotFound("stock opname entry not found for session")
+			return apperror.NotFound("stock opname entry tidak ditemukan for session")
 		}
 		if entry.Status != stockModels.EntryStatusPending {
 			return apperror.Conflict("entry already processed")
@@ -737,14 +737,14 @@ func (s *service) getApprovalContext(ctx context.Context, tx *gorm.DB, sessionID
 	var instance awmodels.ApprovalInstance
 	if err := tx.WithContext(ctx).Where("action_name = ? AND reference_table = ? AND reference_id = ?", "stock_opname", "stock_opname_sessions", sessionID).Order("id DESC").First(&instance).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, nil, apperror.BadRequest("approval instance for stock opname session not found")
+			return nil, nil, apperror.BadRequest("approval instance for stock opname session tidak ditemukan")
 		}
 		return nil, nil, apperror.InternalWrap("find stock opname approval instance failed", err)
 	}
 	var workflow awmodels.ApprovalWorkflow
 	if err := tx.WithContext(ctx).Where("id = ? AND status = ?", instance.ApprovalWorkflowID, "active").First(&workflow).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, nil, apperror.BadRequest("active approval workflow for stock opname not found")
+			return nil, nil, apperror.BadRequest("active approval workflow for stock opname tidak ditemukan")
 		}
 		return nil, nil, apperror.InternalWrap("find stock opname approval workflow failed", err)
 	}

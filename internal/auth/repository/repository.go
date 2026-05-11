@@ -61,7 +61,7 @@ func (r *repository) FindByEmail(ctx context.Context, email string) (*models.Use
 	err := r.db.WithContext(ctx).Where("email = ? AND deleted_at IS NULL", email).First(&user).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("user not found")
+			return nil, apperror.NotFound("user tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("FindByEmail failed", err)
 	}
@@ -74,7 +74,7 @@ func (r *repository) FindByUUID(ctx context.Context, uuid string) (*models.User,
 	err := r.db.WithContext(ctx).Where("uuid = ? AND deleted_at IS NULL", uuid).First(&user).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("user not found")
+			return nil, apperror.NotFound("user tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("FindByUUID failed", err)
 	}

@@ -149,7 +149,7 @@ func (r *repository) GetScrapStockByID(ctx context.Context, id int64) (*scrapMod
 		Where("id = ? AND deleted_at IS NULL", id).
 		First(&s).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("scrap stock id %d not found", id))
+		return nil, apperror.NotFound(fmt.Sprintf("scrap stock id %d tidak ditemukan", id))
 	}
 	if err != nil {
 		return nil, apperror.Internal("get scrap stock: " + err.Error())
@@ -182,7 +182,7 @@ func (r *repository) AddScrapQty(ctx context.Context, id int64, delta float64, u
 		return apperror.Internal("update scrap qty: " + res.Error.Error())
 	}
 	if res.RowsAffected == 0 {
-		return apperror.NotFound(fmt.Sprintf("scrap stock id %d not found", id))
+		return apperror.NotFound(fmt.Sprintf("scrap stock id %d tidak ditemukan", id))
 	}
 	return nil
 }
@@ -222,7 +222,7 @@ func (r *repository) GetScrapReleaseByID(ctx context.Context, id int64) (*scrapM
 		Where("id = ? AND deleted_at IS NULL", id).
 		First(&rel).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("scrap release id %d not found", id))
+		return nil, apperror.NotFound(fmt.Sprintf("scrap release id %d tidak ditemukan", id))
 	}
 	if err != nil {
 		return nil, apperror.Internal("get scrap release: " + err.Error())
@@ -290,7 +290,7 @@ func (r *repository) ApproveRelease(ctx context.Context, id int64, action, appro
 		var rel scrapModels.ScrapRelease
 		if err := tx.Where("id = ? AND deleted_at IS NULL", id).First(&rel).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
-				return apperror.NotFound(fmt.Sprintf("scrap release id %d not found", id))
+				return apperror.NotFound(fmt.Sprintf("scrap release id %d tidak ditemukan", id))
 			}
 			return apperror.Internal("get release: " + err.Error())
 		}
@@ -327,7 +327,7 @@ func (r *repository) ApproveRelease(ctx context.Context, id int64, action, appro
 				return apperror.Internal("deduct scrap qty: " + res.Error.Error())
 			}
 			if res.RowsAffected == 0 {
-				return apperror.NotFound("scrap stock record not found during deduction")
+				return apperror.NotFound("scrap stock record tidak ditemukan during deduction")
 			}
 		}
 		return nil

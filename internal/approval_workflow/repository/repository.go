@@ -119,11 +119,11 @@ func (r *repository) GetApprovalManagerDetail(ctx context.Context, instanceID in
 		return nil, gorm.ErrRecordNotFound
 	}
 	return &models.ApprovalManagerDetail{
-		InstanceID:     row.InstanceID,
-		Module:         row.Module,
-		ReferenceTable: row.ReferenceTable,
-		ReferenceID:    row.ReferenceID,
-		Workflow: models.ApprovalWorkflow{ID: row.WorkflowID, ActionName: row.WorkflowAction, Level1Role: row.Level1Role, Level2Role: row.Level2Role, Level3Role: row.Level3Role, Level4Role: row.Level4Role},
+		InstanceID:       row.InstanceID,
+		Module:           row.Module,
+		ReferenceTable:   row.ReferenceTable,
+		ReferenceID:      row.ReferenceID,
+		Workflow:         models.ApprovalWorkflow{ID: row.WorkflowID, ActionName: row.WorkflowAction, Level1Role: row.Level1Role, Level2Role: row.Level2Role, Level3Role: row.Level3Role, Level4Role: row.Level4Role},
 		CurrentLevel:     row.CurrentLevel,
 		MaxLevel:         row.MaxLevel,
 		Status:           row.Status,
@@ -237,7 +237,7 @@ func (r *repository) FindByID(ctx context.Context, id int64) (*models.ApprovalWo
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("approval workflow not found")
+			return nil, errors.New("approval workflow tidak ditemukan")
 		}
 		return nil, err
 	}
@@ -272,7 +272,7 @@ func (r *repository) Update(ctx context.Context, id int64, req models.UpdateAppr
 		First(&data, id).Error; err != nil {
 
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("approval workflow not found")
+			return nil, errors.New("approval workflow tidak ditemukan")
 		}
 		return nil, err
 	}
@@ -311,7 +311,7 @@ func (r *repository) Delete(ctx context.Context, id int64) error {
 	}
 
 	if result.RowsAffected == 0 {
-		return errors.New("approval workflow not found")
+		return errors.New("approval workflow tidak ditemukan")
 	}
 
 	return nil

@@ -370,5 +370,5 @@ func extractRoles(claimsRaw interface{}) ([]string, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("roles not found in token")
+	return nil, fmt.Errorf("roles tidak ditemukan in token")
 }

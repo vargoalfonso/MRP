@@ -68,7 +68,7 @@ func (r *repository) FindByID(ctx context.Context, id int64) (*models.Employee, 
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("employee not found")
+			return nil, errors.New("employee tidak ditemukan")
 		}
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func (r *repository) Update(ctx context.Context, id int64, req models.UpdateEmpl
 		First(&employee, id).Error; err != nil {
 
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("employee not found")
+			return nil, errors.New("employee tidak ditemukan")
 		}
 		return nil, err
 	}
@@ -128,7 +128,7 @@ func (r *repository) Delete(ctx context.Context, id int64) error {
 	}
 
 	if result.RowsAffected == 0 {
-		return errors.New("employee not found")
+		return errors.New("employee tidak ditemukan")
 	}
 
 	return nil

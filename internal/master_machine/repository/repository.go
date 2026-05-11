@@ -41,7 +41,7 @@ func (r *repository) FindByID(ctx context.Context, id int64) (*models.MasterMach
 	err := r.db.WithContext(ctx).First(&data, id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("master machine not found")
+			return nil, errors.New("master machine tidak ditemukan")
 		}
 		return nil, err
 	}
@@ -72,7 +72,7 @@ func (r *repository) Update(ctx context.Context, id int64, req models.UpdateMach
 	var data models.MasterMachine
 	if err := r.db.WithContext(ctx).First(&data, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("master machine not found")
+			return nil, errors.New("master machine tidak ditemukan")
 		}
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func (r *repository) Delete(ctx context.Context, id int64) error {
 		return res.Error
 	}
 	if res.RowsAffected == 0 {
-		return errors.New("master machine not found")
+		return errors.New("master machine tidak ditemukan")
 	}
 	return nil
 }

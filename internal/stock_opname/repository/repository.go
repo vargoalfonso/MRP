@@ -184,7 +184,7 @@ func (r *repository) GetSessionByID(ctx context.Context, id int64) (*stockModels
 	var row stockModels.StockOpnameSession
 	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).Take(&row).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("stock opname session id %d not found", id))
+		return nil, apperror.NotFound(fmt.Sprintf("stock opname session id %d tidak ditemukan", id))
 	}
 	if err != nil {
 		return nil, apperror.Internal("get stock opname session: " + err.Error())
@@ -196,7 +196,7 @@ func (r *repository) GetSessionWithEntries(ctx context.Context, id int64) (*stoc
 	var row stockModels.StockOpnameSession
 	err := r.db.WithContext(ctx).Preload("Entries", func(tx *gorm.DB) *gorm.DB { return tx.Order("id ASC") }).Where("id = ? AND deleted_at IS NULL", id).Take(&row).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("stock opname session id %d not found", id))
+		return nil, apperror.NotFound(fmt.Sprintf("stock opname session id %d tidak ditemukan", id))
 	}
 	if err != nil {
 		return nil, apperror.Internal("get stock opname detail: " + err.Error())
@@ -229,7 +229,7 @@ func (r *repository) GetSessionByIDTx(ctx context.Context, tx *gorm.DB, id int64
 	var row stockModels.StockOpnameSession
 	err := q.Where("id = ? AND deleted_at IS NULL", id).Take(&row).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("stock opname session id %d not found", id))
+		return nil, apperror.NotFound(fmt.Sprintf("stock opname session id %d tidak ditemukan", id))
 	}
 	if err != nil {
 		return nil, apperror.Internal("get stock opname session tx: " + err.Error())
@@ -251,7 +251,7 @@ func (r *repository) SoftDeleteSession(ctx context.Context, tx *gorm.DB, id int6
 		return apperror.Internal("delete stock opname session: " + res.Error.Error())
 	}
 	if res.RowsAffected == 0 {
-		return apperror.NotFound(fmt.Sprintf("stock opname session id %d not found", id))
+		return apperror.NotFound(fmt.Sprintf("stock opname session id %d tidak ditemukan", id))
 	}
 	return nil
 }
@@ -272,7 +272,7 @@ func (r *repository) GetEntryByIDTx(ctx context.Context, tx *gorm.DB, id int64, 
 	var row stockModels.StockOpnameEntry
 	err := q.Where("id = ?", id).Take(&row).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("stock opname entry id %d not found", id))
+		return nil, apperror.NotFound(fmt.Sprintf("stock opname entry id %d tidak ditemukan", id))
 	}
 	if err != nil {
 		return nil, apperror.Internal("get stock opname entry: " + err.Error())

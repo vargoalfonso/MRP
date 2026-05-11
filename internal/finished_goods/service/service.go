@@ -274,7 +274,7 @@ func (s *service) GetParameterizedSummary(ctx context.Context, uniqCode string) 
 		return nil, apperror.InternalWrap("failed to get parameterized finished-goods summary", err)
 	}
 	if r.UniqCode == "" {
-		return nil, apperror.NotFound("finished goods not found")
+		return nil, apperror.NotFound("finished goods tidak ditemukan")
 	}
 
 	targetStockQty := r.MinStock
@@ -403,11 +403,11 @@ func (s *service) GetFinishedGoodsByID(ctx context.Context, id int64) (*fgModels
 func (s *service) CreateFinishedGoods(ctx context.Context, req fgModels.CreateFinishedGoodsRequest, createdBy string) (*fgModels.FinishedGoodsItem, error) {
 	// Look up part details + last WO + initial quantity from work_order_items
 	type bomRow struct {
-		PartNumber *string  `gorm:"column:part_number"`
-		PartName   *string  `gorm:"column:part_name"`
-		Model      *string  `gorm:"column:model"`
-		WONumber   *string  `gorm:"column:wo_number"`
-		Quantity   float64  `gorm:"column:quantity"`
+		PartNumber *string `gorm:"column:part_number"`
+		PartName   *string `gorm:"column:part_name"`
+		Model      *string `gorm:"column:model"`
+		WONumber   *string `gorm:"column:wo_number"`
+		Quantity   float64 `gorm:"column:quantity"`
 	}
 	var bom bomRow
 	_ = s.db.WithContext(ctx).Raw(`
@@ -474,21 +474,21 @@ func (s *service) CreateFinishedGoods(ctx context.Context, req fgModels.CreateFi
 		status := computeStatus(existing.StockQty, minThreshold, maxThreshold)
 
 		updates := map[string]interface{}{
-			"deleted_at":              nil,
-			"warehouse_location":      req.WarehouseLocation,
-			"wo_number":               woNumber,
-			"part_number":             bom.PartNumber,
-			"part_name":               bom.PartName,
-			"model":                   bom.Model,
-			"kanban_standard_qty":     kanbanStandardQty,
-			"min_threshold":           minThreshold,
-			"max_threshold":           maxThreshold,
-			"safety_stock_qty":        safetyStockQty,
-			"kanban_count":            kanbanCount,
+			"deleted_at":               nil,
+			"warehouse_location":       req.WarehouseLocation,
+			"wo_number":                woNumber,
+			"part_number":              bom.PartNumber,
+			"part_name":                bom.PartName,
+			"model":                    bom.Model,
+			"kanban_standard_qty":      kanbanStandardQty,
+			"min_threshold":            minThreshold,
+			"max_threshold":            maxThreshold,
+			"safety_stock_qty":         safetyStockQty,
+			"kanban_count":             kanbanCount,
 			"stock_to_complete_kanban": stockToComplete,
-			"status":                  status,
-			"updated_by":              createdBy,
-			"updated_at":              now,
+			"status":                   status,
+			"updated_by":               createdBy,
+			"updated_at":               now,
 		}
 		if err := s.db.WithContext(ctx).Unscoped().Model(&fgModels.FinishedGoods{}).
 			Where("uniq_code = ?", req.UniqCode).

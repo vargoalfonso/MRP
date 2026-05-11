@@ -90,7 +90,7 @@ func (r *repository) FindUniqBOMByUUID(ctx context.Context, uuid string) (*model
 	err := r.db.WithContext(ctx).Where("uuid = ?", uuid).First(&item).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("uniq bom not found")
+			return nil, apperror.NotFound("uniq bom tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find uniq bom failed", err)
 	}
@@ -102,7 +102,7 @@ func (r *repository) FindUniqBOMByUniqCode(ctx context.Context, uniqCode string)
 	err := r.db.WithContext(ctx).Where("uniq_code ILIKE ?", uniqCode).First(&item).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("uniq bom not found")
+			return nil, apperror.NotFound("uniq bom tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find uniq bom failed", err)
 	}
@@ -173,7 +173,7 @@ func (r *repository) FindPRLByUUID(ctx context.Context, uuid string) (*models.PR
 	err := r.db.WithContext(ctx).Where("uuid = ?", uuid).First(&item).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("prl not found")
+			return nil, apperror.NotFound("prl tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find prl failed", err)
 	}
@@ -185,7 +185,7 @@ func (r *repository) FindPRLByID(ctx context.Context, id int64) (*models.PRL, er
 	err := r.db.WithContext(ctx).Where("id = ?", id).First(&item).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("prl not found")
+			return nil, apperror.NotFound("prl tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find prl failed", err)
 	}
@@ -422,7 +422,7 @@ func (r *repository) GetPRLHistorySummary(ctx context.Context, uniqCode, forecas
 	}
 
 	if prlAgg.Count == 0 {
-		return nil, apperror.NotFound("prl history not found")
+		return nil, apperror.NotFound("prl history tidak ditemukan")
 	}
 
 	var deliveryAgg struct {
@@ -677,7 +677,7 @@ func (r *repository) FindCustomerByUUID(ctx context.Context, uuid string) (*cust
 	err := r.db.WithContext(ctx).Where("uuid = ?", uuid).First(&item).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("customer not found")
+			return nil, apperror.NotFound("customer tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find customer failed", err)
 	}
@@ -689,7 +689,7 @@ func (r *repository) FindCustomerByRowID(ctx context.Context, id int64) (*custom
 	err := r.db.WithContext(ctx).Where("id = ?", id).First(&item).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("customer not found")
+			return nil, apperror.NotFound("customer tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find customer failed", err)
 	}
@@ -701,7 +701,7 @@ func (r *repository) FindCustomerByCode(ctx context.Context, customerCode string
 	err := r.db.WithContext(ctx).Where("customer_id = ?", customerCode).First(&item).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("customer not found")
+			return nil, apperror.NotFound("customer tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find customer failed", err)
 	}

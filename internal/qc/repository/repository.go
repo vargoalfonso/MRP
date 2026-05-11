@@ -107,7 +107,7 @@ func (r *repo) StartTask(ctx context.Context, taskID int64, performedBy string) 
 	var task qcModels.QCTask
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", taskID).Error; err != nil {
-			return apperror.NotFound("qc task not found")
+			return apperror.NotFound("qc task tidak ditemukan")
 		}
 		if task.Status == "approved" || task.Status == "rejected" {
 			return apperror.Conflict("qc task already completed")
@@ -155,7 +155,7 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var task qcModels.QCTask
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", taskID).Error; err != nil {
-			return apperror.NotFound("qc task not found")
+			return apperror.NotFound("qc task tidak ditemukan")
 		}
 		if task.TaskType != "incoming_qc" {
 			return apperror.UnprocessableEntity("task_type must be incoming_qc")
@@ -172,7 +172,7 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 
 		var dnItem procModels.IncomingDNItem
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&dnItem, "id = ?", *task.IncomingDNItemID).Error; err != nil {
-			return apperror.NotFound("incoming_dn_item not found")
+			return apperror.NotFound("incoming_dn_item tidak ditemukan")
 		}
 
 		if numberOfDefects > dnItem.QtyReceived {
@@ -264,7 +264,7 @@ func (r *repo) RejectIncoming(ctx context.Context, taskID int64, numberOfDefects
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var task qcModels.QCTask
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", taskID).Error; err != nil {
-			return apperror.NotFound("qc task not found")
+			return apperror.NotFound("qc task tidak ditemukan")
 		}
 		if task.TaskType != "incoming_qc" {
 			return apperror.UnprocessableEntity("task_type must be incoming_qc")
@@ -281,7 +281,7 @@ func (r *repo) RejectIncoming(ctx context.Context, taskID int64, numberOfDefects
 
 		var dnItem procModels.IncomingDNItem
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&dnItem, "id = ?", *task.IncomingDNItemID).Error; err != nil {
-			return apperror.NotFound("incoming_dn_item not found")
+			return apperror.NotFound("incoming_dn_item tidak ditemukan")
 		}
 
 		if numberOfDefects > dnItem.QtyReceived {
@@ -424,7 +424,7 @@ func appendRoundEventTx(tx *gorm.DB, taskID int64, event map[string]interface{})
 
 func loadDNTypeAndPONumber(tx *gorm.DB, dnID int64) (dnType string, poNumber string, err error) {
 	if !tableExists(tx, "delivery_notes") {
-		return "", "", apperror.UnprocessableEntity("delivery_notes table not found; apply migration 0018_create_delivery_note_up.sql and 0015_dn_feature_up.sql")
+		return "", "", apperror.UnprocessableEntity("delivery_notes table tidak ditemukan; apply migration 0018_create_delivery_note_up.sql and 0015_dn_feature_up.sql")
 	}
 	var row struct {
 		DnType   string `gorm:"column:type"`

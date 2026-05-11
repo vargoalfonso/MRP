@@ -228,7 +228,7 @@ func (r *repository) GetFinishedGoodsByID(ctx context.Context, id int64) (*fgMod
 		First(&fg).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("finished goods not found")
+			return nil, apperror.NotFound("finished goods tidak ditemukan")
 		}
 		return nil, apperror.Internal("fg get by id: " + err.Error())
 	}

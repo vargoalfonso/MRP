@@ -66,7 +66,7 @@ func (r *repository) GetSafetyStockByItem(ctx context.Context, itemUniqCode stri
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("safety stock parameter with item_uniq_code %s not found", itemUniqCode)
+			return nil, fmt.Errorf("safety stock parameter with item_uniq_code %s tidak ditemukan", itemUniqCode)
 		}
 		return nil, err
 	}

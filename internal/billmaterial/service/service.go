@@ -573,7 +573,7 @@ func (s *service) getBomDetail(ctx context.Context, bomID int64, version *int) (
 
 	parent, ok := preload.items[bom.ItemID]
 	if !ok {
-		return nil, apperror.NotFound("item not found")
+		return nil, apperror.NotFound("item tidak ditemukan")
 	}
 
 	resp := &models.BomDetailResponse{
@@ -695,7 +695,7 @@ func (s *service) CreateBomRevision(ctx context.Context, bomID int64, req models
 		return nil, err
 	}
 	if sourceRev == nil {
-		return nil, apperror.NotFound("source item revision not found")
+		return nil, apperror.NotFound("source item revision tidak ditemukan")
 	}
 	newRev, err := s.createNextItemRevision(ctx, sourceBom.ItemID, nextVersion, req.ChangeNote)
 	if err != nil {
@@ -1022,7 +1022,7 @@ func (s *service) createDraftRevisionFrom(ctx context.Context, sourceBom *models
 		return nil, err
 	}
 	if sourceRev == nil {
-		return nil, apperror.NotFound("source item revision not found")
+		return nil, apperror.NotFound("source item revision tidak ditemukan")
 	}
 	newRev, err := s.createNextItemRevision(ctx, sourceBom.ItemID, nextVersion, nil)
 	if err != nil {
@@ -1086,7 +1086,7 @@ func (s *service) PatchProcessRoute(ctx context.Context, bomID, routeID int64, r
 		return nil, err
 	}
 	if _, ok := allowedHeaderIDs[op.RoutingHeaderID]; !ok {
-		return nil, apperror.NotFound("routing operation not found in bom version")
+		return nil, apperror.NotFound("routing operation tidak ditemukan in bom version")
 	}
 	if req.OpSeq != nil {
 		op.OpSeq = *req.OpSeq
@@ -1157,7 +1157,7 @@ func (s *service) resolveRouteTarget(ctx context.Context, bom *models.BomItem, l
 			return 0, 0, nil, err
 		}
 		if rev == nil {
-			return 0, 0, nil, apperror.NotFound("root item revision not found")
+			return 0, 0, nil, apperror.NotFound("root item revision tidak ditemukan")
 		}
 		return bom.ItemID, rev.ID, nil, nil
 	}
@@ -1173,7 +1173,7 @@ func (s *service) resolveRouteTarget(ctx context.Context, bom *models.BomItem, l
 		return 0, 0, nil, err
 	}
 	if rev == nil {
-		return 0, 0, nil, apperror.NotFound("child item revision not found")
+		return 0, 0, nil, apperror.NotFound("child item revision tidak ditemukan")
 	}
 	return line.ChildItemID, rev.ID, lineID, nil
 }
@@ -1439,7 +1439,7 @@ func (s *service) DeleteBomChild(ctx context.Context, bomID, childItemID int64) 
 	}
 
 	if len(roots) == 0 {
-		return 0, apperror.NotFound("child item not found in bom")
+		return 0, apperror.NotFound("child item tidak ditemukan in bom")
 	}
 
 	lineIDs := collectSubtreeLineIDs(lines, roots)
@@ -1448,7 +1448,7 @@ func (s *service) DeleteBomChild(ctx context.Context, bomID, childItemID int64) 
 		return 0, err
 	}
 	if deleted == 0 {
-		return 0, apperror.NotFound("child item not found in bom")
+		return 0, apperror.NotFound("child item tidak ditemukan in bom")
 	}
 
 	return deleted, nil
@@ -1472,7 +1472,7 @@ func (s *service) DeleteBomLine(ctx context.Context, bomID, lineID int64) (int64
 		}
 	}
 	if root == nil {
-		return 0, apperror.NotFound("line not found in bom")
+		return 0, apperror.NotFound("line tidak ditemukan in bom")
 	}
 
 	lineIDs := collectSubtreeLineIDs(lines, []models.BomLine{*root})
@@ -1481,7 +1481,7 @@ func (s *service) DeleteBomLine(ctx context.Context, bomID, lineID int64) (int64
 		return 0, err
 	}
 	if deleted == 0 {
-		return 0, apperror.NotFound("line not found in bom")
+		return 0, apperror.NotFound("line tidak ditemukan in bom")
 	}
 
 	return deleted, nil
@@ -1843,7 +1843,7 @@ func (s *service) ApproveBom(ctx context.Context, bomID int64, userID string, us
 		return nil, err
 	}
 	if instance == nil {
-		return nil, apperror.NotFound("approval record not found for this BOM")
+		return nil, apperror.NotFound("approval record tidak ditemukan for this BOM")
 	}
 	if instance.Status == "approved" || instance.Status == "rejected" {
 		return nil, apperror.BadRequest(fmt.Sprintf("BOM is already %s", instance.Status))
@@ -1854,7 +1854,7 @@ func (s *service) ApproveBom(ctx context.Context, bomID int64, userID string, us
 		return nil, err
 	}
 	if wf == nil {
-		return nil, apperror.BadRequest("active approval workflow for bom not found")
+		return nil, apperror.BadRequest("active approval workflow for bom tidak ditemukan")
 	}
 
 	requiredRole := approval.LevelRole(wf, int16(instance.CurrentLevel))
@@ -1936,14 +1936,14 @@ func (s *service) DownloadImportErrors(ctx context.Context, token string) ([]byt
 		return nil, apperror.BadRequest("invalid error token")
 	}
 	if s.errorStore == nil {
-		return nil, apperror.NotFound("error file not found or expired")
+		return nil, apperror.NotFound("error file tidak ditemukan or expired")
 	}
 	data, err := s.errorStore.Get(token)
 	if err != nil {
 		return nil, apperror.InternalWrap("download error file", err)
 	}
 	if len(data) == 0 {
-		return nil, apperror.NotFound("error file not found or expired")
+		return nil, apperror.NotFound("error file tidak ditemukan or expired")
 	}
 	return data, nil
 }

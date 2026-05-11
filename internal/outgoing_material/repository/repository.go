@@ -33,24 +33,24 @@ type ListFilter struct {
 }
 
 type OutgoingRow struct {
-	ID              int64     `gorm:"column:id"`
-	TransactionID   string    `gorm:"column:transaction_id"`
-	TransactionDate time.Time `gorm:"column:transaction_date"`
-	Uniq            string    `gorm:"column:uniq"`
-	RMName          *string   `gorm:"column:rm_name"`
-	PackingListRM   *string   `gorm:"column:packing_list_rm"`
-	Unit            *string   `gorm:"column:unit"`
-	QuantityOut     float64   `gorm:"column:quantity_out"`
-	StockBefore     float64   `gorm:"column:stock_before"`
-	StockAfter      float64   `gorm:"column:stock_after"`
-	Reason          string    `gorm:"column:reason"`
-	Purpose         *string   `gorm:"column:purpose"`
+	ID                  int64     `gorm:"column:id"`
+	TransactionID       string    `gorm:"column:transaction_id"`
+	TransactionDate     time.Time `gorm:"column:transaction_date"`
+	Uniq                string    `gorm:"column:uniq"`
+	RMName              *string   `gorm:"column:rm_name"`
+	PackingListRM       *string   `gorm:"column:packing_list_rm"`
+	Unit                *string   `gorm:"column:unit"`
+	QuantityOut         float64   `gorm:"column:quantity_out"`
+	StockBefore         float64   `gorm:"column:stock_before"`
+	StockAfter          float64   `gorm:"column:stock_after"`
+	Reason              string    `gorm:"column:reason"`
+	Purpose             *string   `gorm:"column:purpose"`
 	WorkOrderNo         *string   `gorm:"column:work_order_no"`
 	DestinationLocation *string   `gorm:"column:destination_location"`
-	RequestedBy     *string   `gorm:"column:requested_by"`
-	Remarks         *string   `gorm:"column:remarks"`
-	CreatedBy       *string   `gorm:"column:created_by"`
-	CreatedAt       time.Time `gorm:"column:created_at"`
+	RequestedBy         *string   `gorm:"column:requested_by"`
+	Remarks             *string   `gorm:"column:remarks"`
+	CreatedBy           *string   `gorm:"column:created_by"`
+	CreatedAt           time.Time `gorm:"column:created_at"`
 }
 
 // ---------------------------------------------------------------------------
@@ -59,13 +59,13 @@ type OutgoingRow struct {
 
 // RMFormOptionRow is a minimal projection from raw_materials used for autocomplete.
 type RMFormOptionRow struct {
-	ID                int64    `gorm:"column:id"`
-	UniqCode          string   `gorm:"column:uniq_code"`
-	PartNumber        *string  `gorm:"column:part_number"`
-	PartName          *string  `gorm:"column:part_name"`
-	UOM               *string  `gorm:"column:uom"`
-	StockQty          float64  `gorm:"column:stock_qty"`
-	WarehouseLocation *string  `gorm:"column:warehouse_location"`
+	ID                int64   `gorm:"column:id"`
+	UniqCode          string  `gorm:"column:uniq_code"`
+	PartNumber        *string `gorm:"column:part_number"`
+	PartName          *string `gorm:"column:part_name"`
+	UOM               *string `gorm:"column:uom"`
+	StockQty          float64 `gorm:"column:stock_qty"`
+	WarehouseLocation *string `gorm:"column:warehouse_location"`
 }
 
 type IRepository interface {
@@ -148,7 +148,7 @@ func (r *repo) GetByID(ctx context.Context, id int64) (*outModels.OutgoingRawMat
 	var orm outModels.OutgoingRawMaterial
 	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&orm).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "outgoing transaction not found")
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "outgoing transaction tidak ditemukan")
 	}
 	return &orm, err
 }
@@ -181,7 +181,7 @@ func (r *repo) ProcessTx(ctx context.Context, orm *outModels.OutgoingRawMaterial
 	}
 	if rm.ID == 0 {
 		tx.Rollback()
-		return apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material not found: "+orm.Uniq)
+		return apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material tidak ditemukan: "+orm.Uniq)
 	}
 	if rm.StockQty < orm.QuantityOut {
 		tx.Rollback()

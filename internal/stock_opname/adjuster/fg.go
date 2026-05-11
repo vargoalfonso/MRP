@@ -22,7 +22,7 @@ func (a *FGAdjuster) ResolveUniq(ctx context.Context, tx *gorm.DB, uniqCode stri
 	var row fgModels.FinishedGoods
 	err := tx.WithContext(ctx).Where("uniq_code = ? AND deleted_at IS NULL", uniqCode).Take(&row).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("finished goods uniq_code %s not found", uniqCode))
+		return nil, apperror.NotFound(fmt.Sprintf("finished goods uniq_code %s tidak ditemukan", uniqCode))
 	}
 	if err != nil {
 		return nil, apperror.Internal("resolve FG uniq: " + err.Error())
@@ -53,7 +53,7 @@ func (a *FGAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *st
 	var row fgModels.FinishedGoods
 	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND deleted_at IS NULL", entry.EntityID).Take(&row).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("finished goods record not found during stock opname")
+			return nil, apperror.NotFound("finished goods record tidak ditemukan during stock opname")
 		}
 		return nil, apperror.Internal("lock FG row: " + err.Error())
 	}

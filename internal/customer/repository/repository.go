@@ -53,7 +53,7 @@ func (r *repository) FindByUUID(ctx context.Context, uuid string) (*models.Custo
 	err := r.db.WithContext(ctx).Where("uuid = ?", uuid).First(&customer).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("customer not found")
+			return nil, apperror.NotFound("customer tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find customer failed", err)
 	}

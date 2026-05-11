@@ -276,12 +276,12 @@ func (s *service) CreateBulk(ctx context.Context, req woModels.CreateBulkWorkOrd
 			pcsPerKanban := it.KanbanQty
 			if pcsPerKanban <= 0 {
 				if kp == nil || kp.KanbanQty <= 0 {
-					return apperror.UnprocessableEntity("kanban_parameters not found for item_uniq_code")
+					return apperror.UnprocessableEntity("kanban_parameters tidak ditemukan for item_uniq_code")
 				}
 				pcsPerKanban = kp.KanbanQty
 			}
 			if kp == nil || strings.TrimSpace(kp.KanbanNumber) == "" {
-				return apperror.UnprocessableEntity("kanban_parameters not found for item_uniq_code")
+				return apperror.UnprocessableEntity("kanban_parameters tidak ditemukan for item_uniq_code")
 			}
 			remaining := round4(it.Quantity)
 			if remaining <= 0 {
@@ -541,12 +541,12 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 			pcsPerKanban := it.KanbanQty
 			if pcsPerKanban <= 0 {
 				if kp == nil || kp.KanbanQty <= 0 {
-					return apperror.UnprocessableEntity("kanban_qty is required (kanban_parameters not found for item_uniq_code)")
+					return apperror.UnprocessableEntity("kanban_qty is required (kanban_parameters tidak ditemukan for item_uniq_code)")
 				}
 				pcsPerKanban = kp.KanbanQty
 			}
 			if kp == nil || strings.TrimSpace(kp.KanbanNumber) == "" {
-				return apperror.UnprocessableEntity("kanban_parameters not found for item_uniq_code")
+				return apperror.UnprocessableEntity("kanban_parameters tidak ditemukan for item_uniq_code")
 			}
 
 			remaining := round4(it.Quantity)
@@ -650,12 +650,12 @@ func (s *service) Preview(ctx context.Context, req woModels.CreateWorkOrderReque
 		pcsPerKanban := it.KanbanQty
 		if pcsPerKanban <= 0 {
 			if kp == nil || kp.KanbanQty <= 0 {
-				return nil, apperror.UnprocessableEntity("kanban_qty is required (kanban_parameters not found for item_uniq_code)")
+				return nil, apperror.UnprocessableEntity("kanban_qty is required (kanban_parameters tidak ditemukan for item_uniq_code)")
 			}
 			pcsPerKanban = kp.KanbanQty
 		}
 		if kp == nil || strings.TrimSpace(kp.KanbanNumber) == "" {
-			return nil, apperror.UnprocessableEntity("kanban_parameters not found for item_uniq_code")
+			return nil, apperror.UnprocessableEntity("kanban_parameters tidak ditemukan for item_uniq_code")
 		}
 
 		qty := round4(it.Quantity)

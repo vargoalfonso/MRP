@@ -341,7 +341,7 @@ func (r *repo) GetRawMaterialByID(ctx context.Context, id int64) (*invModels.Raw
 	var rm invModels.RawMaterial
 	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&rm).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material not found")
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material tidak ditemukan")
 	}
 	return &rm, err
 }
@@ -406,7 +406,7 @@ func (r *repo) UpdateRawMaterial(ctx context.Context, id int64, updates map[stri
 	}
 	if result.RowsAffected == 0 {
 		tx.Rollback()
-		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material not found")
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material tidak ditemukan")
 	}
 
 	if _, stockChanged := updates["stock_qty"]; stockChanged {
@@ -436,7 +436,7 @@ func (r *repo) SoftDeleteRawMaterial(ctx context.Context, id int64, deletedBy st
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material not found")
+		return apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material tidak ditemukan")
 	}
 	return nil
 }
@@ -487,7 +487,7 @@ func (r *repo) GetIndirectByID(ctx context.Context, id int64) (*invModels.Indire
 	var irm invModels.IndirectRawMaterial
 	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&irm).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "indirect raw material not found")
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "indirect raw material tidak ditemukan")
 	}
 	return &irm, err
 }
@@ -548,7 +548,7 @@ func (r *repo) UpdateIndirectMaterial(ctx context.Context, id int64, updates map
 	}
 	if result.RowsAffected == 0 {
 		tx.Rollback()
-		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "indirect raw material not found")
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "indirect raw material tidak ditemukan")
 	}
 
 	if _, stockChanged := updates["stock_qty"]; stockChanged {
@@ -578,7 +578,7 @@ func (r *repo) SoftDeleteIndirectMaterial(ctx context.Context, id int64, deleted
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return apperror.New(http.StatusNotFound, apperror.CodeNotFound, "indirect raw material not found")
+		return apperror.New(http.StatusNotFound, apperror.CodeNotFound, "indirect raw material tidak ditemukan")
 	}
 	return nil
 }
@@ -624,7 +624,7 @@ func (r *repo) GetSubconByID(ctx context.Context, id int64) (*invModels.SubconIn
 	var si invModels.SubconInventory
 	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&si).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "subcon inventory not found")
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "subcon inventory tidak ditemukan")
 	}
 	return &si, err
 }
@@ -654,7 +654,7 @@ func (r *repo) UpdateSubconInventory(ctx context.Context, id int64, updates map[
 		return nil, result.Error
 	}
 	if result.RowsAffected == 0 {
-		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "subcon inventory not found")
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "subcon inventory tidak ditemukan")
 	}
 	return r.GetSubconByID(ctx, id)
 }
@@ -672,7 +672,7 @@ func (r *repo) SoftDeleteSubconInventory(ctx context.Context, id int64, deletedB
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return apperror.New(http.StatusNotFound, apperror.CodeNotFound, "subcon inventory not found")
+		return apperror.New(http.StatusNotFound, apperror.CodeNotFound, "subcon inventory tidak ditemukan")
 	}
 	return nil
 }
@@ -902,7 +902,7 @@ func (r *repo) DeductRawMaterialByUniqCode(ctx context.Context, uniqCode string,
 	}
 	if row.ID == 0 {
 		tx.Rollback()
-		return 0, nil // not found in this table — caller tries next
+		return 0, nil // tidak ditemukan in this table — caller tries next
 	}
 	if err := recalculateRMStatus(tx, row.ID); err != nil {
 		tx.Rollback()
@@ -936,7 +936,7 @@ func (r *repo) DeductIndirectMaterialByUniqCode(ctx context.Context, uniqCode st
 	}
 	if row.ID == 0 {
 		tx.Rollback()
-		return 0, nil // not found
+		return 0, nil // tidak ditemukan
 	}
 	if err := recalculateIndirectStatus(tx, row.ID); err != nil {
 		tx.Rollback()

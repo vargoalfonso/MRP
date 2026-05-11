@@ -1283,7 +1283,7 @@ type ConsumeItem struct {
 }
 
 // ConsumeStockForWorkOrder atomically deducts stock for each WO item and writes an outgoing
-// movement log entry. Items not found in either raw_materials or indirect_raw_materials are
+// movement log entry. Items tidak ditemukan in either raw_materials or indirect_raw_materials are
 // skipped (they may be finished-goods tracked elsewhere).
 func (s *service) ConsumeStockForWorkOrder(ctx context.Context, items []ConsumeItem, woNumber string, performedBy string) error {
 	for _, item := range items {

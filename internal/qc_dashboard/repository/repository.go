@@ -711,7 +711,7 @@ func (r *repository) CreateReworkTask(ctx context.Context, defectID int64, perfo
 		return apperror.Internal("load defect: " + err.Error())
 	}
 	if defect.ID == 0 {
-		return apperror.NotFound("defect not found")
+		return apperror.NotFound("defect tidak ditemukan")
 	}
 
 	var existing int64
@@ -931,7 +931,7 @@ func loadProductionManualContext(tx *gorm.DB, referenceNumber, uniqCode string) 
 		return nil, apperror.Internal("load production context: " + err.Error())
 	}
 	if row.WOItemID == 0 {
-		return nil, apperror.NotFound("production WO/uniq context not found")
+		return nil, apperror.NotFound("production WO/uniq context tidak ditemukan")
 	}
 	return &row, nil
 }
@@ -949,7 +949,7 @@ func loadIncomingManualContext(tx *gorm.DB, referenceNumber, uniqCode string) (*
 		return nil, apperror.Internal("load incoming context: " + err.Error())
 	}
 	if row.DNItemID == 0 {
-		return nil, apperror.NotFound("incoming DN/PO/uniq context not found")
+		return nil, apperror.NotFound("incoming DN/PO/uniq context tidak ditemukan")
 	}
 	return &row, nil
 }
@@ -968,7 +968,7 @@ func loadProductReturnManualContext(tx *gorm.DB, referenceNumber, uniqCode strin
 		return nil, apperror.Internal("load product return context: " + err.Error())
 	}
 	if row.ProductReturnID == 0 {
-		return nil, apperror.NotFound("product return context not found")
+		return nil, apperror.NotFound("product return context tidak ditemukan")
 	}
 	return &row, nil
 }

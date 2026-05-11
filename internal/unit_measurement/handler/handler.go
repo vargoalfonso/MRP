@@ -47,7 +47,7 @@ func (h *HTTPHandler) GetByID(appCtx *app.Context) *app.CostumeResponse {
 	if err != nil {
 		return &app.CostumeResponse{
 			Status:  http.StatusNotFound,
-			Message: "unit measurement not found",
+			Message: "unit measurement tidak ditemukan",
 		}
 	}
 

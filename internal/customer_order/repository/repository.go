@@ -62,7 +62,7 @@ func (r *repository) FindByUUID(ctx context.Context, uuid string) (*models.Custo
 		First(&doc).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("customer order not found")
+			return nil, apperror.NotFound("customer order tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find customer order failed", err)
 	}
@@ -284,7 +284,7 @@ func (r *repository) GetCustomerNameByID(ctx context.Context, customerID int64) 
 		return "", apperror.InternalWrap("fetch customer failed", err)
 	}
 	if result.CustomerName == "" {
-		return "", apperror.NotFound("customer not found")
+		return "", apperror.NotFound("customer tidak ditemukan")
 	}
 	return result.CustomerName, nil
 }
@@ -300,7 +300,7 @@ func (r *repository) GetItemSnapshot(ctx context.Context, uniqCode string) (*mod
 		return nil, apperror.InternalWrap("fetch item snapshot failed", err)
 	}
 	if snap.PartName == "" {
-		return nil, apperror.NotFound(fmt.Sprintf("item uniq_code '%s' not found", uniqCode))
+		return nil, apperror.NotFound(fmt.Sprintf("item uniq_code '%s' tidak ditemukan", uniqCode))
 	}
 	return &snap, nil
 }

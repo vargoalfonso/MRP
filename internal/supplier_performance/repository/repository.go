@@ -36,22 +36,22 @@ type aggregatedSnapshotRow struct {
 	AcceptedQuantity        float64    `gorm:"column:accepted_quantity"`
 	RejectedQuantity        float64    `gorm:"column:rejected_quantity"`
 	TotalPurchaseValue      float64    `gorm:"column:total_purchase_value"`
-	FinalGrade             string     `gorm:"column:final_grade"`
-	StatusLabel            string     `gorm:"column:status_label"`
-	PoorDeliveryPerformance bool      `gorm:"column:poor_delivery_performance"`
-	QCAlert                bool       `gorm:"column:qc_alert"`
-	SupplierReviewRequired bool       `gorm:"column:supplier_review_required"`
-	IsGradeOverridden      bool       `gorm:"column:is_grade_overridden"`
-	OverrideGrade          *string    `gorm:"column:override_grade"`
-	OverrideRemarks        *string    `gorm:"column:override_remarks"`
-	OverrideBy             *string    `gorm:"column:override_by"`
-	OverrideAt             *time.Time `gorm:"column:override_at"`
-	ComputedAt             time.Time  `gorm:"column:computed_at"`
-	LogicVersion           string     `gorm:"column:logic_version"`
-	FormulaOTD             string     `gorm:"column:formula_otd"`
-	FormulaQuality         string     `gorm:"column:formula_quality"`
-	FormulaGrade           string     `gorm:"column:formula_grade"`
-	FormulaNotes           *string    `gorm:"column:formula_notes"`
+	FinalGrade              string     `gorm:"column:final_grade"`
+	StatusLabel             string     `gorm:"column:status_label"`
+	PoorDeliveryPerformance bool       `gorm:"column:poor_delivery_performance"`
+	QCAlert                 bool       `gorm:"column:qc_alert"`
+	SupplierReviewRequired  bool       `gorm:"column:supplier_review_required"`
+	IsGradeOverridden       bool       `gorm:"column:is_grade_overridden"`
+	OverrideGrade           *string    `gorm:"column:override_grade"`
+	OverrideRemarks         *string    `gorm:"column:override_remarks"`
+	OverrideBy              *string    `gorm:"column:override_by"`
+	OverrideAt              *time.Time `gorm:"column:override_at"`
+	ComputedAt              time.Time  `gorm:"column:computed_at"`
+	LogicVersion            string     `gorm:"column:logic_version"`
+	FormulaOTD              string     `gorm:"column:formula_otd"`
+	FormulaQuality          string     `gorm:"column:formula_quality"`
+	FormulaGrade            string     `gorm:"column:formula_grade"`
+	FormulaNotes            *string    `gorm:"column:formula_notes"`
 }
 
 func New(db *gorm.DB) IRepository { return &repo{db: db} }
@@ -195,7 +195,7 @@ func (r *repo) ApplyOverride(ctx context.Context, supplierUUID, periodType, peri
 			Where("supplier_uuid = ? AND evaluation_period_type = ? AND evaluation_period_value = ? AND deleted_at IS NULL",
 				supplierUUID, periodType, periodValue).
 			First(&snap).Error; err != nil {
-			return fmt.Errorf("snapshot not found: %w", err)
+			return fmt.Errorf("snapshot tidak ditemukan: %w", err)
 		}
 
 		statusLabel := statusLabelFromGrade(grade)
@@ -492,11 +492,11 @@ func matchesStatusFilter(statusLabel, status string) bool {
 func sortSnapshots(snapshots []models.Snapshot, sortBy, sortDirection string) {
 	field := "computed_at"
 	if map[string]bool{
-		"supplier_name":       true,
-		"otd_percentage":      true,
-		"quality_percentage":  true,
-		"computed_score":      true,
-		"computed_at":         true,
+		"supplier_name":        true,
+		"otd_percentage":       true,
+		"quality_percentage":   true,
+		"computed_score":       true,
+		"computed_at":          true,
 		"total_purchase_value": true,
 	}[sortBy] {
 		field = sortBy

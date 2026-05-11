@@ -143,7 +143,7 @@ func (r *productionRepo) FindWOItemByUniqAndWO(ctx context.Context, uniq string,
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return item, apperror.NotFound("uniq not found in wo")
+			return item, apperror.NotFound("uniq tidak ditemukan in wo")
 		}
 		return item, err
 	}
@@ -160,7 +160,7 @@ func (r *productionRepo) FindWOItemByUuid(ctx context.Context, uuid string) (mod
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return item, apperror.NotFound("uniq not found")
+			return item, apperror.NotFound("uniq tidak ditemukan")
 		}
 		return item, err
 	}
@@ -177,7 +177,7 @@ func (r *productionRepo) FindWOItemByUniq(ctx context.Context, uniq string) (mod
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return item, apperror.NotFound("uniq not found")
+			return item, apperror.NotFound("uniq tidak ditemukan")
 		}
 		return item, err
 	}
@@ -193,7 +193,7 @@ func (r *productionRepo) FindWOByID(ctx context.Context, id int64) (models.WorkO
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return wo, apperror.NotFound("wo not found")
+			return wo, apperror.NotFound("wo tidak ditemukan")
 		}
 		return wo, err
 	}
@@ -210,7 +210,7 @@ func (r *productionRepo) FindWOByNumber(ctx context.Context, woNumber string) (m
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return wo, apperror.NotFound("wo not found")
+			return wo, apperror.NotFound("wo tidak ditemukan")
 		}
 		return wo, err
 	}
@@ -227,7 +227,7 @@ func (r *productionRepo) FindWOByKanbanNumber(ctx context.Context, woNumber stri
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return wo, apperror.NotFound("wo not found")
+			return wo, apperror.NotFound("wo tidak ditemukan")
 		}
 		return wo, err
 	}
@@ -247,7 +247,7 @@ func (r *productionRepo) FindWOItemsByWOID(ctx context.Context, woid int64) ([]m
 	}
 
 	if len(items) == 0 {
-		return nil, apperror.NotFound("wo items not found")
+		return nil, apperror.NotFound("wo items tidak ditemukan")
 	}
 
 	return items, nil
@@ -261,7 +261,7 @@ func (r *productionRepo) FindMachineByID(ctx context.Context, id int) (models.Ma
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return machine, apperror.NotFound("machine not found")
+			return machine, apperror.NotFound("machine tidak ditemukan")
 		}
 		return machine, err
 	}

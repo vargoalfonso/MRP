@@ -63,7 +63,7 @@ func (r *repository) GetByID(ctx context.Context, id int64) (*models.ScrapType, 
 		First(&s, id).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("scrap type not found")
+			return nil, apperror.NotFound("scrap type tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("get scrap type by id", err)
 	}
@@ -156,5 +156,5 @@ func parseIntFromEnd(s string) int {
 func formatCodeNumber(n int) string {
 	return string(rune('0'+((n/100)%10))) +
 		string(rune('0'+((n/10)%10))) +
-		string(rune('0' + (n % 10)))
+		string(rune('0'+(n%10)))
 }

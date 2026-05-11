@@ -196,7 +196,7 @@ func (s *svc) CreateEntry(ctx context.Context, req models.CreateEntryRequest, cr
 func (s *svc) GetEntry(ctx context.Context, id int64) (*models.EntryResponse, error) {
 	e, err := s.repo.GetEntryByID(ctx, id)
 	if err != nil {
-		return nil, apperror.NotFound(fmt.Sprintf("entry %d not found", id))
+		return nil, apperror.NotFound(fmt.Sprintf("entry %d tidak ditemukan", id))
 	}
 	resp := toResponse(*e)
 	return &resp, nil
@@ -205,10 +205,10 @@ func (s *svc) GetEntry(ctx context.Context, id int64) (*models.EntryResponse, er
 func (s *svc) GetEntryDetail(ctx context.Context, budgetType string, id int64) (*models.EntryDetailResponse, error) {
 	e, err := s.repo.GetEntryByID(ctx, id)
 	if err != nil {
-		return nil, apperror.NotFound(fmt.Sprintf("entry %d not found", id))
+		return nil, apperror.NotFound(fmt.Sprintf("entry %d tidak ditemukan", id))
 	}
 	if e.BudgetType != budgetType {
-		return nil, apperror.NotFound(fmt.Sprintf("entry %d not found", id))
+		return nil, apperror.NotFound(fmt.Sprintf("entry %d tidak ditemukan", id))
 	}
 	entry := toResponse(*e)
 
@@ -283,7 +283,7 @@ func (s *svc) GetEntryDetail(ctx context.Context, budgetType string, id int64) (
 func (s *svc) UpdateEntry(ctx context.Context, id int64, req models.UpdateEntryRequest, updatedBy string) (*models.EntryResponse, error) {
 	e, err := s.repo.GetEntryByID(ctx, id)
 	if err != nil {
-		return nil, apperror.NotFound(fmt.Sprintf("entry %d not found", id))
+		return nil, apperror.NotFound(fmt.Sprintf("entry %d tidak ditemukan", id))
 	}
 
 	// Apply partial updates
@@ -366,7 +366,7 @@ func (s *svc) UpdateEntry(ctx context.Context, id int64, req models.UpdateEntryR
 
 func (s *svc) DeleteEntry(ctx context.Context, id int64) error {
 	if _, err := s.repo.GetEntryByID(ctx, id); err != nil {
-		return apperror.NotFound(fmt.Sprintf("entry %d not found", id))
+		return apperror.NotFound(fmt.Sprintf("entry %d tidak ditemukan", id))
 	}
 	if err := s.repo.DeleteEntry(ctx, id); err != nil {
 		return apperror.InternalWrap("database error", err)
@@ -442,7 +442,7 @@ func (s *svc) ClearEntries(ctx context.Context, req models.ClearRequest) error {
 func (s *svc) ApproveEntry(ctx context.Context, id int64, req models.ApproveRequest) (*models.EntryResponse, error) {
 	e, err := s.repo.GetEntryByID(ctx, id)
 	if err != nil {
-		return nil, apperror.NotFound(fmt.Sprintf("entry %d not found", id))
+		return nil, apperror.NotFound(fmt.Sprintf("entry %d tidak ditemukan", id))
 	}
 
 	now := time.Now()
@@ -466,7 +466,7 @@ func (s *svc) ApproveEntry(ctx context.Context, id int64, req models.ApproveRequ
 		}
 
 		if instance.ID == 0 {
-			return apperror.NotFound("approval instance not found")
+			return apperror.NotFound("approval instance tidak ditemukan")
 		}
 		if !strings.EqualFold(instance.Status, "pending") {
 			return apperror.BadRequest("approval instance is not pending")
@@ -556,7 +556,7 @@ func (s *svc) ListSplitSettings(ctx context.Context) ([]models.SplitSettingRespo
 func (s *svc) UpdateSplitSetting(ctx context.Context, budgetType string, req models.UpdateSplitSettingRequest) (*models.SplitSettingResponse, error) {
 	setting, err := s.repo.GetSplitSetting(ctx, budgetType)
 	if err != nil {
-		return nil, apperror.NotFound(fmt.Sprintf("split setting for %q not found", budgetType))
+		return nil, apperror.NotFound(fmt.Sprintf("split setting for %q tidak ditemukan", budgetType))
 	}
 
 	// Update PO1/PO2 only if both provided.
@@ -942,7 +942,7 @@ func ptrVal(p *string) string {
 func (s *svc) GetPRLWithAllocation(ctx context.Context, prlID string, budgetType string) (*models.PrlForecastResponse, error) {
 	prl, err := s.repo.GetPRLDocByPrlID(ctx, prlID)
 	if err != nil {
-		return nil, apperror.NotFound(fmt.Sprintf("PRL %s not found", prlID))
+		return nil, apperror.NotFound(fmt.Sprintf("PRL %s tidak ditemukan", prlID))
 	}
 	items, err := s.repo.GetPRLRowsByPrlID(ctx, prlID)
 	if err != nil {
@@ -1014,7 +1014,7 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 	// Validate PRL exists
 	prl, err := s.repo.GetPRLDocByPrlID(ctx, req.PrlID)
 	if err != nil {
-		return nil, apperror.NotFound(fmt.Sprintf("PRL %s not found", req.PrlID))
+		return nil, apperror.NotFound(fmt.Sprintf("PRL %s tidak ditemukan", req.PrlID))
 	}
 
 	// Allocation requires po_budget_entries.prl_row_id (migration 0011).
@@ -1042,7 +1042,7 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 	for _, it := range req.Items {
 		r, ok := rowMap[it.PrlItemID]
 		if !ok {
-			return nil, apperror.BadRequest(fmt.Sprintf("prl_item_id %d not found", it.PrlItemID))
+			return nil, apperror.BadRequest(fmt.Sprintf("prl_item_id %d tidak ditemukan", it.PrlItemID))
 		}
 		if r.PrlID != req.PrlID {
 			return nil, apperror.BadRequest(fmt.Sprintf("prl_item_id %d does not belong to prl_id %s (belongs to %s)", it.PrlItemID, req.PrlID, r.PrlID))

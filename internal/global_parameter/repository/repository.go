@@ -46,7 +46,7 @@ func (r *repository) FindByID(ctx context.Context, id int64) (*models.GlobalPara
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("global parameter not found")
+			return nil, errors.New("global parameter tidak ditemukan")
 		}
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func (r *repository) Update(ctx context.Context, id int64, req models.UpdateGlob
 		First(&data, id).Error; err != nil {
 
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("global parameter not found")
+			return nil, errors.New("global parameter tidak ditemukan")
 		}
 		return nil, err
 	}
@@ -115,7 +115,7 @@ func (r *repository) Delete(ctx context.Context, id int64) error {
 	}
 
 	if result.RowsAffected == 0 {
-		return errors.New("global parameter not found")
+		return errors.New("global parameter tidak ditemukan")
 	}
 
 	return nil

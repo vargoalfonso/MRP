@@ -123,7 +123,7 @@ func (r *repository) GetWorkOrderByUUID(ctx context.Context, woUUID string) (*wo
 	err := r.db.WithContext(ctx).Where("uuid = ?", woUUID).Take(&wo).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("work order not found")
+			return nil, apperror.NotFound("work order tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("failed to load work order", err)
 	}
@@ -137,7 +137,7 @@ func (r *repository) GetWorkOrderByUUIDAndKind(ctx context.Context, woUUID strin
 		Take(&wo).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("work order not found")
+			return nil, apperror.NotFound("work order tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("failed to load work order", err)
 	}
@@ -149,7 +149,7 @@ func (r *repository) GetWorkOrderItemByUUID(ctx context.Context, itemUUID string
 	err := r.db.WithContext(ctx).Where("uuid = ?", itemUUID).Take(&it).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("work order item not found")
+			return nil, apperror.NotFound("work order item tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("failed to load work order item", err)
 	}
@@ -184,7 +184,7 @@ func (r *repository) UpdateWorkOrderApprovalStatus(ctx context.Context, tx *gorm
 		return apperror.InternalWrap("failed to update approval status", res.Error)
 	}
 	if res.RowsAffected == 0 {
-		return apperror.NotFound("work order not found")
+		return apperror.NotFound("work order tidak ditemukan")
 	}
 	return nil
 }
@@ -201,7 +201,7 @@ func (r *repository) UpdateWorkOrderQR(ctx context.Context, tx *gorm.DB, woID in
 		return apperror.InternalWrap("failed to update work order qr", res.Error)
 	}
 	if res.RowsAffected == 0 {
-		return apperror.NotFound("work order not found")
+		return apperror.NotFound("work order tidak ditemukan")
 	}
 	return nil
 }
@@ -218,7 +218,7 @@ func (r *repository) UpdateWorkOrderItemQR(ctx context.Context, tx *gorm.DB, ite
 		return apperror.InternalWrap("failed to update work order item qr", res.Error)
 	}
 	if res.RowsAffected == 0 {
-		return apperror.NotFound("work order item not found")
+		return apperror.NotFound("work order item tidak ditemukan")
 	}
 	return nil
 }
@@ -534,7 +534,7 @@ func (r *repository) GetBulkSourceDocument(ctx context.Context, documentUUID str
 		return nil, apperror.InternalWrap("failed to load bulk source document", err)
 	}
 	if strings.TrimSpace(row.DocumentUUID) == "" {
-		return nil, apperror.NotFound("source document not found")
+		return nil, apperror.NotFound("source document tidak ditemukan")
 	}
 	return &row, nil
 }

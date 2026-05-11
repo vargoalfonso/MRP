@@ -176,7 +176,7 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 
 	item, err := s.repoProduction.FindWOItemByUniqAndWO(ctx, req.Uniq, req.WOID)
 	if err != nil {
-		return errors.New("uniq not found")
+		return errors.New("uniq tidak ditemukan")
 	}
 
 	// =====================================
@@ -427,7 +427,7 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 
 	item, err := s.repoProduction.FindWOItemByUniqAndWO(ctx, req.Uniq, req.WOID)
 	if err != nil {
-		return errors.New("uniq not found")
+		return errors.New("uniq tidak ditemukan")
 	}
 
 	// =====================================
@@ -584,7 +584,7 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 			First(&task).Error; err != nil {
 
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return apperror.NotFound("pending qc task not found")
+				return apperror.NotFound("pending qc task tidak ditemukan")
 			}
 			return err
 		}

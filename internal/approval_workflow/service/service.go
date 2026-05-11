@@ -83,7 +83,7 @@ func (s *service) Update(ctx context.Context, id int64, req models.UpdateApprova
 	// ==============================
 	existing, err := s.repo.FindByID(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("workflow not found")
+		return nil, fmt.Errorf("workflow tidak ditemukan")
 	}
 
 	// ==============================

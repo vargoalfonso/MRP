@@ -20,7 +20,7 @@ func (a *IndirectAdjuster) ResolveUniq(ctx context.Context, tx *gorm.DB, uniqCod
 	var row invModels.IndirectRawMaterial
 	err := tx.WithContext(ctx).Where("uniq_code = ? AND deleted_at IS NULL", uniqCode).Take(&row).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("indirect raw material uniq_code %s not found", uniqCode))
+		return nil, apperror.NotFound(fmt.Sprintf("indirect raw material uniq_code %s tidak ditemukan", uniqCode))
 	}
 	if err != nil {
 		return nil, apperror.Internal("resolve indirect uniq: " + err.Error())
@@ -51,7 +51,7 @@ func (a *IndirectAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, ent
 	var row invModels.IndirectRawMaterial
 	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND deleted_at IS NULL", entry.EntityID).Take(&row).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("indirect raw material record not found during stock opname")
+			return nil, apperror.NotFound("indirect raw material record tidak ditemukan during stock opname")
 		}
 		return nil, apperror.Internal("lock indirect row: " + err.Error())
 	}

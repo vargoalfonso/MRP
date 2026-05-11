@@ -20,7 +20,7 @@ func (a *RMAdjuster) ResolveUniq(ctx context.Context, tx *gorm.DB, uniqCode stri
 	var row invModels.RawMaterial
 	err := tx.WithContext(ctx).Where("uniq_code = ? AND deleted_at IS NULL", uniqCode).Take(&row).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("raw material uniq_code %s not found", uniqCode))
+		return nil, apperror.NotFound(fmt.Sprintf("raw material uniq_code %s tidak ditemukan", uniqCode))
 	}
 	if err != nil {
 		return nil, apperror.Internal("resolve RM uniq: " + err.Error())
@@ -51,7 +51,7 @@ func (a *RMAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *st
 	var row invModels.RawMaterial
 	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND deleted_at IS NULL", entry.EntityID).Take(&row).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("raw material record not found during stock opname")
+			return nil, apperror.NotFound("raw material record tidak ditemukan during stock opname")
 		}
 		return nil, apperror.Internal("lock RM row: " + err.Error())
 	}
