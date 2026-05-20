@@ -64,13 +64,24 @@ func (r *repository) FindByID(ctx context.Context, id int64) (*models.Employee, 
 	var employee models.Employee
 
 	err := r.db.WithContext(ctx).
-		First(&employee, id).Error
+		Table("employees e").
+		Select(`
+			e.*,
+			manager.full_name as reports_to_name
+		`).
+		Joins(`
+			LEFT JOIN employees manager
+			ON manager.id = e.reports_to_id
+		`).
+		Where("e.id = ?", id).
+		Scan(&employee).Error
 
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("employee tidak ditemukan")
-		}
 		return nil, err
+	}
+
+	if employee.ID == 0 {
+		return nil, errors.New("employee tidak ditemukan")
 	}
 
 	return &employee, nil
@@ -111,9 +122,25 @@ func (r *repository) Update(ctx context.Context, id int64, req models.UpdateEmpl
 	}
 
 	// ambil data terbaru
-	if err := r.db.WithContext(ctx).
-		First(&employee, id).Error; err != nil {
+	err := r.db.WithContext(ctx).
+		Table("employees e").
+		Select(`
+			e.*,
+			manager.full_name as reports_to_name
+		`).
+		Joins(`
+			LEFT JOIN employees manager
+			ON manager.id = e.reports_to_id
+		`).
+		Where("e.id = ?", id).
+		Scan(&employee).Error
+
+	if err != nil {
 		return nil, err
+	}
+
+	if employee.ID == 0 {
+		return nil, errors.New("employee tidak ditemukan")
 	}
 
 	return &employee, nil
