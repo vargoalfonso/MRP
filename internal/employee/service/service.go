@@ -89,17 +89,12 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 			return err
 		}
 		if exist {
-			return apperror.Conflict("email sudah terdaftar")
+			return apperror.Conflict("employee email sudah terdaftar")
 		}
 
 		_, err = s.authRepo.FindByEmail(ctx, req.Email)
 		if err == nil {
-			return apperror.Conflict("email sudah terdaftar")
-		}
-		if err != nil {
-			if appErr, ok := apperror.As(err); !ok || appErr.Code != apperror.CodeNotFound {
-				return err
-			}
+			return apperror.Conflict("user email sudah terdaftar")
 		}
 
 		if req.ReportsToID != nil {
@@ -154,23 +149,153 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 		// 🔥 5. SEND EMAIL (ASYNC)
 		// ==============================
 		go func(to, name, token string) {
+
 			link := fmt.Sprintf("%s/set-password?token=%s", os.Getenv("BASE_URL"), token)
 
+			subject := "Set Password Account"
+
 			body := fmt.Sprintf(`
-				<h2>Welcome %s 👋</h2>
-				<p>Akun Anda sudah dibuat.</p>
-				<p>Klik tombol di bawah untuk set password:</p>
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<title>Set Password</title>
+</head>
 
-				<a href="%s" style="padding:10px 20px;background:#28a745;color:white;text-decoration:none;border-radius:6px;">
-					Set Password
-				</a>
+<body style="
+	margin:0;
+	padding:0;
+	background-color:#f4f6f9;
+	font-family:Arial,sans-serif;
+">
 
-				<p>Link berlaku 24 jam</p>
-			`, name, link)
+	<table width="100%%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
+		<tr>
+			<td align="center">
 
-			if err := email.SendEmail(to, "Set Password Account", body); err != nil {
+				<table width="600" cellpadding="0" cellspacing="0" style="
+					background:#ffffff;
+					border-radius:12px;
+					overflow:hidden;
+					box-shadow:0 2px 10px rgba(0,0,0,0.08);
+				">
+
+					<!-- HEADER -->
+					<tr>
+						<td style="
+							background:#2563eb;
+							padding:30px;
+							text-align:center;
+							color:white;
+						">
+							<h1 style="
+								margin:0;
+								font-size:28px;
+							">
+								Welcome 👋
+							</h1>
+						</td>
+					</tr>
+
+					<!-- CONTENT -->
+					<tr>
+						<td style="padding:40px;">
+
+							<h2 style="
+								margin-top:0;
+								color:#111827;
+							">
+								Halo %s,
+							</h2>
+
+							<p style="
+								font-size:16px;
+								line-height:1.8;
+								color:#4b5563;
+							">
+								Akun Anda telah berhasil dibuat.
+							</p>
+
+							<p style="
+								font-size:16px;
+								line-height:1.8;
+								color:#4b5563;
+							">
+								Silakan klik tombol di bawah untuk membuat password akun Anda.
+							</p>
+
+							<div style="
+								text-align:center;
+								margin:40px 0;
+							">
+								<a href="%s"
+									style="
+										background:#2563eb;
+										color:white;
+										padding:14px 28px;
+										text-decoration:none;
+										border-radius:8px;
+										font-size:16px;
+										font-weight:bold;
+										display:inline-block;
+									">
+									Set Password
+								</a>
+							</div>
+
+							<p style="
+								font-size:14px;
+								color:#6b7280;
+								line-height:1.8;
+							">
+								Link ini berlaku selama 24 jam.
+							</p>
+
+							<p style="
+								font-size:14px;
+								color:#9ca3af;
+								line-height:1.8;
+								margin-top:30px;
+							">
+								Jika tombol tidak dapat diklik, copy link berikut:
+								<br><br>
+								<a href="%s">%s</a>
+							</p>
+
+						</td>
+					</tr>
+
+					<!-- FOOTER -->
+					<tr>
+						<td style="
+							background:#f9fafb;
+							padding:20px;
+							text-align:center;
+							font-size:12px;
+							color:#9ca3af;
+						">
+							© 2026 Raigine System. All rights reserved.
+						</td>
+					</tr>
+
+				</table>
+
+			</td>
+		</tr>
+	</table>
+
+</body>
+</html>
+`, name, link, link, link)
+
+			if err := email.SendEmail(
+				[]string{to},
+				subject,
+				body,
+			); err != nil {
 				log.Println("failed send email:", err)
 			}
+
 		}(req.Email, req.FullName, token)
 
 		return nil

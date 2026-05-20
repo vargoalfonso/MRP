@@ -8,7 +8,7 @@ import (
 	"github.com/ganasa18/go-template/internal/supplier/models"
 	supplierRepo "github.com/ganasa18/go-template/internal/supplier/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
-	emailpkg "github.com/ganasa18/go-template/pkg/email"
+	"github.com/ganasa18/go-template/pkg/email"
 	"github.com/google/uuid"
 )
 
@@ -66,13 +66,120 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierRequest) 
 
 	// Send notification email to supplier if email provided (async, non-blocking)
 	if strings.TrimSpace(supplier.EmailAddress) != "" {
+
 		go func(to, name string) {
-			subject := "Selamat datang sebagai Supplier"
-			body := fmt.Sprintf(`<h2>Halo %s 👋</h2><p>Anda telah terdaftar sebagai supplier di sistem kami.</p>`, name)
-			if err := emailpkg.SendEmail(to, subject, body); err != nil {
-				// Do not fail creation; log to stdout
+
+			subject := "Selamat Datang Sebagai Supplier"
+
+			body := fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<title>Welcome Supplier</title>
+</head>
+
+<body style="
+	margin:0;
+	padding:0;
+	background-color:#f4f6f9;
+	font-family:Arial,sans-serif;
+">
+
+	<table width="100%%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
+		<tr>
+			<td align="center">
+
+				<table width="600" cellpadding="0" cellspacing="0" style="
+					background:#ffffff;
+					border-radius:12px;
+					overflow:hidden;
+					box-shadow:0 2px 10px rgba(0,0,0,0.08);
+				">
+
+					<!-- HEADER -->
+					<tr>
+						<td style="
+							background:#16a34a;
+							padding:30px;
+							text-align:center;
+							color:white;
+						">
+							<h1 style="margin:0;font-size:28px;">
+								Selamat Datang 👋
+							</h1>
+						</td>
+					</tr>
+
+					<!-- CONTENT -->
+					<tr>
+						<td style="padding:40px; color:#333333;">
+
+							<h2 style="margin-top:0;">
+								Halo %s,
+							</h2>
+
+							<p style="
+								font-size:16px;
+								line-height:1.8;
+								color:#555555;
+							">
+								Selamat! Anda telah berhasil terdaftar sebagai
+								<b>supplier</b> di sistem kami.
+							</p>
+
+							<p style="
+								font-size:16px;
+								line-height:1.8;
+								color:#555555;
+							">
+								Terima kasih telah bergabung dan menjadi bagian dari kerja sama kami.
+							</p>
+
+							<p style="
+								font-size:16px;
+								line-height:1.8;
+								color:#555555;
+							">
+								Kami berharap dapat menjalin kerja sama yang baik ke depannya.
+							</p>
+
+						</td>
+					</tr>
+
+					<!-- FOOTER -->
+					<tr>
+						<td style="
+							background:#f9fafb;
+							padding:20px;
+							text-align:center;
+							font-size:12px;
+							color:#999999;
+						">
+							© 2026 Raigine System. All rights reserved.
+						</td>
+					</tr>
+
+				</table>
+
+			</td>
+		</tr>
+	</table>
+
+</body>
+</html>
+`, supplier.SupplierName)
+
+			if err := email.SendEmail(
+				[]string{to},
+				subject,
+				body,
+			); err != nil {
+
+				// tidak menggagalkan proses create supplier
 				fmt.Println("failed send supplier email:", err)
 			}
+
 		}(supplier.EmailAddress, supplier.SupplierName)
 	}
 

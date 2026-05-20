@@ -8,43 +8,62 @@ import (
 	"strings"
 )
 
-func SendEmail(to, subject, body string) error {
-	host := firstEnv("SMTP_HOST", "MAIL_HOST")
-	port := firstEnv("SMTP_PORT", "MAIL_PORT")
-	fromEmail := firstEnv("SMTP_EMAIL", "MAIL_USER")
-	password := firstEnv("SMTP_PASSWORD", "MAIL_PASS")
+func SendEmail(to []string, subject, body string) error {
 
-	auth := smtp.PlainAuth("", fromEmail, password, host)
-
-	msg := []byte(fmt.Sprintf(
-		"Subject: %s\r\n"+
-			"From: %s\r\n"+
-			"To: %s\r\n"+
-			"MIME-version: 1.0;\r\n"+
-			"Content-Type: text/html; charset=\"UTF-8\";\r\n\r\n"+
-			"%s",
-		subject, fromEmail, to, body,
-	))
+	host := firstEnv("MAIL_HOST")
+	port := firstEnv("MAIL_PORT")
+	username := firstEnv("MAIL_USER")
+	password := firstEnv("MAIL_PASS")
+	fromEmail := firstEnv("MAIL_FROM")
+	fromName := firstEnv("MAIL_NAME")
 
 	addr := fmt.Sprintf("%s:%s", host, port)
-	if strings.TrimSpace(port) == "465" {
-		return sendMailTLS(addr, host, auth, fromEmail, []string{to}, msg)
+
+	auth := smtp.PlainAuth("", username, password, host)
+
+	headers := map[string]string{
+		"From":         fmt.Sprintf("%s <%s>", fromName, fromEmail),
+		"To":           strings.Join(to, ","),
+		"Subject":      subject,
+		"MIME-Version": "1.0",
+		"Content-Type": `text/html; charset="UTF-8"`,
 	}
 
-	return smtp.SendMail(addr, auth, fromEmail, []string{to}, msg)
-}
+	var message string
 
-func firstEnv(keys ...string) string {
-	for _, key := range keys {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			return value
-		}
+	for k, v := range headers {
+		message += fmt.Sprintf("%s: %s\r\n", k, v)
 	}
-	return ""
+
+	message += "\r\n" + body
+
+	if port == "465" {
+		return sendMailTLS(
+			addr,
+			host,
+			auth,
+			fromEmail,
+			to,
+			[]byte(message),
+		)
+	}
+
+	return smtp.SendMail(
+		addr,
+		auth,
+		fromEmail,
+		to,
+		[]byte(message),
+	)
 }
 
 func sendMailTLS(addr, host string, auth smtp.Auth, from string, to []string, msg []byte) error {
-	conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: host})
+
+	tlsConfig := &tls.Config{
+		ServerName: host,
+	}
+
+	conn, err := tls.Dial("tcp", addr, tlsConfig)
 	if err != nil {
 		return err
 	}
@@ -57,29 +76,39 @@ func sendMailTLS(addr, host string, auth smtp.Auth, from string, to []string, ms
 	defer client.Quit()
 
 	if auth != nil {
-		if err := client.Auth(auth); err != nil {
+		if err = client.Auth(auth); err != nil {
 			return err
 		}
 	}
 
-	if err := client.Mail(from); err != nil {
+	if err = client.Mail(from); err != nil {
 		return err
 	}
+
 	for _, recipient := range to {
-		if err := client.Rcpt(recipient); err != nil {
+		if err = client.Rcpt(recipient); err != nil {
 			return err
 		}
 	}
 
-	writer, err := client.Data()
+	w, err := client.Data()
 	if err != nil {
 		return err
 	}
 
-	if _, err := writer.Write(msg); err != nil {
-		_ = writer.Close()
+	_, err = w.Write(msg)
+	if err != nil {
 		return err
 	}
 
-	return writer.Close()
+	return w.Close()
+}
+
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
