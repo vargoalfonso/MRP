@@ -153,6 +153,59 @@ type CreateBomRevisionResponse struct {
 	Message       string  `json:"message"`
 }
 
+// ---------------------------------------------------------------------------
+// Snapshot — GET /api/v1/products/bom/:id/full
+// ---------------------------------------------------------------------------
+
+type BomFullChild struct {
+	ChildID        int64                `json:"child_id"` // item.id of this child
+	LineID         int64                `json:"line_id"`  // bom_lines.id
+	UniqCode       string               `json:"uniq_code"`
+	ParentUniqCode string               `json:"parent_uniq_code"`
+	Level          int16                `json:"level"`
+	QtyPerUniq     float64              `json:"qty_per_uniq"`
+	ScrapFactor    float64              `json:"scrap_factor"`
+	IsPhantom      bool                 `json:"is_phantom"`
+	PartName       string               `json:"part_name"`
+	PartNumber     *string              `json:"part_number"`
+	Model          *string              `json:"model"`
+	Uom            string               `json:"uom"`
+	Asset          AssetInfo            `json:"asset"`
+	MaterialSpec   *MaterialSpecDetail  `json:"material_spec"`
+	ProcessRoutes  []ProcessRouteDetail `json:"process_routes"`
+	Children       []BomFullChild       `json:"children"`
+}
+
+// BomFullResponse is the full snapshot returned by GET /api/v1/products/bom/:id/full.
+type BomFullResponse struct {
+	BomID         int64                `json:"bom_id"`
+	BomVersion    int                  `json:"bom_version"`
+	IsArchived    bool                 `json:"is_archived"` // true when is_current=false
+	UniqCode      string               `json:"uniq_code"`
+	PartName      string               `json:"part_name"`
+	PartNumber    *string              `json:"part_number"`
+	Model         *string              `json:"model"`
+	Uom           string               `json:"uom"`
+	Status        string               `json:"status"`
+	Description   *string              `json:"description"`
+	Asset         AssetInfo            `json:"asset"`
+	MaterialSpec  *MaterialSpecDetail  `json:"material_spec"`
+	ProcessRoutes []ProcessRouteDetail `json:"process_routes"`
+	Children      []BomFullChild       `json:"children"`
+}
+
+// ReplaceBomResponse is returned by POST /api/v1/products/bom/:id/replace.
+type ReplaceBomResponse struct {
+	NewBomID       int64  `json:"new_bom_id"`
+	OldBomID       int64  `json:"old_bom_id"`
+	UniqCode       string `json:"uniq_code"`
+	NewBomVersion  int    `json:"new_bom_version"`
+	AssetsReused   int    `json:"assets_reused"`
+	AssetsUploaded int    `json:"assets_uploaded"`
+}
+
+// ---------------------------------------------------------------------------
+
 type ProcessRouteMutationResponse struct {
 	RouteID       int64    `json:"route_id"`
 	BomID         int64    `json:"bom_id"`
