@@ -7,6 +7,7 @@ type CreateProcessRequest struct {
 	Sequence    int    `json:"sequence" validate:"required"`
 	Status      string `json:"status" validate:"required"`
 	Subcon      bool   `json:"sub_con"`
+	IsAssembly  bool   `json:"is_assembly"`
 }
 
 type UpdateProcessRequest struct {
@@ -15,4 +16,5 @@ type UpdateProcessRequest struct {
 	Sequence    int    `json:"sequence"`
 	Status      string `json:"status"`
 	Subcon      bool   `json:"sub_con"`
+	IsAssembly  bool   `json:"is_assembly"`
 }
