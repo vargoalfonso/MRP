@@ -12,6 +12,7 @@ type ProcessParameter struct {
 	Sequence    int       `gorm:"column:sequence"`
 	Status      string    `gorm:"column:status"`
 	Subcon      bool      `gorm:"column:sub_con;default:false"`
+	IsAssembly  bool      `gorm:"column:is_assembly;default:false"`
 	CreatedAt   time.Time `gorm:"column:created_at"`
 	UpdatedAt   time.Time `gorm:"column:updated_at"`
 }
