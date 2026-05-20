@@ -6,7 +6,9 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -438,4 +440,88 @@ func (h *HTTPHandler) DownloadImportErrorsRaw(c *gin.Context) {
 	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	c.Header("Content-Disposition", "attachment; filename=bom_errors.xlsx")
 	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
+}
+
+// GetBomFull  GET /api/v1/products/bom/:id/full
+//
+// Returns the full BOM snapshot (header + all children with routing, material spec, asset)
+// formatted for the V4 clone-edit-submit edit flow.
+func (h *HTTPHandler) GetBomFull(ctx *app.Context) *app.CostumeResponse {
+	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+
+	result, err := h.svc.GetBomFull(ctx.Request.Context(), id)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      result,
+	}
+}
+
+// ReplaceBom  POST /api/v1/products/bom/:id/replace
+//
+// Multipart form-data:
+//   - field "payload" (application/json): ReplaceBomRequest
+//   - file "upload_<key>" per new/replaced asset (optional)
+//
+// Atomically clones the BOM with all edits, uploads new assets in parallel,
+// deactivates old version (is_current=false), and opens a new approval instance.
+func (h *HTTPHandler) ReplaceBom(ctx *app.Context) *app.CostumeResponse {
+	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+
+	// Parse JSON payload from multipart field "payload"
+	payloadRaw := ctx.PostForm("payload")
+	if payloadRaw == "" {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "field 'payload' wajib diisi"}
+	}
+	var req models.ReplaceBomRequest
+	if err := json.Unmarshal([]byte(payloadRaw), &req); err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid payload json: " + err.Error()}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+	}
+
+	// Collect uploaded files: multipart key "upload_<upload_key>" → FileHeader
+	form, err := ctx.MultipartForm()
+	if err != nil && err.Error() != "request Content-Type isn't multipart/form-data" {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid multipart form"}
+	}
+	files := map[string]*multipart.FileHeader{}
+	if form != nil {
+		for k, headers := range form.File {
+			if strings.HasPrefix(k, "upload_") && len(headers) > 0 {
+				files[strings.TrimPrefix(k, "upload_")] = headers[0]
+			}
+		}
+	}
+
+	raw, ok := ctx.Get("claims")
+	if !ok {
+		return app.NewError(ctx, apperror.Unauthorized("missing auth claims"))
+	}
+	claims, ok := raw.(*authModels.Claims)
+	if !ok || claims == nil || claims.UserID == "" {
+		return app.NewError(ctx, apperror.Unauthorized("invalid auth claims"))
+	}
+
+	result, err := h.svc.ReplaceBom(ctx.Request.Context(), id, req, files, claims.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      result,
+	}
 }

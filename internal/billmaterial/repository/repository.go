@@ -89,6 +89,9 @@ type IRepository interface {
 	// Approval workflow master — looked up at approval time, not copied into bom_approvals
 	GetApprovalWorkflowByActionName(ctx context.Context, actionName string) (*awmodels.ApprovalWorkflow, error)
 	GetApprovalWorkflowByID(ctx context.Context, id int64) (*awmodels.ApprovalWorkflow, error)
+
+	// DB returns the underlying *gorm.DB so the service layer can open transactions.
+	DB() *gorm.DB
 }
 
 type ListFilter struct {
@@ -106,6 +109,8 @@ type ListFilter struct {
 type repository struct{ db *gorm.DB }
 
 func New(db *gorm.DB) IRepository { return &repository{db: db} }
+
+func (r *repository) DB() *gorm.DB { return r.db }
 
 // ---------------------------------------------------------------------------
 // Writes

@@ -51,6 +51,11 @@ func (s *service) GetByID(ctx context.Context, id int64) (*models.Employee, erro
 }
 
 func (s *service) Update(ctx context.Context, id int64, req models.UpdateEmployeeRequest) (*models.Employee, error) {
+	if req.ReportsToID != nil {
+		if _, err := s.repo.FindByID(ctx, *req.ReportsToID); err != nil {
+			return nil, apperror.BadRequest("reports_to_id tidak valid")
+		}
+	}
 	return s.repo.Update(ctx, id, req)
 }
 

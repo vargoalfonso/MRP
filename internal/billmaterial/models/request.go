@@ -180,3 +180,47 @@ type ApproveBomRequest struct {
 	Action string  `json:"action" validate:"required,oneof=approve reject"`
 	Notes  *string `json:"notes"`
 }
+
+// ---------------------------------------------------------------------------
+// full clone-edit-submit
+// POST /api/v1/products/bom/:id/replace  (multipart: field "payload" = JSON, file "upload_<key>" per new asset)
+// ---------------------------------------------------------------------------
+
+// ReplaceBomChildInput represents one child node in the full BOM tree being submitted.
+// Children are flat in bom_lines but the payload may be nested; BE flattens during processing.
+type ReplaceBomChildInput struct {
+	UniqCode       string  `json:"uniq_code" validate:"required,max=64"`
+	ParentUniqCode string  `json:"parent_uniq_code" validate:"required,max=64"`
+	Level          int16   `json:"level" validate:"required,min=1,max=4"`
+	QtyPerUniq     float64 `json:"qty_per_uniq" validate:"required,gt=0"`
+	ScrapFactor    float64 `json:"scrap_factor"`
+	IsPhantom      bool    `json:"is_phantom"`
+	PartName       string  `json:"part_name" validate:"required,max=255"`
+	PartNumber     *string `json:"part_number"`
+	Model          *string `json:"model"`
+	Uom            string  `json:"uom" validate:"required,max=32"`
+	// AssetID non-nil → reuse existing asset row (file unchanged).
+	// Nil + UploadKey non-nil → new file was sent under multipart key "upload_<UploadKey>".
+	// Both nil → no asset change (keep whatever is on the item).
+	AssetID       *int64                 `json:"asset_id"`
+	UploadKey     *string                `json:"upload_key"`
+	MaterialSpec  *MaterialSpecInput     `json:"material_spec"`
+	ProcessRoutes []ProcessRouteInput    `json:"process_routes"`
+	Children      []ReplaceBomChildInput `json:"children"`
+}
+
+// ReplaceBomRequest is the JSON payload in the "payload" multipart field.
+type ReplaceBomRequest struct {
+	ChangeNote    *string                `json:"change_note" validate:"omitempty,max=2000"`
+	PartName      string                 `json:"part_name" validate:"required,max=255"`
+	PartNumber    *string                `json:"part_number"`
+	Model         *string                `json:"model"`
+	Uom           string                 `json:"uom" validate:"required,max=32"`
+	Status        string                 `json:"status" validate:"omitempty,oneof=Active Inactive Draft"`
+	Description   *string                `json:"description"`
+	AssetID       *int64                 `json:"asset_id"`
+	UploadKey     *string                `json:"upload_key"`
+	MaterialSpec  *MaterialSpecInput     `json:"material_spec"`
+	ProcessRoutes []ProcessRouteInput    `json:"process_routes"`
+	Children      []ReplaceBomChildInput `json:"children"`
+}

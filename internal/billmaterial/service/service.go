@@ -5,7 +5,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,9 +20,11 @@ import (
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/ganasa18/go-template/pkg/approval"
 	"github.com/ganasa18/go-template/pkg/bulkimport"
+	"github.com/ganasa18/go-template/pkg/concurrency"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/google/uuid"
 	"github.com/xuri/excelize/v2"
+	"gorm.io/gorm"
 )
 
 type IService interface {
@@ -63,6 +68,13 @@ type IService interface {
 	DownloadImportTemplate(ctx context.Context) ([]byte, error)
 	ImportFromExcel(ctx context.Context, filePath string) (bulkimport.BulkResult, error)
 	DownloadImportErrors(ctx context.Context, token string) ([]byte, error)
+
+	//full snapshot fetch + atomic clone-edit-submit replace
+	GetBomFull(ctx context.Context, bomID int64) (*models.BomFullResponse, error)
+	// ReplaceBom clones the BOM with all edits from req, uploads new asset files in parallel,
+	// deactivates the old version (is_current=false), and opens a new approval instance.
+	// files maps upload_key → multipart file header (may be empty when no files changed).
+	ReplaceBom(ctx context.Context, bomID int64, req models.ReplaceBomRequest, files map[string]*multipart.FileHeader, userID string) (*models.ReplaceBomResponse, error)
 }
 
 type service struct {
@@ -483,7 +495,15 @@ func (s *service) createRouting(ctx context.Context, itemID, revID int64, routes
 		prevSeq = seq
 	}
 
-	rh := &models.RoutingHeader{ItemID: itemID, ItemRevisionID: &revID, Version: 1, Status: "Draft"}
+	nextHeaderVersion := 1
+	latestHeaders, err := s.repo.GetLatestRoutingHeadersByItemIDs(ctx, []int64{itemID})
+	if err != nil {
+		return err
+	}
+	if len(latestHeaders) > 0 && latestHeaders[0].Version >= nextHeaderVersion {
+		nextHeaderVersion = latestHeaders[0].Version + 1
+	}
+	rh := &models.RoutingHeader{ItemID: itemID, ItemRevisionID: &revID, Version: nextHeaderVersion, Status: "Draft"}
 	if err := s.repo.CreateRoutingHeader(ctx, rh); err != nil {
 		return err
 	}
@@ -2528,4 +2548,485 @@ func cleanupTempFile(path string) {
 		return
 	}
 	_ = os.Remove(path)
+}
+
+// ---------------------------------------------------------------------------
+// GetBomFull
+// ---------------------------------------------------------------------------
+
+func (s *service) GetBomFull(ctx context.Context, bomID int64) (*models.BomFullResponse, error) {
+	bom, err := s.repo.GetBomByID(ctx, bomID)
+	if err != nil {
+		return nil, err
+	}
+
+	lines, err := s.repo.GetBomLinesByBomIDs(ctx, []int64{bom.ID})
+	if err != nil {
+		return nil, err
+	}
+
+	preload, err := s.preloadBomData(ctx, []models.BomItem{*bom}, lines)
+	if err != nil {
+		return nil, err
+	}
+
+	parent, ok := preload.items[bom.ItemID]
+	if !ok {
+		return nil, apperror.NotFound("item tidak ditemukan")
+	}
+
+	resp := &models.BomFullResponse{
+		BomID:       bom.ID,
+		BomVersion:  bom.Version,
+		IsArchived:  !bom.IsCurrent,
+		UniqCode:    parent.UniqCode,
+		PartName:    parent.PartName,
+		PartNumber:  parent.PartNumber,
+		Model:       parent.Model,
+		Uom:         parent.Uom,
+		Status:      parent.Status,
+		Description: bom.Description,
+		Asset:       s.buildAssetInfo(preload.assetByItemID(parent.ID)),
+	}
+
+	if rev, ok := preload.revisionForParent(*bom); ok {
+		if spec, ok := preload.specs[rev.ID]; ok {
+			resp.MaterialSpec = s.toSpecDetail(&spec)
+		}
+		if routes, ok := preload.routesByRevID[rev.ID]; ok {
+			resp.ProcessRoutes = routes
+		}
+	}
+
+	resp.Children = s.buildFullChildTree(lines, preload, parent.UniqCode, parent.ID, 1)
+	return resp, nil
+}
+
+func (s *service) buildFullChildTree(lines []models.BomLine, preload *bomPreload, parentUniqCode string, parentItemID int64, level int16) []models.BomFullChild {
+	childLines := preload.childrenByParent(parentItemID, level, lines)
+	rows := make([]models.BomFullChild, 0, len(childLines))
+	for _, line := range childLines {
+		child, ok := preload.items[line.ChildItemID]
+		if !ok {
+			continue
+		}
+		row := models.BomFullChild{
+			ChildID:        child.ID,
+			LineID:         line.ID,
+			UniqCode:       child.UniqCode,
+			ParentUniqCode: parentUniqCode,
+			Level:          level,
+			QtyPerUniq:     line.QtyPerUniq,
+			ScrapFactor:    line.ScrapFactor,
+			IsPhantom:      line.IsPhantom,
+			PartName:       child.PartName,
+			PartNumber:     child.PartNumber,
+			Model:          child.Model,
+			Uom:            child.Uom,
+			Asset:          s.buildAssetInfo(preload.assetByItemID(child.ID)),
+		}
+		if rev, ok := preload.revisionForChild(line, child.ID); ok {
+			if spec, ok := preload.specs[rev.ID]; ok {
+				row.MaterialSpec = s.toSpecDetail(&spec)
+			}
+			if routes, ok := preload.routesByRevID[rev.ID]; ok {
+				row.ProcessRoutes = routes
+			}
+		}
+		if level < 4 {
+			row.Children = s.buildFullChildTree(lines, preload, child.UniqCode, child.ID, level+1)
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// ---------------------------------------------------------------------------
+// ReplaceBom
+// ---------------------------------------------------------------------------
+
+// uploadedAsset holds the saved file path and detected asset type for one upload_key.
+type uploadedAsset struct {
+	URL       string
+	AssetType string
+}
+
+func (s *service) ReplaceBom(ctx context.Context, bomID int64, req models.ReplaceBomRequest, files map[string]*multipart.FileHeader, userID string) (*models.ReplaceBomResponse, error) {
+	// --- Phase A: validate upload_key ↔ files ---
+	allKeys := collectUploadKeys(req)
+	for _, key := range allKeys {
+		if _, ok := files[key]; !ok {
+			return nil, apperror.BadRequest(fmt.Sprintf("missing file for upload_key '%s'", key))
+		}
+	}
+	for key := range files {
+		found := false
+		for _, k := range allKeys {
+			if k == key {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, apperror.BadRequest(fmt.Sprintf("unexpected upload key '%s' has no matching upload_key in payload", key))
+		}
+	}
+
+	// --- Phase B: upload files in parallel (outside DB) ---
+	uploadedMap := make(map[string]uploadedAsset, len(files))
+	if len(files) > 0 {
+		type uploadResult struct {
+			key   string
+			asset uploadedAsset
+			err   error
+		}
+		results := make(chan uploadResult, len(files))
+		tasks := make([]concurrency.Task, 0, len(files))
+		for k, fh := range files {
+			k, fh := k, fh
+			tasks = append(tasks, func(ctx context.Context) error {
+				url, assetType, err := saveTempFile(fh)
+				results <- uploadResult{key: k, asset: uploadedAsset{URL: url, AssetType: assetType}, err: err}
+				return err
+			})
+		}
+		if err := concurrency.Run(ctx, tasks, concurrency.DefaultFanout); err != nil {
+			close(results)
+			return nil, apperror.BadRequest(fmt.Sprintf("asset upload failed: %v", err))
+		}
+		close(results)
+		for r := range results {
+			uploadedMap[r.key] = r.asset
+		}
+	}
+
+	// --- Phase C: load and validate old BOM (reads only, outside transaction) ---
+	oldBom, err := s.repo.GetBomByID(ctx, bomID)
+	if err != nil {
+		return nil, err
+	}
+
+	versions, err := s.repo.GetBomVersionsByItemID(ctx, oldBom.ItemID)
+	if err != nil {
+		return nil, err
+	}
+	nextVersion := oldBom.Version + 1
+	for _, v := range versions {
+		if v.Version >= nextVersion {
+			nextVersion = v.Version + 1
+		}
+	}
+
+	parentItem, err := s.repo.GetItemByID(ctx, oldBom.ItemID)
+	if err != nil {
+		return nil, err
+	}
+
+	// --- Phases D–G: all DB writes inside a single transaction ---
+	var result models.ReplaceBomResponse
+	txErr := s.repo.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txSvc := &service{repo: repository.New(tx), errorStore: s.errorStore}
+
+		// Phase D: new item_revision for parent
+		newParentRev, err := txSvc.createNextItemRevision(ctx, parentItem.ID, nextVersion, req.ChangeNote)
+		if err != nil {
+			return err
+		}
+
+		parentItem.PartName = req.PartName
+		if req.PartNumber != nil {
+			parentItem.PartNumber = req.PartNumber
+		}
+		if req.Model != nil {
+			parentItem.Model = req.Model
+		}
+		parentItem.Uom = req.Uom
+		revLabel := newParentRev.Revision
+		parentItem.CurrentRevision = &revLabel
+		if err := txSvc.repo.UpdateItem(ctx, parentItem); err != nil {
+			return err
+		}
+
+		assetsReused, assetsUploaded := 0, 0
+		if req.UploadKey != nil {
+			if ua, ok := uploadedMap[*req.UploadKey]; ok {
+				if err := txSvc.repo.UpsertItemAssetURL(ctx, parentItem.ID, ua.AssetType, ua.URL); err != nil {
+					return err
+				}
+				assetsUploaded++
+			}
+		} else if req.AssetID != nil {
+			assetsReused++
+		}
+
+		if len(req.ProcessRoutes) > 0 {
+			if err := txSvc.createRouting(ctx, parentItem.ID, newParentRev.ID, req.ProcessRoutes); err != nil {
+				return err
+			}
+		}
+
+		if req.MaterialSpec != nil {
+			if err := txSvc.saveMaterialSpec(ctx, newParentRev.ID, req.MaterialSpec); err != nil {
+				return err
+			}
+		}
+
+		// Phase E: deactivate old versions, create new bom_item
+		for i := range versions {
+			if versions[i].IsCurrent {
+				versions[i].IsCurrent = false
+				if err := txSvc.repo.UpdateBomItem(ctx, &versions[i]); err != nil {
+					return err
+				}
+			}
+		}
+
+		newBom := &models.BomItem{
+			ItemID:             parentItem.ID,
+			RootItemRevisionID: &newParentRev.ID,
+			CopiedFromBomID:    &oldBom.ID,
+			Version:            nextVersion,
+			Status:             "Released",
+			Description:        req.Description,
+			ChangeNote:         req.ChangeNote,
+			IsCurrent:          true,
+		}
+		if err := txSvc.repo.CreateBomItem(ctx, newBom); err != nil {
+			return err
+		}
+
+		// Phase F: process children recursively
+		ru, up, err := txSvc.replaceChildren(ctx, newBom.ID, parentItem.UniqCode, parentItem.ID, req.Children, uploadedMap)
+		if err != nil {
+			return err
+		}
+		assetsReused += ru
+		assetsUploaded += up
+
+		// Phase G: create approval instance
+		wf, err := txSvc.repo.GetApprovalWorkflowByActionName(ctx, "bom")
+		if err != nil {
+			return err
+		}
+		if wf == nil {
+			return apperror.BadRequest("no active approval workflow configured for action 'bom'")
+		}
+		maxLevel := approval.MaxLevel(wf)
+		if maxLevel < 1 {
+			return apperror.BadRequest("no approval levels configured for workflow 'bom'")
+		}
+		instance := &awmodels.ApprovalInstance{
+			ActionName:         "bom",
+			ReferenceTable:     "bom_item",
+			ReferenceID:        newBom.ID,
+			ApprovalWorkflowID: wf.ID,
+			CurrentLevel:       1,
+			MaxLevel:           maxLevel,
+			Status:             "pending",
+			SubmittedBy:        userID,
+			ApprovalProgress:   approval.BuildProgress(wf, maxLevel),
+		}
+		if err := txSvc.repo.CreateApprovalInstance(ctx, instance); err != nil {
+			return err
+		}
+
+		result = models.ReplaceBomResponse{
+			NewBomID:       newBom.ID,
+			OldBomID:       oldBom.ID,
+			UniqCode:       parentItem.UniqCode,
+			NewBomVersion:  newBom.Version,
+			AssetsReused:   assetsReused,
+			AssetsUploaded: assetsUploaded,
+		}
+		return nil
+	})
+	if txErr != nil {
+		return nil, txErr
+	}
+
+	return &result, nil
+}
+
+// replaceChildren recursively processes children payload: resolves/creates items,
+// handles revisions, routing, material spec, asset, and creates bom_lines.
+// Returns (assetsReused, assetsUploaded, error).
+func (s *service) replaceChildren(
+	ctx context.Context,
+	bomID int64,
+	parentUniqCode string,
+	parentItemID int64,
+	children []models.ReplaceBomChildInput,
+	uploadedMap map[string]uploadedAsset,
+) (int, int, error) {
+	reused, uploaded := 0, 0
+	for _, c := range children {
+		// Resolve or create item
+		childItem, err := s.resolveOrCreateReplaceItem(ctx, c)
+		if err != nil {
+			return reused, uploaded, err
+		}
+
+		// New revision for this child
+		childRev, err := s.createNextItemRevision(ctx, childItem.ID, 1, nil)
+		if err != nil {
+			return reused, uploaded, err
+		}
+		revLabel := childRev.Revision
+		childItem.CurrentRevision = &revLabel
+		_ = s.repo.UpdateItem(ctx, childItem)
+
+		// Asset handling
+		if c.UploadKey != nil {
+			if ua, ok := uploadedMap[*c.UploadKey]; ok {
+				if err := s.repo.UpsertItemAssetURL(ctx, childItem.ID, ua.AssetType, ua.URL); err != nil {
+					return reused, uploaded, err
+				}
+				uploaded++
+			}
+		} else if c.AssetID != nil {
+			reused++
+		}
+
+		// Routing
+		if len(c.ProcessRoutes) > 0 {
+			if err := s.createRouting(ctx, childItem.ID, childRev.ID, c.ProcessRoutes); err != nil {
+				return reused, uploaded, err
+			}
+		}
+
+		// Material spec
+		if c.MaterialSpec != nil {
+			if err := s.saveMaterialSpec(ctx, childRev.ID, c.MaterialSpec); err != nil {
+				return reused, uploaded, err
+			}
+		}
+
+		// bom_line
+		line := &models.BomLine{
+			BomItemID:           bomID,
+			ParentItemID:        parentItemID,
+			ChildItemID:         childItem.ID,
+			ChildItemRevisionID: &childRev.ID,
+			Level:               c.Level,
+			QtyPerUniq:          c.QtyPerUniq,
+			ScrapFactor:         c.ScrapFactor,
+			IsPhantom:           c.IsPhantom,
+		}
+		if c.Uom != "" {
+			uom := c.Uom
+			line.Uom = &uom
+		}
+		if err := s.repo.CreateBomLine(ctx, line); err != nil {
+			return reused, uploaded, err
+		}
+
+		// Recurse
+		if len(c.Children) > 0 && c.Level < 4 {
+			ru, up, err := s.replaceChildren(ctx, bomID, c.UniqCode, childItem.ID, c.Children, uploadedMap)
+			if err != nil {
+				return reused, uploaded, err
+			}
+			reused += ru
+			uploaded += up
+		}
+	}
+	return reused, uploaded, nil
+}
+
+// resolveOrCreateReplaceItem finds an existing item by uniq_code or creates a new one.
+func (s *service) resolveOrCreateReplaceItem(ctx context.Context, c models.ReplaceBomChildInput) (*models.Item, error) {
+	existing, err := s.repo.GetItemByUniq(ctx, c.UniqCode)
+	if err == nil && existing != nil {
+		// Update mutable fields
+		existing.PartName = c.PartName
+		if c.PartNumber != nil {
+			existing.PartNumber = c.PartNumber
+		}
+		if c.Model != nil {
+			existing.Model = c.Model
+		}
+		existing.Uom = c.Uom
+		_ = s.repo.UpdateItem(ctx, existing)
+		return existing, nil
+	}
+
+	// Create new item
+	item := &models.Item{
+		UniqCode:   c.UniqCode,
+		PartName:   c.PartName,
+		PartNumber: c.PartNumber,
+		Model:      c.Model,
+		Uom:        c.Uom,
+		Status:     "Draft",
+	}
+	if err := s.repo.CreateItem(ctx, item); err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+// collectUploadKeys walks the full request tree and collects all non-nil upload_keys.
+func collectUploadKeys(req models.ReplaceBomRequest) []string {
+	keys := make([]string, 0)
+	if req.UploadKey != nil && *req.UploadKey != "" {
+		keys = append(keys, *req.UploadKey)
+	}
+	keys = append(keys, collectChildUploadKeys(req.Children)...)
+	return keys
+}
+
+func collectChildUploadKeys(children []models.ReplaceBomChildInput) []string {
+	keys := make([]string, 0)
+	for _, c := range children {
+		if c.UploadKey != nil && *c.UploadKey != "" {
+			keys = append(keys, *c.UploadKey)
+		}
+		keys = append(keys, collectChildUploadKeys(c.Children)...)
+	}
+	return keys
+}
+
+// saveTempFile writes a multipart file to uploads/assets/replace/ and returns (url, assetType, error).
+func saveTempFile(fh *multipart.FileHeader) (string, string, error) {
+	const dir = "uploads/assets/replace"
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", "", fmt.Errorf("mkdir replace dir: %w", err)
+	}
+
+	src, err := fh.Open()
+	if err != nil {
+		return "", "", fmt.Errorf("open upload: %w", err)
+	}
+	defer src.Close()
+
+	filename := fmt.Sprintf("%s_%s", uuid.New().String()[:8], filepath.Base(fh.Filename))
+	finalPath := filepath.Join(dir, filename)
+
+	dst, err := os.Create(finalPath)
+	if err != nil {
+		return "", "", fmt.Errorf("create file: %w", err)
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return "", "", fmt.Errorf("write file: %w", err)
+	}
+
+	url := "/" + filepath.ToSlash(finalPath)
+	return url, detectAssetType(fh.Filename), nil
+}
+
+// detectAssetType returns the asset_type string based on file extension.
+func detectAssetType(filename string) string {
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".glb", ".gltf", ".obj", ".fbx", ".stl":
+		return "3d-model"
+	case ".dxf", ".dwg", ".pdf":
+		return "drawing"
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif":
+		return "photo"
+	default:
+		return "other"
+	}
 }
