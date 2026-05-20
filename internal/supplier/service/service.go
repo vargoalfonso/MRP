@@ -82,7 +82,7 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierRequest) 
 <body style="
 	margin:0;
 	padding:0;
-	background-color:#f4f6f9;
+	background-color:#f3f4f6;
 	font-family:Arial,sans-serif;
 ">
 
@@ -92,37 +92,65 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierRequest) 
 
 				<table width="600" cellpadding="0" cellspacing="0" style="
 					background:#ffffff;
-					border-radius:12px;
+					border-radius:14px;
 					overflow:hidden;
-					box-shadow:0 2px 10px rgba(0,0,0,0.08);
+					box-shadow:0 4px 18px rgba(0,0,0,0.06);
 				">
 
 					<!-- HEADER -->
 					<tr>
 						<td style="
-							background:#16a34a;
-							padding:30px;
-							text-align:center;
-							color:white;
+							background:#029cde;
+							padding:22px 30px;
 						">
-							<h1 style="margin:0;font-size:28px;">
-								Selamat Datang 👋
-							</h1>
+
+							<table width="100%%" cellpadding="0" cellspacing="0">
+								<tr>
+
+									<!-- LOGO -->
+									<td align="left">
+										<img
+											src="https://raigine.com/wp-content/themes/company-profile-theme/images/logo-raigine.png"
+											alt="Raigine Logo"
+											width="145"
+											style="display:block;"
+										>
+									</td>
+
+									<!-- TITLE -->
+									<td align="right" style="
+										font-size:15px;
+										font-weight:500;
+										color:#d1d5db;
+										letter-spacing:0.5px;
+									">
+										Supplier Registration
+									</td>
+
+								</tr>
+							</table>
+
 						</td>
 					</tr>
 
 					<!-- CONTENT -->
 					<tr>
-						<td style="padding:40px; color:#333333;">
+						<td style="padding:48px 42px;">
 
-							<h2 style="margin-top:0;">
+							<h2 style="
+								margin-top:0;
+								margin-bottom:20px;
+								color:#111827;
+								font-size:30px;
+							">
 								Halo %s,
 							</h2>
 
 							<p style="
 								font-size:16px;
-								line-height:1.8;
-								color:#555555;
+								line-height:1.9;
+								color:#4b5563;
+								margin:0 0 18px 0;
 							">
 								Selamat! Anda telah berhasil terdaftar sebagai
 								<b>supplier</b> di sistem kami.
@@ -130,19 +158,42 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierRequest) 
 
 							<p style="
 								font-size:16px;
-								line-height:1.8;
-								color:#555555;
+								line-height:1.9;
+								color:#4b5563;
+								margin:0 0 18px 0;
 							">
 								Terima kasih telah bergabung dan menjadi bagian dari kerja sama kami.
 							</p>
 
 							<p style="
 								font-size:16px;
-								line-height:1.8;
-								color:#555555;
+								line-height:1.9;
+								color:#4b5563;
+								margin:0;
 							">
-								Kami berharap dapat menjalin kerja sama yang baik ke depannya.
+								Kami berharap dapat menjalin kerja sama yang baik dan profesional ke depannya.
 							</p>
+
+							<!-- INFO BOX -->
+							<div style="
+								background:#f9fafb;
+								border:1px solid #e5e7eb;
+								border-radius:10px;
+								padding:18px;
+								margin-top:40px;
+							">
+
+								<p style="
+									font-size:14px;
+									color:#6b7280;
+									line-height:1.8;
+									margin:0;
+								">
+									Jika Anda memiliki pertanyaan lebih lanjut,
+									silakan hubungi tim kami melalui email resmi perusahaan.
+								</p>
+
+							</div>
 
 						</td>
 					</tr>
@@ -151,10 +202,11 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierRequest) 
 					<tr>
 						<td style="
 							background:#f9fafb;
-							padding:20px;
+							padding:22px;
 							text-align:center;
 							font-size:12px;
-							color:#999999;
+							color:#9ca3af;
+							border-top:1px solid #e5e7eb;
 						">
 							© 2026 Raigine System. All rights reserved.
 						</td>
