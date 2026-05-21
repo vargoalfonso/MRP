@@ -19,7 +19,7 @@ import (
 type IEmployeeService interface {
 	GetAll(ctx context.Context) ([]models.Employee, error)
 	GetByID(ctx context.Context, id int64) (*models.Employee, error)
-	Create(ctx context.Context, req models.CreateEmployeeRequest) (*models.Employee, error)
+	Create(ctx context.Context, req models.CreateEmployeeRequest) (*models.CreateEmployee, error)
 	Update(ctx context.Context, id int64, req models.UpdateEmployeeRequest) (*models.Employee, error)
 	Delete(ctx context.Context, id int64) error
 }
@@ -69,8 +69,8 @@ func (s *service) Delete(ctx context.Context, id int64) error {
 // =========================
 //
 
-func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) (*models.Employee, error) {
-	var employee *models.Employee
+func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) (*models.CreateEmployee, error) {
+	var employee *models.CreateEmployee
 
 	if req.DepartmentID != nil && *req.DepartmentID <= 0 {
 		req.DepartmentID = nil
