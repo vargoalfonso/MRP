@@ -45,7 +45,7 @@ func (s *stateful) Login(ctx context.Context, req models.LoginRequest) (*models.
 		return nil, apperror.Unauthorized("invalid credentials")
 	}
 
-	return s.issueTokenPair(ctx, user.UUID, strings.Split(user.Roles, ","))
+	return s.issueTokenPair(ctx, user.UUID, user.Username, strings.Split(user.Roles, ","))
 }
 
 func (s *stateful) ValidateAccessToken(ctx context.Context, tokenStr string) (*models.Claims, error) {
@@ -92,7 +92,7 @@ func (s *stateful) RefreshTokens(ctx context.Context, refreshToken string) (*mod
 	if err != nil {
 		return nil, err
 	}
-	return s.issueTokenPair(ctx, user.UUID, strings.Split(user.Roles, ","))
+	return s.issueTokenPair(ctx, user.UUID, user.Username, strings.Split(user.Roles, ","))
 }
 
 func (s *stateful) RevokeToken(ctx context.Context, jti string) error {
@@ -105,7 +105,7 @@ func (s *stateful) RevokeToken(ctx context.Context, jti string) error {
 
 // issueTokenPair creates a new access + refresh token pair and registers the
 // refresh token in Redis.
-func (s *stateful) issueTokenPair(ctx context.Context, userID string, roles []string) (*models.TokenPair, error) {
+func (s *stateful) issueTokenPair(ctx context.Context, userID, username string, roles []string) (*models.TokenPair, error) {
 	now := time.Now()
 	accessJTI := uuid.New().String()
 	refreshJTI := uuid.New().String()
@@ -119,8 +119,9 @@ func (s *stateful) issueTokenPair(ctx context.Context, userID string, roles []st
 			ExpiresAt: jwt.NewNumericDate(accessExp),
 			ID:        accessJTI,
 		},
-		UserID: userID,
-		Roles:  roles,
+		UserID:   userID,
+		Username: username,
+		Roles:    roles,
 	}
 	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims).
 		SignedString([]byte(s.cfg.JWTAccessSecret))
@@ -137,8 +138,9 @@ func (s *stateful) issueTokenPair(ctx context.Context, userID string, roles []st
 			ExpiresAt: jwt.NewNumericDate(refreshExp),
 			ID:        refreshJTI,
 		},
-		UserID: userID,
-		Roles:  roles,
+		UserID:   userID,
+		Username: username,
+		Roles:    roles,
 	}
 	refreshToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims).
 		SignedString([]byte(s.cfg.JWTRefreshSecret))

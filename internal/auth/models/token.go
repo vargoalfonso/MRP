@@ -11,8 +11,9 @@ import (
 type Claims struct {
 	jwt.RegisteredClaims
 	// UserID mirrors RegisteredClaims.Subject but is kept here for clarity.
-	UserID string   `json:"uid"`
-	Roles  []string `json:"roles"`
+	UserID   string   `json:"uid"`
+	Username string   `json:"username"`
+	Roles    []string `json:"roles"`
 }
 
 // TokenPair is returned on login (stateful) or login (stateless: RefreshToken is empty).

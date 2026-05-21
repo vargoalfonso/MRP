@@ -38,7 +38,7 @@ func MustExtractUserContext(ctx *app.Context) *UserContext {
 
 	return &UserContext{
 		UserID:   userID,
-		Username: "", // will be populated if LoadFullUser() is called
+		Username: claims.Username,
 		Email:    "",
 		Roles:    claims.Roles,
 	}
