@@ -259,76 +259,7 @@ func (s *service) buildAssetInfo(asset *models.ItemAsset) models.AssetInfo {
 // ---------------------------------------------------------------------------
 
 func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*models.BomDetailResponse, error) {
-	// 1. Create parent item
-	// Semua items (parent & child) mulai sebagai Draft — baru jadi Active
-	// setelah BOM selesai di-approve di semua level.
-	parent := &models.Item{
-		UniqCode:   req.UniqCode,
-		PartName:   req.PartName,
-		PartNumber: req.PartNumber,
-		Model:      req.Model,
-		Uom:        req.Uom,
-		Status:     "Draft",
-	}
-	if err := s.repo.CreateItem(ctx, parent); err != nil {
-		return nil, err
-	}
-
-	// 2. Create default revision
-	revStr := "v1"
-	parent.CurrentRevision = &revStr
-	_ = s.repo.UpdateItem(ctx, parent)
-	rev := &models.ItemRevision{
-		ItemID:     parent.ID,
-		Revision:   revStr,
-		Status:     "Draft",
-		ChangeNote: req.Description,
-	}
-	if err := s.repo.CreateRevision(ctx, rev); err != nil {
-		return nil, err
-	}
-
-	// 3. Picture
-	if req.PictureURL != nil {
-		_ = s.repo.CreateAsset(ctx, &models.ItemAsset{
-			ItemID:    parent.ID,
-			AssetType: "photo",
-			FileURL:   *req.PictureURL,
-			Status:    "Active",
-		})
-	}
-
-	// 4. Process routes
-	if len(req.ProcessRoutes) > 0 {
-		if err := s.createRouting(ctx, parent.ID, rev.ID, req.ProcessRoutes); err != nil {
-			return nil, err
-		}
-	}
-
-	// 5. Material spec
-	if req.MaterialSpec != nil {
-		if err := s.saveMaterialSpec(ctx, rev.ID, req.MaterialSpec); err != nil {
-			return nil, err
-		}
-	}
-
-	// 6. BOM header
-	bom := &models.BomItem{
-		ItemID:             parent.ID,
-		RootItemRevisionID: &rev.ID,
-		Version:            1,
-		Status:             "Released",
-		Description:        req.Description,
-		ChangeNote:         req.Description,
-		IsCurrent:          true,
-	}
-	if err := s.repo.CreateBomItem(ctx, bom); err != nil {
-		return nil, err
-	}
-
-	// 6a. Auto-create approval instance — one row in approval_instances tracks
-	// this BOM through all configured levels. Progress is stored as JSONB so
-	// the frontend can render per-level status without parsing complex state.
+	// Pre-fetch read-only config outside the transaction to fail fast.
 	wf, err := s.repo.GetApprovalWorkflowByActionName(ctx, "bom")
 	if err != nil {
 		return nil, err
@@ -340,26 +271,109 @@ func (s *service) CreateBom(ctx context.Context, req models.CreateBomRequest) (*
 	if maxLevel < 1 {
 		return nil, apperror.BadRequest("no approval levels configured for workflow 'bom'")
 	}
-	instance := &awmodels.ApprovalInstance{
-		ActionName:         "bom",
-		ReferenceTable:     "bom_item",
-		ReferenceID:        bom.ID,
-		ApprovalWorkflowID: wf.ID,
-		CurrentLevel:       1,
-		MaxLevel:           maxLevel,
-		Status:             "pending",
-		ApprovalProgress:   approval.BuildProgress(wf, maxLevel),
-	}
-	if err := s.repo.CreateApprovalInstance(ctx, instance); err != nil {
-		return nil, err
-	}
 
-	// 7. Recurse children
-	if err := s.createChildren(ctx, bom.ID, parent.ID, req.Children); err != nil {
-		return nil, err
-	}
+	var result *models.BomDetailResponse
+	txErr := s.repo.DB().WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		txSvc := &service{repo: repository.New(tx), errorStore: s.errorStore}
 
-	return s.GetBomDetail(ctx, bom.ID)
+		// 1. Create parent item
+		// Semua items (parent & child) mulai sebagai Draft — baru jadi Active
+		// setelah BOM selesai di-approve di semua level.
+		parent := &models.Item{
+			UniqCode:   req.UniqCode,
+			PartName:   req.PartName,
+			PartNumber: req.PartNumber,
+			Model:      req.Model,
+			Uom:        req.Uom,
+			Status:     "Draft",
+		}
+		if err := txSvc.repo.CreateItem(ctx, parent); err != nil {
+			return err
+		}
+
+		// 2. Create default revision
+		revStr := "v1"
+		parent.CurrentRevision = &revStr
+		_ = txSvc.repo.UpdateItem(ctx, parent)
+		rev := &models.ItemRevision{
+			ItemID:     parent.ID,
+			Revision:   revStr,
+			Status:     "Draft",
+			ChangeNote: req.Description,
+		}
+		if err := txSvc.repo.CreateRevision(ctx, rev); err != nil {
+			return err
+		}
+
+		// 3. Picture
+		if req.PictureURL != nil {
+			_ = txSvc.repo.CreateAsset(ctx, &models.ItemAsset{
+				ItemID:    parent.ID,
+				AssetType: "photo",
+				FileURL:   *req.PictureURL,
+				Status:    "Active",
+			})
+		}
+
+		// 4. Process routes
+		if len(req.ProcessRoutes) > 0 {
+			if err := txSvc.createRouting(ctx, parent.ID, rev.ID, req.ProcessRoutes); err != nil {
+				return err
+			}
+		}
+
+		// 5. Material spec
+		if req.MaterialSpec != nil {
+			if err := txSvc.saveMaterialSpec(ctx, rev.ID, req.MaterialSpec); err != nil {
+				return err
+			}
+		}
+
+		// 6. BOM header
+		bom := &models.BomItem{
+			ItemID:             parent.ID,
+			RootItemRevisionID: &rev.ID,
+			Version:            1,
+			Status:             "Released",
+			Description:        req.Description,
+			ChangeNote:         req.Description,
+			IsCurrent:          true,
+		}
+		if err := txSvc.repo.CreateBomItem(ctx, bom); err != nil {
+			return err
+		}
+
+		// 6a. Auto-create approval instance
+		instance := &awmodels.ApprovalInstance{
+			ActionName:         "bom",
+			ReferenceTable:     "bom_item",
+			ReferenceID:        bom.ID,
+			ApprovalWorkflowID: wf.ID,
+			CurrentLevel:       1,
+			MaxLevel:           maxLevel,
+			Status:             "pending",
+			ApprovalProgress:   approval.BuildProgress(wf, maxLevel),
+		}
+		if err := txSvc.repo.CreateApprovalInstance(ctx, instance); err != nil {
+			return err
+		}
+
+		// 7. Recurse children
+		if err := txSvc.createChildren(ctx, bom.ID, parent.ID, req.Children); err != nil {
+			return err
+		}
+
+		detail, err := txSvc.GetBomDetail(ctx, bom.ID)
+		if err != nil {
+			return err
+		}
+		result = detail
+		return nil
+	})
+	if txErr != nil {
+		return nil, txErr
+	}
+	return result, nil
 }
 
 // createChildren resolves or creates each child item and the bom_line, then recurses.
@@ -421,6 +435,14 @@ func (s *service) resolveOrCreateItem(ctx context.Context, c models.ChildInput) 
 	}
 	if c.Uom == nil {
 		return 0, nil, apperror.BadRequest("child requires uom when creating new item: " + *c.UniqCode)
+	}
+
+	if existing, err := s.repo.GetItemByUniq(ctx, *c.UniqCode); err == nil && existing != nil {
+		rev, _ := s.repo.GetLatestRevision(ctx, existing.ID)
+		if rev != nil {
+			return existing.ID, &rev.ID, nil
+		}
+		return existing.ID, nil, nil
 	}
 
 	item := &models.Item{
@@ -1934,7 +1956,7 @@ var bomImportItemHeaders = []string{
 }
 
 var bomImportRouteHeaders = []string{
-	"uniq_code", "op_seq", "process_id", "machine_id", "cycle_time_sec", "setup_time_min", "machine_stroke", "tooling_ref",
+	"uniq_code", "op_seq", "process_code", "machine_number", "cycle_time_sec", "setup_time_min", "machine_stroke", "tooling_ref",
 }
 
 func (s *service) DownloadImportTemplate(ctx context.Context) ([]byte, error) {
@@ -2165,7 +2187,9 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 			errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "uom", Message: "wajib diisi", RawData: raw})
 			continue
 		}
-		if row.Status != "Active" && row.Status != "Inactive" {
+		if row.Status == "" {
+			row.Status = "Active"
+		} else if row.Status != "Active" && row.Status != "Inactive" {
 			errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "status", Message: "harus Active atau Inactive", RawData: raw})
 			continue
 		}
@@ -2230,16 +2254,16 @@ func (s *service) parseRouteRows(ctx context.Context, f *excelize.File, itemRows
 
 	result := make([]models.BomImportRouteRow, 0)
 	errRows := make([]bulkimport.RowError, 0)
+	opSeqCounter := make(map[string]int) // auto-increment op_seq per uniq_code
 
 	for i := 1; i < len(rows); i++ {
 		raw := readImportRaw(rows[i], 1, 8)
 		sheetRow := i + 1
 
 		row := models.BomImportRouteRow{
-			SheetRow:  sheetRow,
-			RawData:   raw,
-			UniqCode:  strings.TrimSpace(raw[0]),
-			MachineID: parseOptionalInt64(raw[3]),
+			SheetRow: sheetRow,
+			RawData:  raw,
+			UniqCode: strings.TrimSpace(raw[0]),
 		}
 		if v := strings.TrimSpace(raw[6]); v != "" {
 			row.MachineStroke = &v
@@ -2264,25 +2288,35 @@ func (s *service) parseRouteRows(ctx context.Context, f *excelize.File, itemRows
 
 		opSeq, err := strconv.Atoi(strings.TrimSpace(raw[1]))
 		if err != nil || opSeq <= 0 {
-			errRows = append(errRows, bulkimport.RowError{Sheet: "Routes", Row: sheetRow, Field: "op_seq", Message: "harus angka > 0", RawData: raw})
-			continue
+			opSeqCounter[row.UniqCode] += 10
+			opSeq = opSeqCounter[row.UniqCode]
+		} else {
+			if opSeq > opSeqCounter[row.UniqCode] {
+				opSeqCounter[row.UniqCode] = opSeq
+			}
 		}
 		row.OpSeq = opSeq
 
-		processID, err := strconv.ParseInt(strings.TrimSpace(raw[2]), 10, 64)
-		if err != nil || processID <= 0 {
-			errRows = append(errRows, bulkimport.RowError{Sheet: "Routes", Row: sheetRow, Field: "process_id", Message: "harus angka valid", RawData: raw})
+		processCode := strings.TrimSpace(raw[2])
+		if processCode == "" {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Routes", Row: sheetRow, Field: "process_code", Message: "wajib diisi", RawData: raw})
+			continue
+		}
+		processID, ok := s.repo.GetProcessIDByCode(ctx, processCode)
+		if !ok {
+			errRows = append(errRows, bulkimport.RowError{Sheet: "Routes", Row: sheetRow, Field: "process_code", Message: fmt.Sprintf("'%s' tidak ditemukan", processCode), RawData: raw})
 			continue
 		}
 		row.ProcessID = processID
 
-		if s.repo.GetProcessName(ctx, row.ProcessID) == "" {
-			errRows = append(errRows, bulkimport.RowError{Sheet: "Routes", Row: sheetRow, Field: "process_id", Message: fmt.Sprintf("%d tidak ditemukan", row.ProcessID), RawData: raw})
-			continue
-		}
-		if row.MachineID != nil && s.repo.GetMachineName(ctx, *row.MachineID) == "" {
-			errRows = append(errRows, bulkimport.RowError{Sheet: "Routes", Row: sheetRow, Field: "machine_id", Message: fmt.Sprintf("%d tidak ditemukan", *row.MachineID), RawData: raw})
-			continue
+		machineNumber := strings.TrimSpace(raw[3])
+		if machineNumber != "" {
+			machineID, ok := s.repo.GetMachineIDByNumber(ctx, machineNumber)
+			if !ok {
+				errRows = append(errRows, bulkimport.RowError{Sheet: "Routes", Row: sheetRow, Field: "machine_number", Message: fmt.Sprintf("'%s' tidak ditemukan", machineNumber), RawData: raw})
+				continue
+			}
+			row.MachineID = &machineID
 		}
 
 		result = append(result, row)
