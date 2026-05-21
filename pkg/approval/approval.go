@@ -27,30 +27,51 @@ import (
 	"gorm.io/gorm"
 )
 
+// BulkImportErrorDetail is a single row-level error returned inline in the response.
+type BulkImportErrorDetail struct {
+	Sheet   string `json:"sheet"`
+	Row     int    `json:"row"`
+	Field   string `json:"field"`
+	Message string `json:"message"`
+}
+
 // BulkImportResponseData is the standard payload used by import endpoints.
 type BulkImportResponseData struct {
-	ImportStatus string `json:"import_status"`
-	Total        int    `json:"total"`
-	SuccessCount int    `json:"success_count"`
-	FailedCount  int    `json:"failed_count"`
-	DownloadURL  string `json:"download_url,omitempty"`
+	ImportStatus string                  `json:"import_status"`
+	Total        int                     `json:"total"`
+	SuccessCount int                     `json:"success_count"`
+	FailedCount  int                     `json:"failed_count"`
+	DownloadURL  string                  `json:"download_url,omitempty"`
+	Errors       []BulkImportErrorDetail `json:"errors,omitempty"`
 }
 
 // BuildBulkImportResponse standardises success/partial/failed import responses.
 // This helper intentionally lives in pkg/approval for cross-module reuse.
 func BuildBulkImportResponse(result bulkimport.BulkResult, downloadURL string) (int, string, BulkImportResponseData) {
+	var details []BulkImportErrorDetail
+	for _, e := range result.Errors {
+		details = append(details, BulkImportErrorDetail{
+			Sheet:   e.Sheet,
+			Row:     e.Row,
+			Field:   e.Field,
+			Message: e.Message,
+		})
+	}
+
 	data := BulkImportResponseData{
 		ImportStatus: string(result.Status),
 		Total:        result.Total,
 		SuccessCount: result.SuccessCount,
 		FailedCount:  result.FailedCount,
 		DownloadURL:  downloadURL,
+		Errors:       details,
 	}
 
 	switch result.Status {
 	case bulkimport.StatusSuccess:
 		data.FailedCount = 0
 		data.DownloadURL = ""
+		data.Errors = nil
 		return http.StatusOK, "import berhasil", data
 	case bulkimport.StatusPartial:
 		return http.StatusMultiStatus, "import sebagian berhasil", data
