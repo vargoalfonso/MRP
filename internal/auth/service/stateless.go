@@ -40,7 +40,7 @@ func (s *stateless) Login(ctx context.Context, req models.LoginRequest) (*models
 		return nil, apperror.Unauthorized("invalid credentials")
 	}
 
-	accessToken, expiresAt, err := s.buildToken(user.UUID, strings.Split(user.Roles, ","))
+	accessToken, expiresAt, err := s.buildToken(user.UUID, user.Username, strings.Split(user.Roles, ","))
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func (s *stateless) RefreshTokens(_ context.Context, _ string) (*models.TokenPai
 func (s *stateless) RevokeToken(_ context.Context, _ string) error { return nil }
 
 // buildToken signs a new access JWT and returns the token string + expiry.
-func (s *stateless) buildToken(userID string, roles []string) (string, time.Time, error) {
+func (s *stateless) buildToken(userID, username string, roles []string) (string, time.Time, error) {
 	expiresAt := time.Now().Add(s.cfg.JWTAccessTTL)
 	claims := models.Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -74,8 +74,9 @@ func (s *stateless) buildToken(userID string, roles []string) (string, time.Time
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			ID:        uuid.New().String(), // jti
 		},
-		UserID: userID,
-		Roles:  roles,
+		UserID:   userID,
+		Username: username,
+		Roles:    roles,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
