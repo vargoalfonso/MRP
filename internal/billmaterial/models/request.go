@@ -31,6 +31,7 @@ type MaterialSpecInput struct {
 	LengthMm      *float64 `json:"length_mm"`
 	WeightKg      *float64 `json:"weight_kg"`
 	SupplierID    *string  `json:"supplier_id" validate:"omitempty,uuid"`
+	SupplierName  *string  `json:"supplier_name"`
 	CycleTimeSec  *float64 `json:"cycle_time_sec"`
 	SetupTimeMin  *float64 `json:"setup_time_min"`
 }
@@ -165,6 +166,7 @@ type ListBomQuery struct {
 	UniqCode       string
 	Status         string
 	Search         string // searches uniq_code + part_name
+	SupplierID     string // UUID — filter by material spec supplier
 	Page           int    // default 1
 	Limit          int    // default 20, max 200
 	OrderBy        string

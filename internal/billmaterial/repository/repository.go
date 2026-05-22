@@ -63,6 +63,7 @@ type IRepository interface {
 	GetRoutingOperationsByHeaderIDs(ctx context.Context, headerIDs []int64) ([]models.RoutingOperation, error)
 	GetToolingsByOperationIDs(ctx context.Context, operationIDs []int64) ([]models.RoutingOperationTooling, error)
 	GetSupplierNamesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
+	FindSupplierByName(ctx context.Context, name string) (*models.Supplier, error)
 	GetProcessNamesByIDs(ctx context.Context, ids []int64) (map[int64]string, error)
 	GetProcessSequencesByIDs(ctx context.Context, ids []int64) (map[int64]int, error)
 	GetMachineNamesByIDs(ctx context.Context, ids []int64) (map[int64]string, error)
@@ -100,6 +101,7 @@ type ListFilter struct {
 	UniqCode       string
 	Status         string
 	Search         string // ILIKE on uniq_code OR part_name
+	SupplierID     string // UUID — filter by material spec supplier
 	Page           int
 	Limit          int
 	OrderBy        string
@@ -508,7 +510,7 @@ func (r *repository) GetRoutingWithOps(ctx context.Context, itemID int64) (*mode
 
 func (r *repository) GetSupplierName(ctx context.Context, id uuid.UUID) string {
 	var s models.Supplier
-	if err := r.db.WithContext(ctx).Select("supplier_name").Where("id = ?", id).First(&s).Error; err != nil {
+	if err := r.db.WithContext(ctx).Select("supplier_name").Where("uuid = ?", id).First(&s).Error; err != nil {
 		return ""
 	}
 	return s.SupplierName
@@ -679,6 +681,20 @@ func isMissingRoutingToolingsTable(err error) bool {
 	return strings.Contains(msg, "routing_operation_toolings") && strings.Contains(msg, "does not exist")
 }
 
+func (r *repository) FindSupplierByName(ctx context.Context, name string) (*models.Supplier, error) {
+	var s models.Supplier
+	err := r.db.WithContext(ctx).
+		Where("supplier_name ILIKE ?", name+"%").
+		First(&s).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, apperror.InternalWrap("FindSupplierByName", err)
+	}
+	return &s, nil
+}
+
 func (r *repository) GetSupplierNamesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
 	result := make(map[uuid.UUID]string)
 	if len(ids) == 0 {
@@ -686,13 +702,13 @@ func (r *repository) GetSupplierNamesByIDs(ctx context.Context, ids []uuid.UUID)
 	}
 	var suppliers []models.Supplier
 	if err := r.db.WithContext(ctx).
-		Select("id", "supplier_name").
-		Where("id IN ?", ids).
+		Select("uuid", "supplier_name").
+		Where("uuid IN ?", ids).
 		Find(&suppliers).Error; err != nil {
 		return nil, apperror.InternalWrap("GetSupplierNamesByIDs", err)
 	}
 	for _, supplier := range suppliers {
-		result[supplier.ID] = supplier.SupplierName
+		result[supplier.UUID] = supplier.SupplierName
 	}
 	return result, nil
 }
@@ -756,11 +772,11 @@ func (r *repository) GetMachineNamesByIDs(ctx context.Context, ids []int64) (map
 // ---------------------------------------------------------------------------
 
 func (r *repository) ListBomItems(ctx context.Context, f ListFilter) ([]models.BomItem, int64, error) {
-	needJoin := f.UniqCode != "" || f.Search != ""
+	needItemJoin := f.UniqCode != "" || f.Search != "" || f.SupplierID != ""
 
 	q := r.db.WithContext(ctx).Model(&models.BomItem{})
 	q = q.Where("bom_item.is_current = ?", true)
-	if needJoin {
+	if needItemJoin {
 		q = q.Joins("JOIN items ON items.id = bom_item.item_id").
 			Where("items.deleted_at IS NULL")
 	}
@@ -772,6 +788,11 @@ func (r *repository) ListBomItems(ctx context.Context, f ListFilter) ([]models.B
 	}
 	if f.Search != "" {
 		q = q.Where("items.uniq_code ILIKE ? OR items.part_name ILIKE ?", "%"+f.Search+"%", "%"+f.Search+"%")
+	}
+	if f.SupplierID != "" {
+		q = q.Joins(`JOIN item_revisions ON item_revisions.item_id = items.id`).
+			Joins(`JOIN item_material_specs ON item_material_specs.item_revision_id = item_revisions.id`).
+			Where("item_material_specs.supplier_id = ?", f.SupplierID)
 	}
 
 	var total int64

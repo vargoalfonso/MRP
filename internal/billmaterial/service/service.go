@@ -126,6 +126,7 @@ func (s *service) ListBom(ctx context.Context, q models.ListBomQuery) (*models.L
 		UniqCode:       q.UniqCode,
 		Status:         q.Status,
 		Search:         q.Search,
+		SupplierID:     q.SupplierID,
 		Page:           page,
 		Limit:          limit,
 		OrderBy:        q.OrderBy,
@@ -172,12 +173,16 @@ func (s *service) ListBom(ctx context.Context, q models.ListBomQuery) (*models.L
 			PartName:   parent.PartName,
 			PartNumber: parent.PartNumber,
 			Model:      parent.Model,
+			Uom:        parent.Uom,
 			Level:      "Parent",
 			Asset:      s.buildAssetInfo(preload.assetByItemID(parent.ID)),
 			Status:     parent.Status,
 		}
 		if parentRev, ok := preload.revisionForParent(b); ok {
 			row.Version = &parentRev.Revision
+			if spec, ok := preload.specs[parentRev.ID]; ok {
+				row.MaterialSpec = s.toSpecDetail(&spec)
+			}
 		}
 
 		row.Children = s.buildChildTree(linesByBomID[b.ID], preload, parent.ID, 1)
@@ -212,6 +217,7 @@ func (s *service) buildChildTree(lines []models.BomLine, preload *bomPreload, pa
 			PartName:   child.PartName,
 			PartNumber: child.PartNumber,
 			Model:      child.Model,
+			Uom:        child.Uom,
 			Level:      int(level),
 			QPU:        &qpu,
 			Asset:      s.buildAssetInfo(preload.assetByItemID(child.ID)),
@@ -219,6 +225,9 @@ func (s *service) buildChildTree(lines []models.BomLine, preload *bomPreload, pa
 		}
 		if rev, ok := preload.revisionForChild(line, child.ID); ok {
 			row.Version = &rev.Revision
+			if spec, ok := preload.specs[rev.ID]; ok {
+				row.MaterialSpec = s.toSpecDetail(&spec)
+			}
 		}
 		if level < 4 {
 			row.Children = s.buildChildTree(lines, preload, child.ID, level+1)
@@ -571,10 +580,15 @@ func (s *service) saveMaterialSpec(ctx context.Context, revID int64, ms *models.
 		SetupTimeMin:   ms.SetupTimeMin,
 	}
 	if ms.SupplierID != nil {
-		if _, err := uuid.Parse(*ms.SupplierID); err != nil {
+		parsed, err := uuid.Parse(*ms.SupplierID)
+		if err != nil {
 			return apperror.BadRequest("invalid supplier_id")
 		}
 		spec.SupplierID = ms.SupplierID
+		name := s.repo.GetSupplierName(ctx, parsed)
+		if name != "" {
+			spec.SupplierName = &name
+		}
 	}
 	return s.repo.UpsertMaterialSpec(ctx, spec)
 }
@@ -619,29 +633,27 @@ func (s *service) getBomDetail(ctx context.Context, bomID int64, version *int) (
 	}
 
 	resp := &models.BomDetailResponse{
-		BomID:       bom.ID,
-		BomVersion:  bom.Version,
-		BomStatus:   bom.Status,
-		IsCurrent:   bom.IsCurrent,
-		ReadOnly:    bom.Status != "Draft",
-		ChangeNote:  bom.ChangeNote,
-		ID:          parent.ID,
-		UniqCode:    parent.UniqCode,
-		PartName:    parent.PartName,
-		PartNumber:  parent.PartNumber,
-		Model:       parent.Model,
-		Status:      parent.Status,
-		Description: bom.Description,
-		Asset:       s.buildAssetInfo(preload.assetByItemID(parent.ID)),
+		BomID:         bom.ID,
+		BomVersion:    bom.Version,
+		BomStatus:     bom.Status,
+		IsCurrent:     bom.IsCurrent,
+		ReadOnly:      bom.Status != "Draft",
+		ChangeNote:    bom.ChangeNote,
+		ID:            parent.ID,
+		UniqCode:      parent.UniqCode,
+		PartName:      parent.PartName,
+		PartNumber:    parent.PartNumber,
+		Model:         parent.Model,
+		Status:        parent.Status,
+		Description:   bom.Description,
+		Asset:         s.buildAssetInfo(preload.assetByItemID(parent.ID)),
+		ProcessRoutes: []models.ProcessRouteDetail{},
 	}
 	if parentRev, ok := preload.revisionForParent(*bom); ok {
 		resp.Version = &parentRev.Revision
 		if spec, ok := preload.specs[parentRev.ID]; ok {
 			resp.MaterialSpec = s.toSpecDetail(&spec)
 		}
-	}
-
-	if parentRev, ok := preload.revisionForParent(*bom); ok {
 		if routes, ok := preload.routesByRevID[parentRev.ID]; ok {
 			resp.ProcessRoutes = routes
 		}
@@ -1572,24 +1584,23 @@ func (s *service) buildDetailTree(lines []models.BomLine, preload *bomPreload, p
 		}
 
 		row := models.BomDetailChild{
-			ID:         child.ID,
-			LineID:     line.ID,
-			UniqCode:   child.UniqCode,
-			PartName:   child.PartName,
-			PartNumber: child.PartNumber,
-			Model:      child.Model,
-			Level:      level,
-			QPU:        line.QtyPerUniq,
-			Asset:      s.buildAssetInfo(preload.assetByItemID(child.ID)),
-			Status:     child.Status,
+			ID:            child.ID,
+			LineID:        line.ID,
+			UniqCode:      child.UniqCode,
+			PartName:      child.PartName,
+			PartNumber:    child.PartNumber,
+			Model:         child.Model,
+			Level:         level,
+			QPU:           line.QtyPerUniq,
+			Asset:         s.buildAssetInfo(preload.assetByItemID(child.ID)),
+			Status:        child.Status,
+			ProcessRoutes: []models.ProcessRouteDetail{},
 		}
 		if rev, ok := preload.revisionForChild(line, child.ID); ok {
 			row.Version = &rev.Revision
 			if spec, ok := preload.specs[rev.ID]; ok {
 				row.MaterialSpec = s.toSpecDetail(&spec)
 			}
-		}
-		if rev, ok := preload.revisionForChild(line, child.ID); ok {
 			if routes, ok := preload.routesByRevID[rev.ID]; ok {
 				row.ProcessRoutes = routes
 			}
@@ -1950,9 +1961,9 @@ func (s *service) ApproveBom(ctx context.Context, bomID int64, userID string, us
 }
 
 var bomImportItemHeaders = []string{
-	"bom_group", "row_type", "uniq_code", "parent_uniq_code", "part_name", "part_number", "uom", "level",
+	"bom_group", "row_type", "uniq_code", "parent_uniq_code", "part_name", "part_number", "model", "uom", "level",
 	"is_phantom", "status", "description", "material_grade", "form",
-	"width_mm", "thickness_mm", "length_mm", "diameter_mm", "weight_kg",
+	"width_mm", "thickness_mm", "length_mm", "diameter_mm", "weight_kg", "supplier_name",
 }
 
 var bomImportRouteHeaders = []string{
@@ -2001,6 +2012,36 @@ func (s *service) ImportFromExcel(ctx context.Context, filePath string) (bulkimp
 	if err != nil {
 		return bulkimport.BulkResult{}, err
 	}
+
+	// Resolve supplier names → IDs (batch, unique names only)
+	supplierCache := make(map[string]string) // name → uuid string
+	for i, row := range itemRows {
+		if row.SupplierName == "" {
+			continue
+		}
+		if id, cached := supplierCache[row.SupplierName]; cached {
+			itemRows[i].SupplierID = &id
+			continue
+		}
+		supplier, lookupErr := s.repo.FindSupplierByName(ctx, row.SupplierName)
+		if lookupErr != nil {
+			return bulkimport.BulkResult{}, lookupErr
+		}
+		if supplier == nil {
+			itemErrs = append(itemErrs, bulkimport.RowError{
+				Sheet:   "Items",
+				Row:     row.SheetRow,
+				Field:   "supplier_name",
+				Message: fmt.Sprintf("supplier '%s' tidak ditemukan", row.SupplierName),
+				RawData: row.RawData,
+			})
+			continue
+		}
+		idStr := supplier.UUID.String()
+		supplierCache[row.SupplierName] = idStr
+		itemRows[i].SupplierID = &idStr
+	}
+
 	routeRows, routeErrs, err := s.parseRouteRows(ctx, f, itemRows)
 	if err != nil {
 		return bulkimport.BulkResult{}, err
@@ -2145,13 +2186,15 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 			ParentUniqCode: strings.TrimSpace(getImportValue(raw, headerIndex, "parent_uniq_code")),
 			PartName:       strings.TrimSpace(getImportValue(raw, headerIndex, "part_name")),
 			PartNumber:     strings.TrimSpace(getImportValue(raw, headerIndex, "part_number")),
+			Model:          strings.TrimSpace(getImportValue(raw, headerIndex, "model")),
 			Uom:            strings.TrimSpace(getImportValue(raw, headerIndex, "uom")),
 			Status:         strings.TrimSpace(getImportValue(raw, headerIndex, "status")),
 			Description:    strings.TrimSpace(getImportValue(raw, headerIndex, "description")),
-			MaterialGrade:  strings.TrimSpace(getImportValue(raw, headerIndex, "material_grade")),
-			Form:           strings.TrimSpace(getImportValue(raw, headerIndex, "form")),
-			QtyPerUniq:     1,
-			ScrapFactor:    0,
+			MaterialGrade: strings.TrimSpace(getImportValue(raw, headerIndex, "material_grade")),
+			Form:          strings.TrimSpace(getImportValue(raw, headerIndex, "form")),
+			SupplierName:  strings.TrimSpace(getImportValue(raw, headerIndex, "supplier_name")),
+			QtyPerUniq:    1,
+			ScrapFactor:   0,
 		}
 
 		if row.BomGroup == "" && row.UniqCode == "" && row.PartName == "" {
@@ -2365,6 +2408,10 @@ func buildCreateBomRequest(rows []models.BomImportItemRow, routesByUniq map[stri
 		v := root.PartNumber
 		req.PartNumber = &v
 	}
+	if root.Model != "" {
+		v := root.Model
+		req.Model = &v
+	}
 	if root.Description != "" {
 		v := root.Description
 		req.Description = &v
@@ -2411,6 +2458,10 @@ func buildChildren(parentUniq string, level int16, byParent map[string][]models.
 			v := r.PartNumber
 			child.PartNumber = &v
 		}
+		if r.Model != "" {
+			v := r.Model
+			child.Model = &v
+		}
 		res = append(res, child)
 	}
 
@@ -2440,16 +2491,17 @@ func toMaterialSpec(row *models.BomImportItemRow) *models.MaterialSpecInput {
 	if row == nil {
 		return nil
 	}
-	hasAny := row.MaterialGrade != "" || row.Form != "" || row.WidthMM != nil || row.ThicknessMM != nil || row.LengthMM != nil || row.DiameterMM != nil || row.WeightKG != nil
+	hasAny := row.MaterialGrade != "" || row.Form != "" || row.WidthMM != nil || row.ThicknessMM != nil || row.LengthMM != nil || row.DiameterMM != nil || row.WeightKG != nil || row.SupplierID != nil
 	if !hasAny {
 		return nil
 	}
 	ms := &models.MaterialSpecInput{
-		WidthMm:     row.WidthMM,
+		WidthMm:    row.WidthMM,
 		ThicknessMm: row.ThicknessMM,
-		LengthMm:    row.LengthMM,
-		DiameterMm:  row.DiameterMM,
-		WeightKg:    row.WeightKG,
+		LengthMm:   row.LengthMM,
+		DiameterMm: row.DiameterMM,
+		WeightKg:   row.WeightKG,
+		SupplierID: row.SupplierID,
 	}
 	if row.MaterialGrade != "" {
 		v := row.MaterialGrade
