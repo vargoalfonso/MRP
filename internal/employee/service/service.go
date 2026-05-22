@@ -165,176 +165,263 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 <!DOCTYPE html>
 <html lang="en">
 <head>
-	<meta charset="UTF-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-	<title>Set Password</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Reset Password</title>
 </head>
 
 <body style="
-	margin:0;
-	padding:0;
-	background:#f3f4f6;
-	font-family:Arial,sans-serif;
+  margin:0;
+  padding:0;
+  background:#efefef;
+  font-family:Arial, Helvetica, sans-serif;
 ">
 
-	<table width="100%%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
-		<tr>
-			<td align="center">
+  <table width="100%%" cellpadding="0" cellspacing="0" border="0" style="background:#efefef;">
+    <tr>
+      <td align="center" style="padding:24px 12px;">
 
-				<table width="620" cellpadding="0" cellspacing="0" style="
-					background:#ffffff;
-					border-radius:14px;
-					overflow:hidden;
-					box-shadow:0 4px 18px rgba(0,0,0,0.06);
-				">
+        <!-- MAIN CONTAINER -->
+        <table width="620" cellpadding="0" cellspacing="0" border="0" style="
+          background:#ffffff;
+          border:1px solid #dcdcdc;
+        ">
 
-					<!-- HEADER -->
-					<tr>
-						<td style="
-							padding:26px 34px;
-							background:#ffffff;
-							border-bottom:1px solid #e5e7eb;
-						">
+          <!-- HEADER -->
+          <tr>
+            <td style="
+              padding:28px 34px;
+              border-bottom:1px solid #dddddd;
+            ">
 
-							<table width="100%%" cellpadding="0" cellspacing="0">
-								<tr>
+              <table width="100%%" cellpadding="0" cellspacing="0">
+                <tr>
 
-									<!-- LOGO -->
-									<td align="left">
-										<img
-											src="https://raigine.com/wp-content/themes/company-profile-theme/images/logo-raigine.png"
-											alt="Raigine Logo"
-											width="150"
-											style="display:block;"
-										/>
-									</td>
+                  <!-- LOGO -->
+                  <td align="left">
+                    <img
+                      src="https://raigine.com/wp-content/themes/company-profile-theme/images/logo-raigine.png"
+                      alt="Raigine"
+                      width="150"
+                      style="display:block;"
+                    />
+                  </td>
 
-									<!-- DATE -->
-									<td align="right" style="
-										font-size:14px;
-										color:#9ca3af;
-										font-weight:500;
-									">
-										%s
-									</td>
+                  <!-- DATE -->
+                  <td align="right" style="
+                    font-size:14px;
+                    color:#9ca3af;
+                  ">
+                    %s
+                  </td>
 
-								</tr>
-							</table>
+                </tr>
+              </table>
 
-						</td>
-					</tr>
+            </td>
+          </tr>
 
-					<!-- CONTENT -->
-					<tr>
-						<td style="padding:50px 46px;">
+          <!-- BODY -->
+          <tr>
+            <td style="padding:46px 42px;">
 
-							<h1 style="
-								margin-top:0;
-								margin-bottom:28px;
-								font-size:44px;
-								line-height:1.2;
-								color:#111827;
-								font-weight:700;
-							">
-								Change Your Password
-							</h1>
+              <!-- TITLE -->
+              <h1 style="
+                margin:0 0 34px 0;
+                font-size:58px;
+                line-height:1.15;
+                color:#111111;
+                font-weight:700;
+                letter-spacing:-1px;
+              ">
+                Change Your Password by the Forgot Password Link Below!
+              </h1>
 
-							<h3 style="
-								margin:0 0 20px 0;
-								font-size:22px;
-								color:#111827;
-							">
-								Password Reset Request 🔐
-							</h3>
+              <!-- SUBTITLE -->
+              <h3 style="
+                margin:0 0 26px 0;
+                font-size:28px;
+                color:#1f2937;
+                font-weight:700;
+              ">
+                Password Reset Request 🔐
+              </h3>
 
-							<p style="
-								font-size:17px;
-								line-height:1.9;
-								color:#374151;
-								margin:0 0 20px 0;
-							">
-								Hi %s,
-							</p>
+              <!-- CONTENT -->
+              <p style="
+                margin:0 0 18px 0;
+                font-size:18px;
+                line-height:1.7;
+                color:#374151;
+              ">
+                Hi %s,
+              </p>
 
-							<p style="
-								font-size:16px;
-								line-height:1.9;
-								color:#4b5563;
-								margin:0 0 18px 0;
-							">
-								We received a request to reset your password for your Raigine account.
-							</p>
+              <p style="
+                margin:0 0 26px 0;
+                font-size:17px;
+                line-height:1.8;
+                color:#4b5563;
+              ">
+                We received a request to reset your password for your rAIgine account.
+              </p>
 
-							<div style="text-align:center; margin:42px 0;">
-								<a href="%s"
-									style="
-										background:#1d4ed8;
-										color:#ffffff;
-										text-decoration:none;
-										padding:15px 38px;
-										border-radius:8px;
-										display:inline-block;
-										font-size:16px;
-										font-weight:600;
-									">
-									Reset Password
-								</a>
-							</div>
+              <p style="
+                margin:0 0 24px 0;
+                font-size:17px;
+                line-height:1.8;
+                color:#4b5563;
+              ">
+                Please note that this password reset link will expire in 24 hours.
+                If you do not reset it within that time, you'll need to request a new one.
+              </p>
 
-							<p style="
-								font-size:14px;
-								color:#6b7280;
-								line-height:1.8;
-							">
-								This link will expire in 24 hours.
-							</p>
+              <p style="
+                margin:0 0 34px 0;
+                font-size:17px;
+                line-height:1.8;
+                color:#4b5563;
+              ">
+                To proceed, simply click the button below to reset your password:
+              </p>
 
-						</td>
-					</tr>
+              <!-- BUTTON -->
+              <div style="text-align:center; margin:42px 0 46px 0;">
 
-					<!-- FOOTER -->
-					<tr>
-						<td style="
-							background:#f9fafb;
-							padding:30px 40px;
-							border-top:1px solid #e5e7eb;
-						">
+                <a href="%s"
+                  style="
+                    background:#0b57d0;
+                    color:#ffffff;
+                    text-decoration:none;
+                    padding:16px 42px;
+                    border-radius:4px;
+                    display:inline-block;
+                    font-size:18px;
+                    font-weight:500;
+                    min-width:150px;
+                  ">
+                  Reset Password
+                </a>
 
-							<table width="100%%" cellpadding="0" cellspacing="0">
-								<tr>
+              </div>
 
-									<td align="left">
-										<img
-											src="https://raigine.com/wp-content/themes/company-profile-theme/images/logo-raigine.png"
-											width="90"
-											style="
-												display:block;
-												margin-bottom:14px;
-											"
-										/>
+              <!-- FOOT TEXT -->
+              <p style="
+                margin:0 0 14px 0;
+                font-size:16px;
+                line-height:1.9;
+                color:#4b5563;
+              ">
+                If you have any questions or need help, feel free to contact us via WhatsApp at 0881010745346 or by email at
+                <a href="mailto:techops@raigine.com"
+                  style="
+                    color:#374151;
+                    text-decoration:underline;
+                  ">
+                  techops@raigine.com
+                </a>
+              </p>
 
-										<p style="
-											margin:0;
-											font-size:13px;
-											color:#9ca3af;
-											line-height:1.7;
-										">
-											Copyright © 2026 <br/>
-											All rights reserved
-										</p>
-									</td>
+              <p style="
+                margin:40px 0 0 0;
+                font-size:17px;
+                line-height:1.9;
+                color:#374151;
+              ">
+                Let's get started,<br/>
+                rAIgine Team
+              </p>
 
-								</tr>
-							</table>
+            </td>
+          </tr>
 
-						</td>
-					</tr>
+          <!-- FOOTER -->
+          <tr>
+            <td style="
+              background:#f5f5f5;
+              padding:34px 40px;
+              border-top:1px solid #dddddd;
+            ">
 
-				</table>
+              <table width="100%%" cellpadding="0" cellspacing="0">
+                <tr>
 
-			</td>
-		</tr>
-	</table>
+                  <!-- LEFT -->
+                  <td align="left" valign="top">
+
+                    <img
+                      src="https://raigine.com/wp-content/themes/company-profile-theme/images/logo-raigine.png"
+                      width="80"
+                      style="
+                        display:block;
+                        margin-bottom:18px;
+                      "
+                    />
+
+                    <p style="
+                      margin:0;
+                      font-size:13px;
+                      line-height:1.8;
+                      color:#9ca3af;
+                    ">
+                      Copyright © 2024 <br/>
+                      All rights reserved
+                    </p>
+
+                  </td>
+
+                  <!-- RIGHT -->
+                  <td align="right" valign="top">
+
+                    <table cellpadding="0" cellspacing="0">
+                      <tr>
+
+                        <td style="padding-left:16px;">
+                          <a href="#">
+                            <img
+                              src="https://cdn-icons-png.flaticon.com/512/174/174857.png"
+                              width="18"
+                              style="display:block;"
+                            />
+                          </a>
+                        </td>
+
+                        <td style="padding-left:16px;">
+                          <a href="#">
+                            <img
+                              src="https://cdn-icons-png.flaticon.com/512/733/733547.png"
+                              width="18"
+                              style="display:block;"
+                            />
+                          </a>
+                        </td>
+
+                        <td style="padding-left:16px;">
+                          <a href="#">
+                            <img
+                              src="https://cdn-icons-png.flaticon.com/512/2111/2111463.png"
+                              width="18"
+                              style="display:block;"
+                            />
+                          </a>
+                        </td>
+
+                      </tr>
+                    </table>
+
+                  </td>
+
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+        </table>
+
+      </td>
+    </tr>
+  </table>
 
 </body>
 </html>
