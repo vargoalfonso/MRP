@@ -585,10 +585,16 @@ func (s *service) saveMaterialSpec(ctx context.Context, revID int64, ms *models.
 			return apperror.BadRequest("invalid supplier_id")
 		}
 		spec.SupplierID = ms.SupplierID
-		name := s.repo.GetSupplierName(ctx, parsed)
-		if name != "" {
-			spec.SupplierName = &name
+		// lookup name hanya jika supplier_name tidak disertakan di request
+		if ms.SupplierName == nil || *ms.SupplierName == "" {
+			name := s.repo.GetSupplierName(ctx, parsed)
+			if name != "" {
+				spec.SupplierName = &name
+			}
 		}
+	}
+	if ms.SupplierName != nil && *ms.SupplierName != "" {
+		spec.SupplierName = ms.SupplierName
 	}
 	return s.repo.UpsertMaterialSpec(ctx, spec)
 }
