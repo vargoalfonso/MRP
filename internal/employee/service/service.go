@@ -234,7 +234,7 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
                 font-weight:700;
                 letter-spacing:-1px;
               ">
-                Change Your Password by the Forgot Password Link Below!
+                Start Automate your Work Process with rAIgine, Sign Up Now!
               </h1>
 
               <!-- SUBTITLE -->
@@ -244,7 +244,7 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
                 color:#1f2937;
                 font-weight:700;
               ">
-                Password Reset Request 🔐
+                Sign Up Invitation
               </h3>
 
               <!-- CONTENT -->
@@ -263,7 +263,7 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
                 line-height:1.8;
                 color:#4b5563;
               ">
-                We received a request to reset your password for your rAIgine account.
+                Supear Admin has just invited you to sign up for rAIgine.
               </p>
 
               <p style="
@@ -272,8 +272,8 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
                 line-height:1.8;
                 color:#4b5563;
               ">
-                Please note that this password reset link will expire in 24 hours.
-                If you do not reset it within that time, you'll need to request a new one.
+                Please note that this invitation will expire in 24 hours.
+                After that, you will need to request a new invitation from the Super Admin.
               </p>
 
               <p style="
@@ -282,7 +282,7 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
                 line-height:1.8;
                 color:#4b5563;
               ">
-                To proceed, simply click the button below to reset your password:
+                To get started, please click the button below to sign up.
               </p>
 
               <!-- BUTTON -->
@@ -300,7 +300,7 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
                     font-weight:500;
                     min-width:150px;
                   ">
-                  Reset Password
+                  Sign Up
                 </a>
 
               </div>
