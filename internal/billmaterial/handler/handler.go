@@ -49,6 +49,7 @@ func (h *HTTPHandler) ListBom(ctx *app.Context) *app.CostumeResponse {
 		UniqCode:       p.UniqCode,
 		Status:         p.Status,
 		Search:         p.Search,
+		SupplierID:     p.SupplierID,
 		Page:           p.Page,
 		Limit:          p.Limit,
 		OrderBy:        p.OrderBy,

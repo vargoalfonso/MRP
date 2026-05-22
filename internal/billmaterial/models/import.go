@@ -11,6 +11,7 @@ type BomImportItemRow struct {
 	ParentUniqCode string
 	PartName       string
 	PartNumber     string
+	Model          string
 	Uom            string
 	Level          int16
 	QtyPerUniq     float64
@@ -26,6 +27,8 @@ type BomImportItemRow struct {
 	LengthMM      *float64
 	DiameterMM    *float64
 	WeightKG      *float64
+	SupplierName  string  // input dari Excel
+	SupplierID    *string // resolved UUID setelah lookup ke DB
 }
 
 // BomImportRouteRow represents one row from sheet "Routes".
