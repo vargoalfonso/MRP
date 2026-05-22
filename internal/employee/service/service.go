@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"time"
 
@@ -75,9 +76,9 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 	if req.DepartmentID != nil && *req.DepartmentID <= 0 {
 		req.DepartmentID = nil
 	}
-	if req.ReportsToID != nil && *req.ReportsToID <= 0 {
-		req.ReportsToID = nil
-	}
+	// if req.ReportsToID != nil && *req.ReportsToID <= 0 {
+	// 	req.ReportsToID = nil
+	// }
 
 	err := s.repo.Tx(ctx, func(txRepo employeeRepo.IEmployeeRepository) error {
 
@@ -97,11 +98,11 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 			return apperror.Conflict("user email sudah terdaftar")
 		}
 
-		if req.ReportsToID != nil {
-			if _, err := txRepo.FindByID(ctx, *req.ReportsToID); err != nil {
-				return apperror.BadRequest("reports_to_id tidak valid")
-			}
-		}
+		// if req.ReportsToID != nil {
+		// 	if _, err := txRepo.FindByID(ctx, *req.ReportsToID); err != nil {
+		// 		return apperror.BadRequest("reports_to_id tidak valid")
+		// 	}
+		// }
 
 		// ==============================
 		// 🔥 2. CREATE EMPLOYEE
@@ -153,10 +154,9 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 			link := fmt.Sprintf(
 				"%s/set-password?token=%s",
 				os.Getenv("BASE_URL"),
-				token,
+				url.QueryEscape(token),
 			)
 
-			// format tanggal jam
 			currentDate := time.Now().Format("Mon, Jan 02 2006 15:04")
 
 			subject := "Set Password Account"
@@ -177,7 +177,7 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 	font-family:Arial,sans-serif;
 ">
 
-	<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
+	<table width="100%%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
 		<tr>
 			<td align="center">
 
@@ -196,7 +196,7 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 							border-bottom:1px solid #e5e7eb;
 						">
 
-							<table width="100%" cellpadding="0" cellspacing="0">
+							<table width="100%%" cellpadding="0" cellspacing="0">
 								<tr>
 
 									<!-- LOGO -->
@@ -300,7 +300,7 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 							border-top:1px solid #e5e7eb;
 						">
 
-							<table width="100%" cellpadding="0" cellspacing="0">
+							<table width="100%%" cellpadding="0" cellspacing="0">
 								<tr>
 
 									<td align="left">
@@ -339,9 +339,9 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 </body>
 </html>
 `,
-				currentDate, // %s pertama = tanggal
-				name,        // %s kedua = nama
-				link,        // %s ketiga = link button
+				currentDate,
+				name,
+				link,
 			)
 
 			if err := email.SendEmail(
