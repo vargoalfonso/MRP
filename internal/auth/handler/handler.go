@@ -212,3 +212,61 @@ func (h *HTTPHandler) SetPassword(appCtx *app.Context) *app.CostumeResponse {
 		Message:   "password berhasil dibuat",
 	}
 }
+
+func (h *HTTPHandler) GetTokenDetail(appCtx *app.Context) *app.CostumeResponse {
+	token := appCtx.Param("token")
+
+	if token == "" {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "token is required",
+		}
+	}
+
+	data, err := h.auth.GetTokenDetail(
+		appCtx.Request.Context(),
+		token,
+	)
+
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   err.Error(),
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "token detail retrieved",
+		Data:      data,
+	}
+}
+
+func (h *HTTPHandler) SetPasswordRegister(appCtx *app.Context) *app.CostumeResponse {
+	var req models.SetPasswordRegisterRequest
+
+	if err := appCtx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request",
+		}
+	}
+
+	if req.Password != req.PasswordConfirm {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "password confirmation does not match",
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "set password success",
+	}
+}

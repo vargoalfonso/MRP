@@ -24,6 +24,9 @@ type IRepository interface {
 	MarkTokenUsed(ctx context.Context, id int64) error
 	UpdateUserRole(ctx context.Context, userID int64, role string) error
 	FindUserByEmployeeID(ctx context.Context, employeeID int64) (*models.User, error)
+	GetByToken(ctx context.Context, token string) (*models.UserActivation, error)
+	GetByID(ctx context.Context, userID int64) (*models.User, error)
+	FindUserByEmployeeEmail(ctx context.Context, employeeEmail string) (*models.Employee, error)
 }
 
 type repository struct {
@@ -35,11 +38,53 @@ func New(db *gorm.DB) IRepository {
 	return &repository{db: db}
 }
 
+func (r *repository) GetByToken(ctx context.Context, token string) (*models.UserActivation, error) {
+	var activation models.UserActivation
+
+	err := r.db.WithContext(ctx).
+		Where("token = ?", token).
+		First(&activation).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &activation, nil
+}
+
+func (r *repository) GetByID(ctx context.Context, userID int64) (*models.User, error) {
+	var user models.User
+
+	err := r.db.WithContext(ctx).
+		Where("id = ?", userID).
+		First(&user).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}
+
 func (r *repository) FindUserByEmployeeID(ctx context.Context, employeeID int64) (*models.User, error) {
 	var user models.User
 
 	err := r.db.WithContext(ctx).
 		Where("employee_id = ?", strconv.FormatInt(employeeID, 10)).
+		First(&user).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+func (r *repository) FindUserByEmployeeEmail(ctx context.Context, employeeEmail string) (*models.Employee, error) {
+	var user models.Employee
+
+	err := r.db.WithContext(ctx).
+		Where("email = ?", employeeEmail).
 		First(&user).Error
 
 	if err != nil {

@@ -53,4 +53,8 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		logoutGroup.POST("/logout", m.base.RunAction(m.handler.Logout))
 
 	}
+
+	v1.GET("/get-token/:token", m.base.RunAction(m.handler.GetTokenDetail))
+	v1.POST("/set-password-register", m.base.RunAction(m.handler.SetPasswordRegister))
+
 }
