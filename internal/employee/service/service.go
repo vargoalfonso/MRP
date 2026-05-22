@@ -150,30 +150,38 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 		// ==============================
 		go func(to, name, token string) {
 
-			link := fmt.Sprintf("%s/set-password?token=%s", os.Getenv("BASE_URL"), token)
+			link := fmt.Sprintf(
+				"%s/set-password?token=%s",
+				os.Getenv("BASE_URL"),
+				token,
+			)
+
+			// format tanggal jam
+			currentDate := time.Now().Format("Mon, Jan 02 2006 15:04")
 
 			subject := "Set Password Account"
 
 			body := fmt.Sprintf(`
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-	<meta charset="UTF-8">
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 	<title>Set Password</title>
 </head>
 
 <body style="
 	margin:0;
 	padding:0;
-	background-color:#f3f4f6;
+	background:#f3f4f6;
 	font-family:Arial,sans-serif;
 ">
 
-	<table width="100%%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
+	<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 0;">
 		<tr>
 			<td align="center">
 
-				<table width="600" cellpadding="0" cellspacing="0" style="
+				<table width="620" cellpadding="0" cellspacing="0" style="
 					background:#ffffff;
 					border-radius:14px;
 					overflow:hidden;
@@ -183,11 +191,12 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 					<!-- HEADER -->
 					<tr>
 						<td style="
-							background:#029cde;
-							padding:22px 30px;
+							padding:26px 34px;
+							background:#ffffff;
+							border-bottom:1px solid #e5e7eb;
 						">
 
-							<table width="100%%" cellpadding="0" cellspacing="0">
+							<table width="100%" cellpadding="0" cellspacing="0">
 								<tr>
 
 									<!-- LOGO -->
@@ -195,19 +204,18 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 										<img
 											src="https://raigine.com/wp-content/themes/company-profile-theme/images/logo-raigine.png"
 											alt="Raigine Logo"
-											width="145"
+											width="150"
 											style="display:block;"
-										>
+										/>
 									</td>
 
-									<!-- TITLE -->
+									<!-- DATE -->
 									<td align="right" style="
-										font-size:15px;
+										font-size:14px;
+										color:#9ca3af;
 										font-weight:500;
-										color:#d1d5db;
-										letter-spacing:0.5px;
 									">
-										Account Activation
+										%s
 									</td>
 
 								</tr>
@@ -218,16 +226,35 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 
 					<!-- CONTENT -->
 					<tr>
-						<td style="padding:48px 42px;">
+						<td style="padding:50px 46px;">
 
-							<h2 style="
+							<h1 style="
 								margin-top:0;
-								margin-bottom:20px;
+								margin-bottom:28px;
+								font-size:44px;
+								line-height:1.2;
 								color:#111827;
-								font-size:30px;
+								font-weight:700;
 							">
-								Halo %s,
-							</h2>
+								Change Your Password
+							</h1>
+
+							<h3 style="
+								margin:0 0 20px 0;
+								font-size:22px;
+								color:#111827;
+							">
+								Password Reset Request 🔐
+							</h3>
+
+							<p style="
+								font-size:17px;
+								line-height:1.9;
+								color:#374151;
+								margin:0 0 20px 0;
+							">
+								Hi %s,
+							</p>
 
 							<p style="
 								font-size:16px;
@@ -235,77 +262,32 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 								color:#4b5563;
 								margin:0 0 18px 0;
 							">
-								Akun Anda telah berhasil dibuat di sistem kami.
+								We received a request to reset your password for your Raigine account.
 							</p>
 
-							<p style="
-								font-size:16px;
-								line-height:1.9;
-								color:#4b5563;
-								margin:0;
-							">
-								Silakan klik tombol di bawah untuk membuat password akun Anda.
-							</p>
-
-							<!-- BUTTON -->
-							<div style="
-								text-align:center;
-								margin:45px 0;
-							">
+							<div style="text-align:center; margin:42px 0;">
 								<a href="%s"
 									style="
-										background:#2563eb;
-										color:white;
-										padding:15px 34px;
+										background:#1d4ed8;
+										color:#ffffff;
 										text-decoration:none;
-										border-radius:10px;
-										font-size:15px;
-										font-weight:600;
+										padding:15px 38px;
+										border-radius:8px;
 										display:inline-block;
-										box-shadow:0 4px 12px rgba(37,99,235,0.25);
+										font-size:16px;
+										font-weight:600;
 									">
-									Set Password
+									Reset Password
 								</a>
 							</div>
 
-							<!-- INFO -->
 							<p style="
 								font-size:14px;
 								color:#6b7280;
 								line-height:1.8;
-								margin-bottom:30px;
 							">
-								Link ini berlaku selama 24 jam.
+								This link will expire in 24 hours.
 							</p>
-
-							<!-- FALLBACK -->
-							<div style="
-								background:#f9fafb;
-								border:1px solid #e5e7eb;
-								border-radius:10px;
-								padding:18px;
-							">
-
-								<p style="
-									font-size:13px;
-									color:#6b7280;
-									margin-top:0;
-									margin-bottom:10px;
-								">
-									Jika tombol tidak dapat diklik, gunakan link berikut:
-								</p>
-
-								<a href="%s"
-									style="
-										font-size:14px;
-										color:#2563eb;
-										word-break:break-all;
-										text-decoration:none;
-									">
-									%s
-								</a>
-
-							</div>
 
 						</td>
 					</tr>
@@ -314,13 +296,37 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 					<tr>
 						<td style="
 							background:#f9fafb;
-							padding:22px;
-							text-align:center;
-							font-size:12px;
-							color:#9ca3af;
+							padding:30px 40px;
 							border-top:1px solid #e5e7eb;
 						">
-							© 2026 Raigine System. All rights reserved.
+
+							<table width="100%" cellpadding="0" cellspacing="0">
+								<tr>
+
+									<td align="left">
+										<img
+											src="https://raigine.com/wp-content/themes/company-profile-theme/images/logo-raigine.png"
+											width="90"
+											style="
+												display:block;
+												margin-bottom:14px;
+											"
+										/>
+
+										<p style="
+											margin:0;
+											font-size:13px;
+											color:#9ca3af;
+											line-height:1.7;
+										">
+											Copyright © 2026 <br/>
+											All rights reserved
+										</p>
+									</td>
+
+								</tr>
+							</table>
+
 						</td>
 					</tr>
 
@@ -332,7 +338,11 @@ func (s *service) Create(ctx context.Context, req models.CreateEmployeeRequest) 
 
 </body>
 </html>
-`, name, link, link, link)
+`,
+				currentDate, // %s pertama = tanggal
+				name,        // %s kedua = nama
+				link,        // %s ketiga = link button
+			)
 
 			if err := email.SendEmail(
 				[]string{to},

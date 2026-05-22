@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -162,4 +163,52 @@ func (s *stateless) SetPassword(ctx context.Context, token string, password stri
 	}
 
 	return nil
+}
+
+func (s *stateless) GetTokenDetail(ctx context.Context, token string) (*models.GetTokenResponse, error) {
+
+	// ==============================
+	// 🔥 GET TOKEN
+	// ==============================
+	activation, err := s.repo.GetByToken(ctx, token)
+	if err != nil {
+		return nil, errors.New("token not found")
+	}
+
+	// ==============================
+	// 🔥 CHECK USED
+	// ==============================
+	if activation.Used {
+		return nil, errors.New("token already used")
+	}
+
+	// ==============================
+	// 🔥 CHECK EXPIRED
+	// ==============================
+	if time.Now().After(activation.ExpiredAt) {
+		return nil, errors.New("token expired")
+	}
+
+	// ==============================
+	// 🔥 GET USER
+	// ==============================
+	user, err := s.repo.GetByID(ctx, activation.UserID)
+	if err != nil {
+		return nil, errors.New("user not found")
+	}
+
+	employee, err := s.repo.FindUserByEmployeeEmail(ctx, user.Email)
+	if err != nil {
+		return nil, errors.New("employee not found")
+	}
+
+	response := &models.GetTokenResponse{
+		Fullname:  employee.FullName,
+		Email:     employee.Email,
+		Token:     activation.Token,
+		ExpiredAt: activation.ExpiredAt,
+		CreatedAt: activation.CreatedAt,
+	}
+
+	return response, nil
 }

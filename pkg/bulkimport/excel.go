@@ -158,7 +158,7 @@ func BuildBomTemplate() (*excelize.File, error) {
 
 	routeHeaders := []string{
 		"error_field",
-		"uniq_code", "op_seq", "process_id", "machine_id",
+		"uniq_code", "op_seq", "process_code", "machine_number",
 		"cycle_time_sec", "setup_time_min", "machine_stroke", "tooling_ref",
 	}
 	for colIdx, h := range routeHeaders {
@@ -170,9 +170,9 @@ func BuildBomTemplate() (*excelize.File, error) {
 
 	// Sample route row (row 2)
 	sampleRoutes := [][]string{
-		{"", "SAMPLE-001", "10", "1", "1", "28", "12", "220 spm", "Dies"},
-		{"", "SAMPLE-001", "20", "6", "5", "50", "8", "", "JIG"},
-		{"", "SAMPLE-001-A", "10", "1", "2", "15", "10", "180 spm", "Dies"},
+		{"", "SAMPLE-001", "10", "STAMPING", "PM-A1-001", "28", "12", "220 spm", "Dies"},
+		{"", "SAMPLE-001", "20", "WELDING", "PM-A1-005", "50", "8", "", "JIG"},
+		{"", "SAMPLE-001-A", "10", "STAMPING", "PM-A1-002", "15", "10", "180 spm", "Dies"},
 	}
 	for rowOffset, row := range sampleRoutes {
 		for colIdx, v := range row {

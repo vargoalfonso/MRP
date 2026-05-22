@@ -52,6 +52,8 @@ type IRepository interface {
 	GetSupplierName(ctx context.Context, id uuid.UUID) string
 	GetProcessName(ctx context.Context, id int64) string
 	GetMachineName(ctx context.Context, id int64) string
+	GetProcessIDByCode(ctx context.Context, code string) (int64, bool)
+	GetMachineIDByNumber(ctx context.Context, number string) (int64, bool)
 	GetItemsByIDs(ctx context.Context, ids []int64) ([]models.Item, error)
 	GetLatestRevisionsByItemIDs(ctx context.Context, itemIDs []int64) ([]models.ItemRevision, error)
 	GetFirstAssetsByItemIDs(ctx context.Context, itemIDs []int64) ([]models.ItemAsset, error)
@@ -526,6 +528,22 @@ func (r *repository) GetMachineName(ctx context.Context, id int64) string {
 		return ""
 	}
 	return m.MachineName
+}
+
+func (r *repository) GetProcessIDByCode(ctx context.Context, code string) (int64, bool) {
+	var p models.ProcessParameter
+	if err := r.db.WithContext(ctx).Select("id").Where("process_code = ?", code).First(&p).Error; err != nil {
+		return 0, false
+	}
+	return p.ID, true
+}
+
+func (r *repository) GetMachineIDByNumber(ctx context.Context, number string) (int64, bool) {
+	var m models.MasterMachine
+	if err := r.db.WithContext(ctx).Select("id").Where("machine_number = ?", number).First(&m).Error; err != nil {
+		return 0, false
+	}
+	return m.ID, true
 }
 
 func (r *repository) GetItemsByIDs(ctx context.Context, ids []int64) ([]models.Item, error) {

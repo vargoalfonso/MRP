@@ -34,6 +34,8 @@ type Authenticator interface {
 
 	SetPassword(ctx context.Context, token string, password string, confirm string) error
 
+	GetTokenDetail(ctx context.Context, token string) (*models.GetTokenResponse, error)
+
 	// Mode returns "stateless" or "stateful".
 	Mode() string
 }
