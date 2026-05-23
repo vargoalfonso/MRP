@@ -51,7 +51,8 @@ func (MasterMachine) TableName() string { return "master_machines" }
 
 // Supplier maps to the existing suppliers table (uuid PK, managed outside this module).
 type Supplier struct {
-	ID                   uuid.UUID `gorm:"type:uuid;primaryKey"`
+	ID                   int64     `gorm:"primaryKey;autoIncrement"`
+	UUID                 uuid.UUID `gorm:"type:uuid;uniqueIndex;column:uuid"`
 	SupplierCode         string
 	SupplierName         string
 	TaxIdNpwp            *string

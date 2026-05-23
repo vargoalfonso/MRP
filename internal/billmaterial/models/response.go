@@ -25,19 +25,21 @@ type AssetInfo struct {
 // ---------------------------------------------------------------------------
 
 type BomTreeRow struct {
-	ID         int64        `json:"id"`
-	BomID      *int64       `json:"bom_id,omitempty"` // bom_item.id — hanya ada di parent row; gunakan untuk GET /products/bom/:bom_id
-	LineID     *int64       `json:"line_id,omitempty"`
-	UniqCode   string       `json:"uniq_code"`
-	PartName   string       `json:"part_name"`
-	PartNumber *string      `json:"part_number"`
-	Model      *string      `json:"model"`
-	Asset      AssetInfo    `json:"asset"`
-	Level      interface{}  `json:"level"` // "Parent" | 1 | 2 | 3 | 4
-	QPU        *float64     `json:"qpu"`   // nil for parent
-	Version    *string      `json:"version"`
-	Status     string       `json:"status"`
-	Children   []BomTreeRow `json:"children"`
+	ID           int64               `json:"id"`
+	BomID        *int64              `json:"bom_id,omitempty"` // bom_item.id — hanya ada di parent row; gunakan untuk GET /products/bom/:bom_id
+	LineID       *int64              `json:"line_id,omitempty"`
+	UniqCode     string              `json:"uniq_code"`
+	PartName     string              `json:"part_name"`
+	PartNumber   *string             `json:"part_number"`
+	Model        *string             `json:"model"`
+	Uom          string              `json:"uom"`
+	Asset        AssetInfo           `json:"asset"`
+	Level        interface{}         `json:"level"` // "Parent" | 1 | 2 | 3 | 4
+	QPU          *float64            `json:"qpu"`   // nil for parent
+	Version      *string             `json:"version"`
+	Status       string              `json:"status"`
+	MaterialSpec *MaterialSpecDetail `json:"material_spec"`
+	Children     []BomTreeRow        `json:"children"`
 }
 
 type ListBomResponse struct {

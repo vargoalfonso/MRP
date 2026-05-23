@@ -46,7 +46,8 @@ type BomPaginationInput struct {
 	OrderBy        string        `json:"order_by"`
 	OrderDirection string        `json:"order_direction"`
 	UniqCode       string        `json:"uniq_code"`
-	Status         string        `json:"status"` // Active | Inactive | Obsolete
+	Status         string        `json:"status"`     // Active | Inactive | Obsolete
+	SupplierID     string        `json:"supplier_id"` // UUID — filter by material spec supplier
 }
 
 // DateRangePaginationInput adds start/end date filtering.
@@ -153,7 +154,7 @@ func Pagination(c *app.Context) PaginationInput {
 
 // BomPagination parses BOM-specific pagination params.
 //
-//	?limit=20&page=1&search=LV7&uniq_code=LV7&status=Active
+//	?limit=20&page=1&search=LV7&uniq_code=LV7&status=Active&supplier_id=<uuid>
 func BomPagination(c *app.Context) BomPaginationInput {
 	base := Pagination(c)
 
@@ -174,6 +175,7 @@ func BomPagination(c *app.Context) BomPaginationInput {
 		OrderDirection: base.OrderDirection,
 		UniqCode:       uniqCode,
 		Status:         status,
+		SupplierID:     c.Query("supplier_id"),
 	}
 }
 
