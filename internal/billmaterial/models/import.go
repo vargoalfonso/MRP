@@ -29,6 +29,7 @@ type BomImportItemRow struct {
 	WeightKG      *float64
 	SupplierName  string  // input dari Excel
 	SupplierID    *string // resolved UUID setelah lookup ke DB
+	CustomerCycle string
 }
 
 // BomImportRouteRow represents one row from sheet "Routes".
