@@ -60,6 +60,9 @@ func GenerateErrorExcel(sheets []SheetDef, errors []RowError) (*excelize.File, e
 
 		// Cols B…: original data
 		for colIdx, val := range e.RawData {
+			if val == "" {
+				continue
+			}
 			cell, _ := excelize.CoordinatesToCellName(colIdx+2, rowNum)
 			if err := f.SetCellValue(e.Sheet, cell, val); err != nil {
 				return nil, fmt.Errorf("write data cell %s on %s: %w", cell, e.Sheet, err)
@@ -72,114 +75,205 @@ func GenerateErrorExcel(sheets []SheetDef, errors []RowError) (*excelize.File, e
 	return f, nil
 }
 
-// BuildBomTemplate creates the blank BOM import template Excel with the two
-// standard sheets (Items, Routes) and their header rows.
+// GenerateBomErrorExcel builds the BOM import error file using the official
+// template as a base (headers + sample rows intact) so users can see the
+// expected format while correcting their data. Failed rows are appended
+// after the last sample row.
+func GenerateBomErrorExcel(errors []RowError) (*excelize.File, error) {
+	f, err := BuildBomTemplate()
+	if err != nil {
+		return nil, fmt.Errorf("build base template: %w", err)
+	}
+
+	// Detect how many rows the template already wrote so we don't hardcode it.
+	existing, err := f.GetRows("Items")
+	if err != nil {
+		return nil, fmt.Errorf("read template rows: %w", err)
+	}
+	nextRow := len(existing) + 1
+
+	for _, e := range errors {
+		cellA, _ := excelize.CoordinatesToCellName(1, nextRow)
+		if err := f.SetCellValue("Items", cellA, e.Message); err != nil {
+			return nil, fmt.Errorf("write error_field row %d: %w", nextRow, err)
+		}
+		for colIdx, val := range e.RawData {
+			if val == "" {
+				continue
+			}
+			cell, _ := excelize.CoordinatesToCellName(colIdx+2, nextRow)
+			if err := f.SetCellValue("Items", cell, val); err != nil {
+				return nil, fmt.Errorf("write data cell %s row %d: %w", cell, nextRow, err)
+			}
+		}
+		nextRow++
+	}
+
+	return f, nil
+}
+
+const bomTemplateMaxRoutes = 7
+
+type bomSampleRoute struct {
+	opSeq, processCode, machineNum string
+	cycleTimeSec, setupTimeMin     string
+	machineStroke, toolingRef      string
+}
+
+type bomSampleRow struct {
+	bomGroup, rowType, uniqCode, parentUniq string
+	partName, partNumber, model, uom        string
+	level, qtyPerUniq string
+	status, description string
+	materialGrade, form                     string
+	widthMM, thicknessMM, lengthMM          string
+	diameterMM, weightKG                    string
+	supplierName, customerCycle             string
+	routes                                  []bomSampleRoute
+}
+
+func (r bomSampleRow) toSlice(totalCols int) []string {
+	vals := []string{
+		"", // error_field (col A, always blank in template)
+		r.bomGroup, r.rowType, r.uniqCode, r.parentUniq,
+		r.partName, r.partNumber, r.model, r.uom,
+		r.level, r.qtyPerUniq,
+		r.status, r.description,
+		r.materialGrade, r.form,
+		r.widthMM, r.thicknessMM, r.lengthMM,
+		r.diameterMM, r.weightKG,
+		r.supplierName, r.customerCycle,
+	}
+	for _, rt := range r.routes {
+		vals = append(vals,
+			rt.opSeq, rt.processCode, rt.machineNum,
+			rt.cycleTimeSec, rt.setupTimeMin,
+			rt.machineStroke, rt.toolingRef,
+		)
+	}
+	for len(vals) < totalCols {
+		vals = append(vals, "")
+	}
+	return vals
+}
+
+// BuildBomTemplate creates the blank BOM import template Excel with a single
+// Items sheet. Route fields are inlined as numbered columns per item row:
+// op_seq_1, process_code_1, machine_number_1, … tooling_ref_7.
 func BuildBomTemplate() (*excelize.File, error) {
 	f := excelize.NewFile()
-
-	// ── Sheet: Items ──────────────────────────────────────────────────────────
 	f.SetSheetName("Sheet1", "Items")
 
-	itemHeaders := []string{
+	// Build header row
+	headers := []string{
 		"error_field",
 		"bom_group", "row_type", "uniq_code", "parent_uniq_code",
-		"part_name", "part_number", "uom", "level",
-		"is_phantom", "status", "description",
+		"part_name", "part_number", "model", "uom", "level",
+		"qty_per_uniq",
+		"status", "description",
 		"material_grade", "form", "width_mm", "thickness_mm", "length_mm",
-		"diameter_mm", "weight_kg",
+		"diameter_mm", "weight_kg", "supplier_name", "customer_cycle",
 	}
-	for colIdx, h := range itemHeaders {
+	for n := 1; n <= bomTemplateMaxRoutes; n++ {
+		s := fmt.Sprintf("%d", n)
+		headers = append(headers,
+			"op_seq_"+s, "process_code_"+s, "machine_number_"+s,
+			"cycle_time_sec_"+s, "setup_time_min_"+s, "machine_stroke_"+s, "tooling_ref_"+s,
+		)
+	}
+	for colIdx, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
 		if err := f.SetCellValue("Items", cell, h); err != nil {
 			return nil, err
 		}
 	}
 
-	// Sample success row (row 2)
-	sampleItems := []string{
-		"",                    // error_field
-		"BOM-SAMPLE-001",      // bom_group
-		"ROOT",                // row_type
-		"SAMPLE-001",          // uniq_code
-		"",                    // parent_uniq_code
-		"Sample Assembly",     // part_name
-		"SA-001",              // part_number
-		"PCS",                 // uom
-		"",                    // level
-		"",                    // is_phantom
-		"Active",              // status
-		"Initial BOM version", // description
-		"STKM550",             // material_grade
-		"Plate",               // form
-		"200",                 // width_mm
-		"5",                   // thickness_mm
-		"300",                 // length_mm
-		"",                    // diameter_mm
-		"",                    // weight_kg
-	}
-	for colIdx, v := range sampleItems {
-		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 2)
-		if err := f.SetCellValue("Items", cell, v); err != nil {
-			return nil, err
-		}
-	}
-
-	// Sample CHILD row (row 3)
-	sampleChild := []string{
-		"",               // error_field
-		"BOM-SAMPLE-001", // bom_group
-		"CHILD",          // row_type
-		"SAMPLE-001-A",   // uniq_code
-		"SAMPLE-001",     // parent_uniq_code
-		"Sub Component",  // part_name
-		"SC-001-A",       // part_number
-		"PCS",            // uom
-		"1",              // level
-		"FALSE",          // is_phantom
-		"Active",         // status
-		"",               // description
-		"SPCC",           // material_grade
-		"Plate",          // form
-		"100",            // width_mm
-		"2",              // thickness_mm
-		"150",            // length_mm
-		"",               // diameter_mm
-		"",               // weight_kg
-	}
-	for colIdx, v := range sampleChild {
-		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 3)
-		if err := f.SetCellValue("Items", cell, v); err != nil {
-			return nil, err
-		}
-	}
-
-	// ── Sheet: Routes ─────────────────────────────────────────────────────────
-	f.NewSheet("Routes")
-
-	routeHeaders := []string{
-		"error_field",
-		"uniq_code", "op_seq", "process_code", "machine_number",
-		"cycle_time_sec", "setup_time_min", "machine_stroke", "tooling_ref",
-	}
-	for colIdx, h := range routeHeaders {
-		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
-		if err := f.SetCellValue("Routes", cell, h); err != nil {
-			return nil, err
-		}
-	}
-
-	// Sample route row (row 2)
-	sampleRoutes := [][]string{
-		{"", "SAMPLE-001", "10", "STAMPING", "PM-A1-001", "28", "12", "220 spm", "Dies"},
-		{"", "SAMPLE-001", "20", "WELDING", "PM-A1-005", "50", "8", "", "JIG"},
-		{"", "SAMPLE-001-A", "10", "STAMPING", "PM-A1-002", "15", "10", "180 spm", "Dies"},
-	}
-	for rowOffset, row := range sampleRoutes {
-		for colIdx, v := range row {
-			cell, _ := excelize.CoordinatesToCellName(colIdx+1, rowOffset+2)
-			if err := f.SetCellValue("Routes", cell, v); err != nil {
-				return nil, err
+	// helper: write a row, skipping empty cells
+	writeRow := func(rowNum int, vals []string) error {
+		for colIdx, v := range vals {
+			if v == "" {
+				continue
 			}
+			cell, _ := excelize.CoordinatesToCellName(colIdx+1, rowNum)
+			if err := f.SetCellValue("Items", cell, v); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	const supplier = "PT INDONESIA STEEL TUBE WORKS"
+
+	samples := []bomSampleRow{
+		// ROOT — Engine Mount Assembly
+		{
+			bomGroup: "EMA-LV7-001", rowType: "ROOT",
+			uniqCode: "EMA-LV7-001",
+			partName: "Engine Mount Assembly", partNumber: "EMA-001-LV7", model: "LV7", uom: "PCS",
+			status: "Active", description: "Engine mount sub-assembly LV7 model",
+			materialGrade: "STKM550", form: "Plate",
+			widthMM: "200", thicknessMM: "5", lengthMM: "300", weightKG: "2.34",
+			supplierName: supplier, customerCycle: "daily",
+			routes: []bomSampleRoute{
+				{opSeq: "10", processCode: "STAMPING", machineNum: "MC-STAMP-01", cycleTimeSec: "45", setupTimeMin: "10", machineStroke: "220 spm", toolingRef: "Dies"},
+				{opSeq: "20", processCode: "WELDING", machineNum: "MC-WELD-01", cycleTimeSec: "60", setupTimeMin: "15", machineStroke: "200 spm", toolingRef: "JIG"},
+				{opSeq: "30", processCode: "ASSEMBLY", machineNum: "MC-ASSY-01", cycleTimeSec: "30", setupTimeMin: "5", machineStroke: "180 spm", toolingRef: "CF"},
+				{opSeq: "40", processCode: "INSPECTION"},
+			},
+		},
+		// CHILD L1-A — Main Bracket
+		{
+			bomGroup: "EMA-LV7-001", rowType: "CHILD",
+			uniqCode: "MB-LV7-001-A", parentUniq: "EMA-LV7-001",
+			partName: "Main Bracket", partNumber: "MB-001-LV7", model: "LV7", uom: "PCS",
+			level: "1", qtyPerUniq: "1", status: "Active",
+			materialGrade: "STKM550", form: "Plate",
+			widthMM: "150", thicknessMM: "4", lengthMM: "250", weightKG: "1.5",
+			supplierName: supplier,
+			routes: []bomSampleRoute{
+				{opSeq: "10", processCode: "STAMPING", machineNum: "MC-STAMP-01", cycleTimeSec: "30", setupTimeMin: "10", machineStroke: "180 spm", toolingRef: "Dies"},
+				{opSeq: "20", processCode: "BENDING", machineNum: "MC-BEND-01", cycleTimeSec: "25", setupTimeMin: "8", machineStroke: "150 spm", toolingRef: "Dies"},
+				{opSeq: "30", processCode: "PIERCING", cycleTimeSec: "20", setupTimeMin: "5", machineStroke: "120 spm", toolingRef: "CF"},
+			},
+		},
+		// CHILD L2-A1 — Steel Sheet 4mm
+		{
+			bomGroup: "EMA-LV7-001", rowType: "CHILD",
+			uniqCode: "SH-LV7-001-A1", parentUniq: "MB-LV7-001-A",
+			partName: "Steel Sheet 4mm", partNumber: "SS-001-LV7", uom: "KG",
+			level: "2", qtyPerUniq: "1.5", status: "Active",
+			materialGrade: "SS400", form: "Plate",
+			widthMM: "150", thicknessMM: "4",
+			routes: []bomSampleRoute{
+				{opSeq: "10", processCode: "STAMPING", machineNum: "MC-STAMP-02", cycleTimeSec: "15", setupTimeMin: "5", machineStroke: "160 spm", toolingRef: "Dies"},
+				{opSeq: "20", processCode: "TRIMMING", cycleTimeSec: "10", setupTimeMin: "3", machineStroke: "140 spm", toolingRef: "CF"},
+			},
+		},
+		// CHILD L1-B — Rubber Insulator
+		{
+			bomGroup: "EMA-LV7-001", rowType: "CHILD",
+			uniqCode: "RI-LV7-001-B", parentUniq: "EMA-LV7-001",
+			partName: "Rubber Insulator", partNumber: "RI-002-LV7", model: "LV7", uom: "PCS",
+			level: "1", qtyPerUniq: "2", status: "Active",
+			materialGrade: "SS400", form: "Plate",
+			widthMM: "150", thicknessMM: "4", weightKG: "1.5",
+			supplierName: supplier,
+		},
+		// CHILD L1-C — Bolt M10 x 30
+		{
+			bomGroup: "EMA-LV7-001", rowType: "CHILD",
+			uniqCode: "BLT-LV7-001-C", parentUniq: "EMA-LV7-001",
+			partName: "Bolt M10 x 30", partNumber: "BLT-003-LV7", model: "LV7", uom: "PCS",
+			level: "1", qtyPerUniq: "4", status: "Active",
+			materialGrade: "SS400", form: "Plate",
+			widthMM: "150", thicknessMM: "4", weightKG: "1.5",
+			supplierName: supplier,
+		},
+	}
+
+	for i, s := range samples {
+		if err := writeRow(i+2, s.toSlice(len(headers))); err != nil {
+			return nil, err
 		}
 	}
 
