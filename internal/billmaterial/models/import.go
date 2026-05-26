@@ -1,6 +1,6 @@
 package models
 
-// BomImportItemRow represents one row from sheet "Items".
+// BomImportItemRow represents one row from the Items sheet.
 type BomImportItemRow struct {
 	SheetRow int
 	RawData  []string
@@ -13,11 +13,9 @@ type BomImportItemRow struct {
 	PartNumber     string
 	Model          string
 	Uom            string
-	Level          int16
-	QtyPerUniq     float64
-	ScrapFactor    float64
-	IsPhantom      bool
-	Status         string
+	Level      int16
+	QtyPerUniq float64
+	Status     string
 	Description    string
 
 	MaterialGrade string
@@ -30,9 +28,18 @@ type BomImportItemRow struct {
 	SupplierName  string  // input dari Excel
 	SupplierID    *string // resolved UUID setelah lookup ke DB
 	CustomerCycle string
+
+	// Inline route fields — index 0 = route 1, up to MaxBomRoutes (7) per item.
+	ProcessCodes   []string
+	MachineNumbers []string
+	OpSeqs         []string
+	CycleTimeSecs  []string
+	SetupTimeMins  []string
+	MachineStrokes []string
+	ToolingRefs    []string
 }
 
-// BomImportRouteRow represents one row from sheet "Routes".
+// BomImportRouteRow is the parsed representation of one process route for an item.
 type BomImportRouteRow struct {
 	SheetRow int
 	RawData  []string
