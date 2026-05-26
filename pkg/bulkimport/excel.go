@@ -205,7 +205,7 @@ func BuildBomTemplate() (*excelize.File, error) {
 	const supplier = "PT INDONESIA STEEL TUBE WORKS"
 
 	samples := []bomSampleRow{
-		// ROOT — Engine Mount Assembly
+		// ROOT — Engine Mount Assembly (4 routes, all fully filled)
 		{
 			bomGroup: "EMA-LV7-001", rowType: "ROOT",
 			uniqCode: "EMA-LV7-001",
@@ -215,13 +215,13 @@ func BuildBomTemplate() (*excelize.File, error) {
 			widthMM: "200", thicknessMM: "5", lengthMM: "300", weightKG: "2.34",
 			supplierName: supplier, customerCycle: "daily",
 			routes: []bomSampleRoute{
-				{opSeq: "10", processCode: "STAMPING", machineNum: "MC-STAMP-01", cycleTimeSec: "45", setupTimeMin: "10", machineStroke: "220 spm", toolingRef: "Dies"},
-				{opSeq: "20", processCode: "WELDING", machineNum: "MC-WELD-01", cycleTimeSec: "60", setupTimeMin: "15", machineStroke: "200 spm", toolingRef: "JIG"},
-				{opSeq: "30", processCode: "ASSEMBLY", machineNum: "MC-ASSY-01", cycleTimeSec: "30", setupTimeMin: "5", machineStroke: "180 spm", toolingRef: "CF"},
-				{opSeq: "40", processCode: "INSPECTION"},
+				{opSeq: "10", processCode: "STAMP", machineNum: "PM-A1-001", cycleTimeSec: "45", setupTimeMin: "10", machineStroke: "220 spm", toolingRef: "Dies"},
+				{opSeq: "20", processCode: "WELD", machineNum: "M-WELD-01", cycleTimeSec: "60", setupTimeMin: "15", machineStroke: "200 spm", toolingRef: "JIG"},
+				{opSeq: "30", processCode: "ASSY", machineNum: "M-ASSY-01", cycleTimeSec: "30", setupTimeMin: "5", machineStroke: "180 spm", toolingRef: "CF"},
+				{opSeq: "40", processCode: "INSP", cycleTimeSec: "20", setupTimeMin: "5", toolingRef: "CF"},
 			},
 		},
-		// CHILD L1-A — Main Bracket
+		// CHILD L1-A — Main Bracket (3 routes, all fully filled)
 		{
 			bomGroup: "EMA-LV7-001", rowType: "CHILD",
 			uniqCode: "MB-LV7-001-A", parentUniq: "EMA-LV7-001",
@@ -231,12 +231,12 @@ func BuildBomTemplate() (*excelize.File, error) {
 			widthMM: "150", thicknessMM: "4", lengthMM: "250", weightKG: "1.5",
 			supplierName: supplier,
 			routes: []bomSampleRoute{
-				{opSeq: "10", processCode: "STAMPING", machineNum: "MC-STAMP-01", cycleTimeSec: "30", setupTimeMin: "10", machineStroke: "180 spm", toolingRef: "Dies"},
-				{opSeq: "20", processCode: "BENDING", machineNum: "MC-BEND-01", cycleTimeSec: "25", setupTimeMin: "8", machineStroke: "150 spm", toolingRef: "Dies"},
-				{opSeq: "30", processCode: "PIERCING", cycleTimeSec: "20", setupTimeMin: "5", machineStroke: "120 spm", toolingRef: "CF"},
+				{opSeq: "10", processCode: "STAMP", machineNum: "M-STAMP-02", cycleTimeSec: "30", setupTimeMin: "10", machineStroke: "180 spm", toolingRef: "Dies"},
+				{opSeq: "20", processCode: "BEND", machineNum: "M-BEND-01", cycleTimeSec: "25", setupTimeMin: "8", machineStroke: "150 spm", toolingRef: "Dies"},
+				{opSeq: "30", processCode: "PIERCE", cycleTimeSec: "20", setupTimeMin: "5", toolingRef: "CF"},
 			},
 		},
-		// CHILD L2-A1 — Steel Sheet 4mm
+		// CHILD L2-A1 — Steel Sheet 4mm (2 routes, all fully filled)
 		{
 			bomGroup: "EMA-LV7-001", rowType: "CHILD",
 			uniqCode: "SH-LV7-001-A1", parentUniq: "MB-LV7-001-A",
@@ -245,11 +245,11 @@ func BuildBomTemplate() (*excelize.File, error) {
 			materialGrade: "SS400", form: "Plate",
 			widthMM: "150", thicknessMM: "4",
 			routes: []bomSampleRoute{
-				{opSeq: "10", processCode: "STAMPING", machineNum: "MC-STAMP-02", cycleTimeSec: "15", setupTimeMin: "5", machineStroke: "160 spm", toolingRef: "Dies"},
-				{opSeq: "20", processCode: "TRIMMING", cycleTimeSec: "10", setupTimeMin: "3", machineStroke: "140 spm", toolingRef: "CF"},
+				{opSeq: "10", processCode: "STAMP", machineNum: "PM-A2-001", cycleTimeSec: "15", setupTimeMin: "5", machineStroke: "160 spm", toolingRef: "Dies"},
+				{opSeq: "20", processCode: "TRIM", cycleTimeSec: "10", setupTimeMin: "3", toolingRef: "CF"},
 			},
 		},
-		// CHILD L1-B — Rubber Insulator
+		// CHILD L1-B — Rubber Insulator (no routes)
 		{
 			bomGroup: "EMA-LV7-001", rowType: "CHILD",
 			uniqCode: "RI-LV7-001-B", parentUniq: "EMA-LV7-001",
@@ -259,7 +259,7 @@ func BuildBomTemplate() (*excelize.File, error) {
 			widthMM: "150", thicknessMM: "4", weightKG: "1.5",
 			supplierName: supplier,
 		},
-		// CHILD L1-C — Bolt M10 x 30
+		// CHILD L1-C — Bolt M10 x 30 (no routes)
 		{
 			bomGroup: "EMA-LV7-001", rowType: "CHILD",
 			uniqCode: "BLT-LV7-001-C", parentUniq: "EMA-LV7-001",
