@@ -34,6 +34,7 @@ type MaterialSpecInput struct {
 	SupplierName  *string  `json:"supplier_name"`
 	CycleTimeSec  *float64 `json:"cycle_time_sec"`
 	SetupTimeMin  *float64 `json:"setup_time_min"`
+	CustomerCycle *string  `json:"customer_cycle"`
 }
 
 // ChildInput — one child node, recursive up to level 4.

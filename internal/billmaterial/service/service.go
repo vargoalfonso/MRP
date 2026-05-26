@@ -578,6 +578,7 @@ func (s *service) saveMaterialSpec(ctx context.Context, revID int64, ms *models.
 		WeightKg:       ms.WeightKg,
 		CycleTimeSec:   ms.CycleTimeSec,
 		SetupTimeMin:   ms.SetupTimeMin,
+		CustomerCycle:  ms.CustomerCycle,
 	}
 	if ms.SupplierID != nil {
 		parsed, err := uuid.Parse(*ms.SupplierID)
@@ -786,6 +787,7 @@ func (s *service) CreateBomRevision(ctx context.Context, bomID int64, req models
 			SupplierName:   spec.SupplierName,
 			CycleTimeSec:   spec.CycleTimeSec,
 			SetupTimeMin:   spec.SetupTimeMin,
+			CustomerCycle:  spec.CustomerCycle,
 		}
 		if err := s.repo.UpsertMaterialSpec(ctx, copySpec); err != nil {
 			return nil, err
@@ -1630,6 +1632,7 @@ func (s *service) toSpecDetail(spec *models.ItemMaterialSpec) *models.MaterialSp
 		WeightKg:      spec.WeightKg,
 		CycleTimeSec:  spec.CycleTimeSec,
 		SetupTimeMin:  spec.SetupTimeMin,
+		CustomerCycle: spec.CustomerCycle,
 		SupplierName:  spec.SupplierName,
 	}
 	return d
@@ -1969,7 +1972,7 @@ func (s *service) ApproveBom(ctx context.Context, bomID int64, userID string, us
 var bomImportItemHeaders = []string{
 	"bom_group", "row_type", "uniq_code", "parent_uniq_code", "part_name", "part_number", "model", "uom", "level",
 	"is_phantom", "status", "description", "material_grade", "form",
-	"width_mm", "thickness_mm", "length_mm", "diameter_mm", "weight_kg", "supplier_name",
+	"width_mm", "thickness_mm", "length_mm", "diameter_mm", "weight_kg", "supplier_name", "customer_cycle",
 }
 
 var bomImportRouteHeaders = []string{
@@ -2283,6 +2286,7 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 		row.LengthMM = parseOptionalFloat(getImportValue(raw, headerIndex, "length_mm"))
 		row.DiameterMM = parseOptionalFloat(getImportValue(raw, headerIndex, "diameter_mm"))
 		row.WeightKG = parseOptionalFloat(getImportValue(raw, headerIndex, "weight_kg"))
+		row.CustomerCycle = strings.TrimSpace(getImportValue(raw, headerIndex, "customer_cycle"))
 
 		result = append(result, row)
 	}
@@ -2497,17 +2501,17 @@ func toMaterialSpec(row *models.BomImportItemRow) *models.MaterialSpecInput {
 	if row == nil {
 		return nil
 	}
-	hasAny := row.MaterialGrade != "" || row.Form != "" || row.WidthMM != nil || row.ThicknessMM != nil || row.LengthMM != nil || row.DiameterMM != nil || row.WeightKG != nil || row.SupplierID != nil
+	hasAny := row.MaterialGrade != "" || row.Form != "" || row.WidthMM != nil || row.ThicknessMM != nil || row.LengthMM != nil || row.DiameterMM != nil || row.WeightKG != nil || row.SupplierID != nil || row.CustomerCycle != ""
 	if !hasAny {
 		return nil
 	}
 	ms := &models.MaterialSpecInput{
-		WidthMm:    row.WidthMM,
+		WidthMm:     row.WidthMM,
 		ThicknessMm: row.ThicknessMM,
-		LengthMm:   row.LengthMM,
-		DiameterMm: row.DiameterMM,
-		WeightKg:   row.WeightKG,
-		SupplierID: row.SupplierID,
+		LengthMm:    row.LengthMM,
+		DiameterMm:  row.DiameterMM,
+		WeightKg:    row.WeightKG,
+		SupplierID:  row.SupplierID,
 	}
 	if row.MaterialGrade != "" {
 		v := row.MaterialGrade
@@ -2516,6 +2520,10 @@ func toMaterialSpec(row *models.BomImportItemRow) *models.MaterialSpecInput {
 	if row.Form != "" {
 		v := row.Form
 		ms.Form = &v
+	}
+	if row.CustomerCycle != "" {
+		v := row.CustomerCycle
+		ms.CustomerCycle = &v
 	}
 	return ms
 }

@@ -153,16 +153,17 @@ func approvalManagerBaseQuery(filterType, status, search string, currentLevel in
 		COALESCE(src.item_code, '') AS item_code,
 		COALESCE(src.detail_url, '') AS detail_url,
 		COALESCE(src.approval_url, '') AS approval_url,
-		COALESCE(src.submitted_by_name, ai.submitted_by) AS submitted_by_name,
+		COALESCE(NULLIF(src.submitted_by_name, ''), u.username, ai.submitted_by) AS submitted_by_name,
 		COALESCE(src.submitted_at, ai.created_at::text) AS submitted_at
 	FROM approval_instances ai
 	JOIN approval_workflows aw ON aw.id = ai.approval_workflow_id
+	LEFT JOIN users u ON u.uuid::text = ai.submitted_by AND u.deleted_at IS NULL
 	LEFT JOIN (
 		SELECT 'bom' AS action_name, bi.id AS reference_id, bi.id::text AS document_id, ''::text AS document_uuid,
 			COALESCE(i.part_name, 'BOM') AS item_name, COALESCE(i.uniq_code, bi.id::text) AS item_code,
 			('/api/v1/products/bom/' || bi.id)::text AS detail_url,
 			('/api/v1/products/bom/' || bi.id || '/approval')::text AS approval_url,
-			COALESCE(ai2.submitted_by, '') AS submitted_by_name,
+			''::text AS submitted_by_name,
 			ai2.created_at::text AS submitted_at
 		FROM bom_item bi
 		LEFT JOIN items i ON i.id = bi.item_id
