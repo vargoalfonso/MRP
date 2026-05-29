@@ -37,9 +37,10 @@ func (s *service) GetByID(ctx context.Context, id int64) (*models.TypeParameter,
 
 func (s *service) Create(ctx context.Context, req models.CreateTypeRequest) (*models.TypeParameter, error) {
 	data := models.TypeParameter{
-		TypeCode: req.TypeCode,
-		TypeName: req.TypeName,
-		Status:   req.Status,
+		TypeCode:    req.TypeCode,
+		TypeName:    req.TypeName,
+		Description: req.Description,
+		Status:      req.Status,
 	}
 
 	if err := s.repo.Create(ctx, &data); err != nil {
@@ -62,6 +63,10 @@ func (s *service) Update(ctx context.Context, id int64, req models.UpdateTypeReq
 
 	if req.TypeName != "" {
 		updateData["type_name"] = req.TypeName
+	}
+
+	if req.Description != nil {
+		updateData["description"] = req.Description
 	}
 
 	if req.Status != "" {
