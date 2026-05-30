@@ -2236,6 +2236,15 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 		}
 		uniqSeen[row.UniqCode] = sheetRow
 
+		// ROOT item must not already exist — CreateBom always inserts a new item
+		// (unlike children which use resolveOrCreateItem and tolerate existing rows).
+		if row.RowType == "ROOT" {
+			if existing, _ := s.repo.GetItemByUniq(ctx, row.UniqCode); existing != nil {
+				errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "uniq_code", Message: fmt.Sprintf("'%s' sudah ada di database", row.UniqCode), RawData: raw})
+				continue
+			}
+		}
+
 		if row.PartName == "" {
 			errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "part_name", Message: "wajib diisi", RawData: raw})
 			continue
