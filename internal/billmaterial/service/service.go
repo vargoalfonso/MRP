@@ -2281,6 +2281,26 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 			row.Level = int16(lvl)
 		}
 
+		// Normalize form case-insensitively to match DB CHECK constraint.
+		// e.g. WIRE / wire / Wire → Wire  |  invalid value → error before hitting DB.
+		if row.Form != "" {
+			normalized, ok := map[string]string{
+				"plate": "Plate", "coil": "Coil", "pipe": "Pipe",
+				"rod": "Rod", "wire": "Wire", "other": "Other",
+			}[strings.ToLower(row.Form)]
+			if !ok {
+				errRows = append(errRows, bulkimport.RowError{
+					Sheet:   "Items",
+					Row:     sheetRow,
+					Field:   "form",
+					Message: fmt.Sprintf("nilai form '%s' tidak dikenal. Gunakan salah satu: Plate, Coil, Pipe, Rod, Wire, Other", row.Form),
+					RawData: raw,
+				})
+				continue
+			}
+			row.Form = normalized
+		}
+
 		row.WidthMM = parseOptionalFloat(getImportValue(raw, headerIndex, "width_mm"))
 		row.ThicknessMM = parseOptionalFloat(getImportValue(raw, headerIndex, "thickness_mm"))
 		row.LengthMM = parseOptionalFloat(getImportValue(raw, headerIndex, "length_mm"))
