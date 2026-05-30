@@ -2236,6 +2236,15 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 		}
 		uniqSeen[row.UniqCode] = sheetRow
 
+		// ROOT item must not already exist — CreateBom always inserts a new item
+		// (unlike children which use resolveOrCreateItem and tolerate existing rows).
+		if row.RowType == "ROOT" {
+			if existing, _ := s.repo.GetItemByUniq(ctx, row.UniqCode); existing != nil {
+				errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "uniq_code", Message: fmt.Sprintf("'%s' sudah ada di database", row.UniqCode), RawData: raw})
+				continue
+			}
+		}
+
 		if row.PartName == "" {
 			errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "part_name", Message: "wajib diisi", RawData: raw})
 			continue
@@ -2270,6 +2279,26 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 				row.QtyPerUniq = qpu
 			}
 			row.Level = int16(lvl)
+		}
+
+		// Normalize form case-insensitively to match DB CHECK constraint.
+		// e.g. WIRE / wire / Wire → Wire  |  invalid value → error before hitting DB.
+		if row.Form != "" {
+			normalized, ok := map[string]string{
+				"plate": "Plate", "coil": "Coil", "pipe": "Pipe",
+				"rod": "Rod", "wire": "Wire", "other": "Other",
+			}[strings.ToLower(row.Form)]
+			if !ok {
+				errRows = append(errRows, bulkimport.RowError{
+					Sheet:   "Items",
+					Row:     sheetRow,
+					Field:   "form",
+					Message: fmt.Sprintf("nilai form '%s' tidak dikenal. Gunakan salah satu: Plate, Coil, Pipe, Rod, Wire, Other", row.Form),
+					RawData: raw,
+				})
+				continue
+			}
+			row.Form = normalized
 		}
 
 		row.WidthMM = parseOptionalFloat(getImportValue(raw, headerIndex, "width_mm"))
