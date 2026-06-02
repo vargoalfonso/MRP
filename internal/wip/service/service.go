@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/ganasa18/go-template/internal/wip/models"
 	wipRepo "github.com/ganasa18/go-template/internal/wip/repository"
+	"github.com/google/uuid"
 )
 
 type IWIPService interface {
@@ -163,6 +166,7 @@ func (s *service) Scan(ctx context.Context, req models.ScanRequest) error {
 		item.Status = "process"
 
 	case "scan_out":
+
 		if item.QtyRemaining < req.Qty {
 			return fmt.Errorf("insufficient qty")
 		}
@@ -171,7 +175,55 @@ func (s *service) Scan(ctx context.Context, req models.ScanRequest) error {
 		item.QtyRemaining -= req.Qty
 
 		if item.QtyRemaining == 0 {
+
+			// default selesai WIP
 			item.Status = "done"
+
+			// hanya parent assembly masuk FG
+			if isAssemblyProcess(item.ProcessName) {
+
+				itemInfo, err := s.repo.GetItemInfo(ctx, item.Uniq)
+				if err != nil {
+					return err
+				}
+
+				isParent, err := s.repo.IsParentItem(ctx, itemInfo.ID)
+				if err != nil {
+					return err
+				}
+
+				// hanya parent masuk FG
+				if isParent {
+
+					WIP, _ := s.repo.GetWOIDByWIPID(ctx, item.WipID)
+
+					wo, _ := s.repo.GetWO(ctx, WIP.ID)
+
+					now := time.Now()
+
+					fg := models.FinishedGoods{
+						UUID:       uuid.New().String(),
+						UniqCode:   item.Uniq,
+						ItemID:     item.ID,
+						PartNumber: itemInfo.PartNumber,
+						PartName:   itemInfo.PartName,
+						Model:      itemInfo.Model,
+						WONumber:   wo,
+						StockQty:   float64(req.Qty),
+						UOM:        item.UOM,
+						Status:     "AVAILABLE",
+						CreatedAt:  now,
+						UpdatedAt:  now,
+					}
+
+					err = s.repo.InsertFinishedGoods(ctx, fg)
+					if err != nil {
+						return err
+					}
+
+					item.Status = "fg"
+				}
+			}
 		}
 
 	default:
@@ -195,4 +247,12 @@ func (s *service) Scan(ctx context.Context, req models.ScanRequest) error {
 	})
 
 	return err
+}
+
+func isAssemblyProcess(name string) bool {
+	name = strings.TrimSpace(strings.ToLower(name))
+
+	return name == "assembly" ||
+		name == "assy" ||
+		name == "final assembly"
 }
