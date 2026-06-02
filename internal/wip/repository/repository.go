@@ -19,6 +19,8 @@ type IWIPRepository interface {
 	CreateWIP(ctx context.Context, req models.CreateWIPRequest) (*models.WIP, error)
 	UpdateWIP(ctx context.Context, id int64, req models.UpdateWIPRequest) (*models.WIP, error)
 	DeleteWIP(ctx context.Context, id int64) error
+	GetWOIDByWIPID(ctx context.Context, wipID int64) (*models.WIP, error)
+	GetWO(ctx context.Context, id int64) (string, error)
 
 	// WIP ITEMS
 	FindItemsByWIP(ctx context.Context, wipID int64) ([]models.WIPItem, error)
@@ -30,6 +32,13 @@ type IWIPRepository interface {
 
 	// LOG
 	CreateLog(ctx context.Context, req models.CreateWIPLogRequest) (*models.WIPLog, error)
+
+	// INSERT FINISH GOOD
+	InsertFinishedGoods(ctx context.Context, fg models.FinishedGoods) error
+
+	// GET TABLE
+	GetItemInfo(ctx context.Context, uniq string) (*ItemInfo, error)
+	IsParentItem(ctx context.Context, itemID int) (bool, error)
 }
 
 type repository struct {
@@ -190,6 +199,38 @@ func (r *repository) DeleteWIP(ctx context.Context, id int64) error {
 		Delete(&models.WIP{}, id).Error
 }
 
+func (r *repository) GetWOIDByWIPID(ctx context.Context, wipID int64) (*models.WIP, error) {
+	var data models.WIP
+
+	err := r.db.WithContext(ctx).
+		First(&data, wipID).Error
+
+	if err != nil {
+		return nil, err
+	}
+	return &data, nil
+}
+
+func (r *repository) GetWO(ctx context.Context, id int64) (string, error) {
+
+	var item struct {
+		WONumber string `gorm:"column:wo_number"`
+	}
+
+	err := r.db.WithContext(ctx).
+		Table("work_orders").
+		Select("wo_number").
+		Where("id = ?", id).
+		Limit(1).
+		Scan(&item).Error
+
+	if err != nil {
+		return "", err
+	}
+
+	return item.WONumber, nil
+}
+
 func (r *repository) FindItemsByWIP(ctx context.Context, wipID int64) ([]models.WIPItem, error) {
 	var data []models.WIPItem
 
@@ -240,4 +281,49 @@ func (r *repository) CreateLog(ctx context.Context, req models.CreateWIPLogReque
 
 	err := r.db.WithContext(ctx).Create(&data).Error
 	return &data, err
+}
+
+func (r *repository) InsertFinishedGoods(ctx context.Context, fg models.FinishedGoods) error {
+	return r.db.WithContext(ctx).
+		Create(&fg).Error
+}
+
+type ItemInfo struct {
+	ID         int    `gorm:"column:id"`
+	PartNumber string `gorm:"column:part_number"`
+	PartName   string `gorm:"column:part_name"`
+	Model      string `gorm:"column:model"`
+}
+
+func (r *repository) GetItemInfo(ctx context.Context, uniq string) (*ItemInfo, error) {
+
+	var item ItemInfo
+
+	err := r.db.WithContext(ctx).
+		Table("items").
+		Select("id", "part_number", "part_name", "model").
+		Where("uniq_code = ?", uniq).
+		Limit(1).
+		Scan(&item).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &item, nil
+}
+
+func (r *repository) IsParentItem(ctx context.Context, itemID int) (bool, error) {
+	var count int64
+
+	err := r.db.WithContext(ctx).
+		Table("bom_lines").
+		Where("parent_item_id = ?", itemID).
+		Count(&count).Error
+
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
 }

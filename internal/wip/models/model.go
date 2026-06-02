@@ -92,3 +92,29 @@ type WIPDetailResponse struct {
 	PartName   string       `json:"part_name"`
 	Processes  []WIPProcess `json:"processes"`
 }
+
+type FinishedGoods struct {
+	ID                    int64
+	UUID                  string
+	UniqCode              string
+	ItemID                int64
+	PartNumber            string
+	PartName              string
+	Model                 string
+	WONumber              string
+	WarehouseLocation     string
+	StockQty              float64
+	UOM                   string
+	KanbanCount           int
+	KanbanStandardQty     float64
+	MinThreshold          float64
+	MaxThreshold          float64
+	SafetyStockQty        float64
+	StockToCompleteKanban float64
+	Status                string
+	CreatedBy             string
+	CreatedAt             time.Time
+	UpdatedBy             string
+	UpdatedAt             time.Time
+	DeletedAt             *time.Time
+}
