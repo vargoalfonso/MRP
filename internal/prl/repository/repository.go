@@ -53,6 +53,7 @@ type IRepository interface {
 	CreatePRLs(ctx context.Context, items []*models.PRL) error
 	FindPRLByID(ctx context.Context, id int64) (*models.PRL, error)
 	FindPRLByUUID(ctx context.Context, uuid string) (*models.PRL, error)
+	FindPRLByBusinessKey(ctx context.Context, customerUUID, uniqCode, forecastPeriod string) (*models.PRL, error)
 	ListPRLs(ctx context.Context, filters models.PRLListFilters) ([]models.PRL, int64, error)
 	ListPRLsForExport(ctx context.Context, filters models.PRLListFilters) ([]models.PRL, error)
 	ListPRLHistoryVsDelivery(ctx context.Context, filters models.PRLHistoryFilters) ([]models.PRLHistoryListItem, int64, error)
@@ -160,7 +161,7 @@ func (r *repository) CreatePRLs(ctx context.Context, items []*models.PRL) error 
 			item.PRLID = fmt.Sprintf("PRL-%d-%03d", year, nextSequence)
 			nextSequence++
 			if err := tx.Create(item).Error; err != nil {
-				//return wrapPRLPersistError("create prl failed", err)
+				return apperror.InternalWrap("create prl failed", err)
 			}
 		}
 
@@ -176,6 +177,20 @@ func (r *repository) FindPRLByUUID(ctx context.Context, uuid string) (*models.PR
 			return nil, apperror.NotFound("prl tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find prl failed", err)
+	}
+	return &item, nil
+}
+
+func (r *repository) FindPRLByBusinessKey(ctx context.Context, customerUUID, uniqCode, forecastPeriod string) (*models.PRL, error) {
+	var item models.PRL
+	err := r.db.WithContext(ctx).
+		Where("customer_uuid = ? AND uniq_code ILIKE ? AND forecast_period = ?", customerUUID, uniqCode, forecastPeriod).
+		First(&item).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, apperror.NotFound("prl tidak ditemukan")
+		}
+		return nil, apperror.InternalWrap("find prl by business key failed", err)
 	}
 	return &item, nil
 }
@@ -614,7 +629,7 @@ func (r *repository) GetMachinePatternByUniqCode(ctx context.Context, uniqCode s
 
 func (r *repository) UpdatePRL(ctx context.Context, item *models.PRL) error {
 	if err := r.db.WithContext(ctx).Save(item).Error; err != nil {
-		//return wrapPRLPersistError("update prl failed", err)
+		return apperror.InternalWrap("update prl failed", err)
 	}
 	return nil
 }

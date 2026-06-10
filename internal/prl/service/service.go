@@ -187,6 +187,14 @@ func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest, su
 	if p := models.Trimmed(req.PartNumber); p != "" {
 		partNumber = p
 	}
+	existing, dupErr := s.repo.FindPRLByBusinessKey(ctx, customer.UUID, uniqCode, period)
+	if dupErr != nil && !apperror.IsNotFound(dupErr) {
+		return nil, dupErr
+	}
+	if existing != nil {
+		return nil, apperror.BadRequest(fmt.Sprintf("PRL sudah ada untuk customer %s, uniq_code %s, periode %s (PRL ID: %s)", customer.CustomerID, uniqCode, period, existing.PRLID))
+	}
+
 	item := &models.PRL{
 		UUID:           uuid.NewString(),
 		PRLID:          "PENDING",
@@ -224,11 +232,17 @@ func (s *service) BulkCreatePRLs(ctx context.Context, req models.BulkCreatePRLRe
 	}
 
 	items := make([]*models.PRL, 0, len(req.Entries))
+	batchKeys := make(map[string]int, len(req.Entries))
 	for index, entry := range req.Entries {
 		item, err := s.buildPRLFromEntry(ctx, entry)
 		if err != nil {
 			return nil, apperror.BadRequest(fmt.Sprintf("entry %d: %s", index+1, err.Error()))
 		}
+		key := strings.ToLower(item.CustomerUUID + "|" + item.UniqCode + "|" + item.ForecastPeriod)
+		if firstIdx, seen := batchKeys[key]; seen {
+			return nil, apperror.BadRequest(fmt.Sprintf("entry %d: duplikat dengan entry %d (customer, uniq_code, dan periode sama)", index+1, firstIdx+1))
+		}
+		batchKeys[key] = index
 		items = append(items, item)
 	}
 
@@ -635,6 +649,14 @@ func (s *service) buildPRLFromEntry(ctx context.Context, entry models.CreatePRLE
 	bom, err := s.repo.FindUniqBOMByUniqCode(ctx, models.Trimmed(entry.UniqCode))
 	if err != nil {
 		return nil, err
+	}
+
+	existing, dupErr := s.repo.FindPRLByBusinessKey(ctx, customer.UUID, models.Trimmed(entry.UniqCode), period)
+	if dupErr != nil && !apperror.IsNotFound(dupErr) {
+		return nil, dupErr
+	}
+	if existing != nil {
+		return nil, apperror.BadRequest(fmt.Sprintf("PRL sudah ada untuk customer %s, uniq_code %s, periode %s (PRL ID: %s)", customer.CustomerID, models.Trimmed(entry.UniqCode), period, existing.PRLID))
 	}
 
 	return &models.PRL{
