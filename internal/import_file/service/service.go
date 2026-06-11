@@ -14,7 +14,7 @@ import (
 )
 
 type ImportService interface {
-	GenerateTemplatePrls() (*bytes.Buffer, error)
+	GenerateTemplatePrls(ctx context.Context) (*bytes.Buffer, error)
 
 	ParsingPRL(ctx context.Context, filePath string) ([]models.ImportDataRequest, error)
 

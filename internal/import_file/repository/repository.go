@@ -14,6 +14,8 @@ type ImportRepository interface {
 	InsertPRLBulk(ctx context.Context, prls []models.PRL) error
 	GetItemByUniqCode(ctx context.Context, uniqCode string) (*models.Item, error)
 	GetMaxPRLNumber(ctx context.Context, year string) (int64, error)
+	GetAllSuppliers(ctx context.Context) ([]map[string]interface{}, error)
+	GetAllSupplierItems(ctx context.Context) ([]map[string]interface{}, error)
 }
 
 type importRepository struct {
@@ -101,4 +103,42 @@ func (r *importRepository) GetMaxPRLNumber(ctx context.Context, year string) (in
 		Scan(&max).Error
 
 	return max, err
+}
+
+func (r *importRepository) GetAllSuppliers(ctx context.Context) ([]map[string]interface{}, error) {
+	var results []map[string]interface{}
+
+	err := r.db.WithContext(ctx).
+		Raw(`
+			SELECT ROW_NUMBER() OVER (ORDER BY id) as no, supplier_name
+			FROM suppliers
+			WHERE status = 'Active' AND deleted_at IS NULL
+			ORDER BY supplier_name
+		`).
+		Scan(&results).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
+func (r *importRepository) GetAllSupplierItems(ctx context.Context) ([]map[string]interface{}, error) {
+	var results []map[string]interface{}
+
+	err := r.db.WithContext(ctx).
+		Raw(`
+			SELECT ROW_NUMBER() OVER (ORDER BY id) as no, uniq_code as product_name
+			FROM supplier_item
+			WHERE status = 'active' AND deleted_at IS NULL
+			ORDER BY uniq_code
+		`).
+		Scan(&results).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
 }

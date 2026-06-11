@@ -2,11 +2,13 @@ package service
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 
 	"github.com/xuri/excelize/v2"
 )
 
-func (s *importService) GenerateTemplatePrls() (*bytes.Buffer, error) {
+func (s *importService) GenerateTemplatePrls(ctx context.Context) (*bytes.Buffer, error) {
 	f := excelize.NewFile()
 	sheetName := "Template"
 
@@ -63,6 +65,60 @@ func (s *importService) GenerateTemplatePrls() (*bytes.Buffer, error) {
 		Split:       false,
 		YSplit:      1,
 		TopLeftCell: "A2",
+	})
+
+	// 🔹 add master sheet
+	masterSheetName := "Master"
+	f.NewSheet(masterSheetName)
+
+	// set data for master sheet
+	// Kolom B: No, Kolom C: Supplier, Kolom E: No, Kolom F: Product
+	f.SetCellValue(masterSheetName, "B1", "No")
+	f.SetCellValue(masterSheetName, "C1", "Supplier")
+	f.SetCellValue(masterSheetName, "E1", "No")
+	f.SetCellValue(masterSheetName, "F1", "Product")
+
+	// set header style untuk master sheet
+	for _, col := range []string{"B", "C", "E", "F"} {
+		cell := col + "1"
+		f.SetCellStyle(masterSheetName, cell, cell, style)
+	}
+
+	// 🔹 fetch suppliers dari database
+	suppliers, err := s.repo.GetAllSuppliers(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	row := 2
+	for _, supplier := range suppliers {
+		f.SetCellValue(masterSheetName, "B"+fmt.Sprint(row), supplier["no"])
+		f.SetCellValue(masterSheetName, "C"+fmt.Sprint(row), supplier["supplier_name"])
+		row++
+	}
+
+	// 🔹 fetch supplier items dari database
+	items, err := s.repo.GetAllSupplierItems(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	row = 2
+	for _, item := range items {
+		f.SetCellValue(masterSheetName, "E"+fmt.Sprint(row), item["no"])
+		f.SetCellValue(masterSheetName, "F"+fmt.Sprint(row), item["product_name"])
+		row++
+	}
+
+	// set column width untuk master sheet
+	f.SetColWidth(masterSheetName, "B", "F", 20)
+
+	// freeze header pada master sheet
+	f.SetPanes(masterSheetName, &excelize.Panes{
+		Freeze:      true,
+		Split:       false,
+		YSplit:      1,
+		TopLeftCell: "B2",
 	})
 
 	// 🔹 convert ke buffer

@@ -23,7 +23,7 @@ func New(service importService.ImportService, auth registerService.Authenticator
 }
 
 func (h *HTTPHandler) DownloadTemplate(appCtx *app.Context) *app.CostumeResponse {
-	file, err := h.service.GenerateTemplatePrls()
+	file, err := h.service.GenerateTemplatePrls(appCtx.Request.Context())
 	if err != nil {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
