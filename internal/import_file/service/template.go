@@ -76,10 +76,12 @@ func (s *importService) GenerateTemplatePrls(ctx context.Context) (*bytes.Buffer
 	f.SetCellValue(masterSheetName, "B1", "No")
 	f.SetCellValue(masterSheetName, "C1", "Supplier")
 	f.SetCellValue(masterSheetName, "E1", "No")
-	f.SetCellValue(masterSheetName, "F1", "Product")
+	f.SetCellValue(masterSheetName, "F1", "Customer")
+	f.SetCellValue(masterSheetName, "H1", "No")
+	f.SetCellValue(masterSheetName, "I1", "Product")
 
 	// set header style untuk master sheet
-	for _, col := range []string{"B", "C", "E", "F"} {
+	for _, col := range []string{"B", "C", "E", "F", "H", "I"} {
 		cell := col + "1"
 		f.SetCellStyle(masterSheetName, cell, cell, style)
 	}
@@ -97,6 +99,19 @@ func (s *importService) GenerateTemplatePrls(ctx context.Context) (*bytes.Buffer
 		row++
 	}
 
+	// 🔹 fetch customers dari database
+	customers, err := s.repo.GetAllCustomers(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	row = 2
+	for _, customer := range customers {
+		f.SetCellValue(masterSheetName, "E"+fmt.Sprint(row), customer["no"])
+		f.SetCellValue(masterSheetName, "F"+fmt.Sprint(row), customer["customer_name"])
+		row++
+	}
+
 	// 🔹 fetch supplier items dari database
 	items, err := s.repo.GetAllSupplierItems(ctx)
 	if err != nil {
@@ -105,13 +120,13 @@ func (s *importService) GenerateTemplatePrls(ctx context.Context) (*bytes.Buffer
 
 	row = 2
 	for _, item := range items {
-		f.SetCellValue(masterSheetName, "E"+fmt.Sprint(row), item["no"])
-		f.SetCellValue(masterSheetName, "F"+fmt.Sprint(row), item["product_name"])
+		f.SetCellValue(masterSheetName, "H"+fmt.Sprint(row), item["no"])
+		f.SetCellValue(masterSheetName, "I"+fmt.Sprint(row), item["product_name"])
 		row++
 	}
 
 	// set column width untuk master sheet
-	f.SetColWidth(masterSheetName, "B", "F", 20)
+	f.SetColWidth(masterSheetName, "B", "I", 20)
 
 	// freeze header pada master sheet
 	f.SetPanes(masterSheetName, &excelize.Panes{

@@ -15,6 +15,7 @@ type ImportRepository interface {
 	GetItemByUniqCode(ctx context.Context, uniqCode string) (*models.Item, error)
 	GetMaxPRLNumber(ctx context.Context, year string) (int64, error)
 	GetAllSuppliers(ctx context.Context) ([]map[string]interface{}, error)
+	GetAllCustomers(ctx context.Context) ([]map[string]interface{}, error)
 	GetAllSupplierItems(ctx context.Context) ([]map[string]interface{}, error)
 }
 
@@ -115,6 +116,25 @@ func (r *importRepository) GetAllSuppliers(ctx context.Context) ([]map[string]in
 			WHERE status = 'Active' AND deleted_at IS NULL
 			ORDER BY supplier_name
 		`).
+		Scan(&results).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
+func (r *importRepository) GetAllCustomers(ctx context.Context) ([]map[string]interface{}, error) {
+	var results []map[string]interface{}
+
+	err := r.db.WithContext(ctx).
+		Raw(`
+            SELECT ROW_NUMBER() OVER (ORDER BY id) as no, customer_name
+            FROM customers
+            WHERE status = 'Active' AND deleted_at IS NULL
+            ORDER BY customer_name
+        `).
 		Scan(&results).Error
 
 	if err != nil {
