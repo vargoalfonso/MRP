@@ -132,7 +132,7 @@ func (r *importRepository) GetAllCustomers(ctx context.Context) ([]map[string]in
 		Raw(`
             SELECT ROW_NUMBER() OVER (ORDER BY id) as no, customer_name
             FROM customers
-            WHERE status = 'Active' AND deleted_at IS NULL
+			WHERE deleted_at IS NULL
             ORDER BY customer_name
         `).
 		Scan(&results).Error
