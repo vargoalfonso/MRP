@@ -15,13 +15,13 @@ type ForecastingPaginationInput struct {
 	OrderBy        string
 	OrderDirection string
 	// Module-specific filters
-	Scope      string // global | custom
-	Tenant     string
-	Uniq       string
-	Domain     string // dn | prl
-	Status     string // PENDING | RUNNING | SUCCEEDED | FAILED | CANCELLED
-	Stage      string // staging | prod
-	ItemID     string
+	Scope  string // global | custom
+	Tenant string
+	Uniq   string
+	Domain string // dn | prl
+	Status string // PENDING | RUNNING | SUCCEEDED | FAILED | CANCELLED
+	Stage  string // staging | prod
+	ItemID string
 }
 
 // Offset returns the SQL offset value from Page and Limit.

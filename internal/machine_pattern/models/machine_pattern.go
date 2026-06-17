@@ -33,7 +33,7 @@ type MachinePatternResponse struct {
 	WorkingDays  int       `json:"working_days"`
 	MovingType   string    `json:"moving_type"`
 	MinOutput    *float64  `json:"min_output,omitempty"`
-	PRLReference *float64   `json:"prl_reference,omitempty"`
+	PRLReference *float64  `json:"prl_reference,omitempty"`
 	Status       string    `json:"status"`
 	CreatedBy    *string   `json:"created_by,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -42,7 +42,7 @@ type MachinePatternResponse struct {
 
 type ListMachinePatternResponse struct {
 	Items      []MachinePatternResponse `json:"items"`
-	Pagination Pagination              `json:"pagination"`
+	Pagination Pagination               `json:"pagination"`
 }
 
 type Pagination struct {

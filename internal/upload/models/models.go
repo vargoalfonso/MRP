@@ -74,26 +74,26 @@ type CompleteSessionRequest struct {
 
 // SessionResponse is returned after creating or fetching a session.
 type SessionResponse struct {
-	SessionID     string   `json:"session_id"`
-	ItemID        int64    `json:"item_id"`
-	AssetType     string   `json:"asset_type"`
-	FileName      string   `json:"file_name"`
-	FileSize      int64    `json:"file_size"`
-	ChunkSize     int      `json:"chunk_size"`
-	TotalChunks   int      `json:"total_chunks"`
+	SessionID      string  `json:"session_id"`
+	ItemID         int64   `json:"item_id"`
+	AssetType      string  `json:"asset_type"`
+	FileName       string  `json:"file_name"`
+	FileSize       int64   `json:"file_size"`
+	ChunkSize      int     `json:"chunk_size"`
+	TotalChunks    int     `json:"total_chunks"`
 	UploadedChunks []int   `json:"uploaded_chunks"` // indices already uploaded (for resume)
 	MissingChunks  []int   `json:"missing_chunks"`  // indices still needed
-	Status        string   `json:"status"`
-	FinalURL      *string  `json:"final_url"`
-	ExpiresAt     string   `json:"expires_at"`
+	Status         string  `json:"status"`
+	FinalURL       *string `json:"final_url"`
+	ExpiresAt      string  `json:"expires_at"`
 }
 
 // ChunkResponse is returned after a chunk is accepted.
 type ChunkResponse struct {
-	SessionID  string `json:"session_id"`
-	ChunkIndex int    `json:"chunk_index"`
-	Received   int64  `json:"received_bytes"`
-	TotalDone  int    `json:"total_chunks_done"`
-	TotalNeeded int   `json:"total_chunks_needed"`
-	Complete   bool   `json:"complete"` // true when all chunks are in
+	SessionID   string `json:"session_id"`
+	ChunkIndex  int    `json:"chunk_index"`
+	Received    int64  `json:"received_bytes"`
+	TotalDone   int    `json:"total_chunks_done"`
+	TotalNeeded int    `json:"total_chunks_needed"`
+	Complete    bool   `json:"complete"` // true when all chunks are in
 }

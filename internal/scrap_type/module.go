@@ -6,10 +6,10 @@ import (
 	authService "github.com/ganasa18/go-template/internal/auth/service"
 	baseHandler "github.com/ganasa18/go-template/internal/base/handler"
 	appmodule "github.com/ganasa18/go-template/internal/module"
-	scrapHandler "github.com/ganasa18/go-template/internal/scrap_type/handler"
-	scrapService "github.com/ganasa18/go-template/internal/scrap_type/service"
 	roleMiddleware "github.com/ganasa18/go-template/internal/role/middleware"
 	roleService "github.com/ganasa18/go-template/internal/role/service"
+	scrapHandler "github.com/ganasa18/go-template/internal/scrap_type/handler"
+	scrapService "github.com/ganasa18/go-template/internal/scrap_type/service"
 	"github.com/gin-gonic/gin"
 )
 

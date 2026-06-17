@@ -369,8 +369,8 @@ func (r *repository) UpdateDNItemShipment(ctx context.Context, tx *gorm.DB, item
 		Model(&models.DNItemCustomer{}).
 		Where("id = ?", itemID).
 		Updates(map[string]interface{}{
-			"qty_shipped":      qtyShipped,
-			"shipment_status":  status,
+			"qty_shipped":     qtyShipped,
+			"shipment_status": status,
 		}).Error
 }
 

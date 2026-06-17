@@ -10,8 +10,8 @@ import (
 	"github.com/ganasa18/go-template/internal/demand_forecasting/repository"
 	"github.com/ganasa18/go-template/internal/demand_forecasting/service"
 	"github.com/ganasa18/go-template/pkg/apperror"
-	"github.com/ganasa18/go-template/pkg/forecastingclient"
 	userPkg "github.com/ganasa18/go-template/pkg/auth"
+	"github.com/ganasa18/go-template/pkg/forecastingclient"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/ganasa18/go-template/pkg/validator"
 )

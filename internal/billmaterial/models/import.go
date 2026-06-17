@@ -13,9 +13,9 @@ type BomImportItemRow struct {
 	PartNumber     string
 	Model          string
 	Uom            string
-	Level      int16
-	QtyPerUniq float64
-	Status     string
+	Level          int16
+	QtyPerUniq     float64
+	Status         string
 	Description    string
 
 	MaterialGrade string

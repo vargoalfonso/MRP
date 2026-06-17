@@ -6,12 +6,12 @@ package models
 
 // CreateScrapStockRequest is the body for POST /api/v1/scrap-stocks.
 type CreateScrapStockRequest struct {
-	UniqCode      string   `json:"uniq"          validate:"required"`
-	PartNumber    *string  `json:"part_number"`
-	PartName      *string  `json:"part_name"`
-	Model         *string  `json:"model"`
-	PackingNumber *string  `json:"packing_number"`
-	WONumber      *string  `json:"wo_number"`
+	UniqCode       string   `json:"uniq"          validate:"required"`
+	PartNumber     *string  `json:"part_number"`
+	PartName       *string  `json:"part_name"`
+	Model          *string  `json:"model"`
+	PackingNumber  *string  `json:"packing_number"`
+	WONumber       *string  `json:"wo_number"`
 	ScrapType      string   `json:"scrap_type"       validate:"required"`
 	DisposalReason *string  `json:"disposal_reason"`
 	Quantity       float64  `json:"quantity"         validate:"required,gt=0"`
@@ -45,7 +45,7 @@ type IncomingScrapRequest struct {
 // CreateScrapReleaseRequest is the body for POST /api/v1/scrap-releases.
 type CreateScrapReleaseRequest struct {
 	ScrapStockID   int64    `json:"scrap_stock_id"  validate:"required,gt=0"`
-	ReleaseDate    *string  `json:"release_date"`    // YYYY-MM-DD
+	ReleaseDate    *string  `json:"release_date"`                        // YYYY-MM-DD
 	ReleaseType    string   `json:"release_type"    validate:"required"` // Sell | Dump
 	ReleaseQty     float64  `json:"release_qty"     validate:"required,gt=0"`
 	WeightReleased *float64 `json:"weight_released"`

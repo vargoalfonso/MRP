@@ -46,7 +46,7 @@ type BomPaginationInput struct {
 	OrderBy        string        `json:"order_by"`
 	OrderDirection string        `json:"order_direction"`
 	UniqCode       string        `json:"uniq_code"`
-	Status         string        `json:"status"`     // Active | Inactive | Obsolete
+	Status         string        `json:"status"`      // Active | Inactive | Obsolete
 	SupplierID     string        `json:"supplier_id"` // UUID — filter by material spec supplier
 }
 

@@ -123,8 +123,8 @@ type bomSampleRoute struct {
 type bomSampleRow struct {
 	bomGroup, rowType, uniqCode, parentUniq string
 	partName, partNumber, model, uom        string
-	level, qtyPerUniq string
-	status, description string
+	level, qtyPerUniq                       string
+	status, description                     string
 	materialGrade, form                     string
 	widthMM, thicknessMM, lengthMM          string
 	diameterMM, weightKG                    string

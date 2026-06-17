@@ -132,12 +132,12 @@ type FGCreateUniqOptionsResponse struct {
 
 // FGBulkCreateResult is the result for one item in a bulk create operation.
 type FGBulkCreateResult struct {
-	Index     int     `json:"index"`
-	UniqCode  string  `json:"uniq_code"`
-	Status    string  `json:"status"` // "created" | "failed"
-	ID        *int64  `json:"id,omitempty"`
-	UUID      *string `json:"uuid,omitempty"`
-	Error     *string `json:"error,omitempty"`
+	Index    int     `json:"index"`
+	UniqCode string  `json:"uniq_code"`
+	Status   string  `json:"status"` // "created" | "failed"
+	ID       *int64  `json:"id,omitempty"`
+	UUID     *string `json:"uuid,omitempty"`
+	Error    *string `json:"error,omitempty"`
 }
 
 // FGBulkCreateResponse is returned by POST /api/v1/finished-goods/bulk.

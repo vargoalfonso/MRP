@@ -20,11 +20,11 @@ func (c *Client) GetTrainingRun(ctx context.Context, trainingRunID string) (*Tra
 
 // ListTrainingRunsOptions defines filter params for listing training runs.
 type ListTrainingRunsOptions struct {
-	Scope   string
-	Tenant  string
-	Uniq    string
-	Status  string
-	Limit   int
+	Scope  string
+	Tenant string
+	Uniq   string
+	Status string
+	Limit  int
 }
 
 // ListTrainingRuns queries /admin/training-runs with optional filters.
@@ -80,11 +80,11 @@ func (c *Client) ListDatasets(ctx context.Context, name string, limit int) ([]Da
 
 // ListModelVersionsOptions defines filter params for model versions.
 type ListModelVersionsOptions struct {
-	Scope   string
-	Tenant  string
-	Uniq    string
-	Status  string
-	Limit   int
+	Scope  string
+	Tenant string
+	Uniq   string
+	Status string
+	Limit  int
 }
 
 // ListModelVersions queries /admin/model-versions.
@@ -119,11 +119,11 @@ func (c *Client) ListModelVersions(ctx context.Context, opts ListModelVersionsOp
 
 // ListDeploymentsOptions defines filter params for deployments.
 type ListDeploymentsOptions struct {
-	Stage   string
-	Scope   string
-	Tenant  string
-	Uniq    string
-	Limit   int
+	Stage  string
+	Scope  string
+	Tenant string
+	Uniq   string
+	Limit  int
 }
 
 // ListDeployments queries /admin/deployments.

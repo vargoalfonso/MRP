@@ -16,10 +16,10 @@ type ScrapPagination struct {
 
 // ScrapStockStats is returned by GET /api/v1/scrap-stocks/stats.
 type ScrapStockStats struct {
-	TotalItems    int64   `json:"total_items"`    // count of active scrap stock records
-	TotalQty      float64 `json:"total_qty"`      // sum of quantity
+	TotalItems    int64   `json:"total_items"`     // count of active scrap stock records
+	TotalQty      float64 `json:"total_qty"`       // sum of quantity
 	TotalWeightKg float64 `json:"total_weight_kg"` // sum of weight_kg
-	ScrapTypes    int64   `json:"scrap_types"`    // count distinct scrap_type
+	ScrapTypes    int64   `json:"scrap_types"`     // count distinct scrap_type
 }
 
 // ---------------------------------------------------------------------------
@@ -28,26 +28,26 @@ type ScrapStockStats struct {
 
 // ScrapStockItem is the per-row shape for list and detail responses.
 type ScrapStockItem struct {
-	ID            int64      `json:"id"`
-	UUID          string     `json:"uuid"`
-	UniqCode      string     `json:"uniq"`
-	PartNumber    *string    `json:"part_number"`
-	PartName      *string    `json:"part_name"`
-	Model         *string    `json:"model"`
-	PackingNumber *string    `json:"packing_number"`
-	WONumber      *string    `json:"wo_number"`
-	ScrapType      string  `json:"scrap_type"`
-	DisposalReason *string `json:"disposal_reason"`
-	Quantity       float64 `json:"quantity"`
-	UOM           *string    `json:"uom"`
-	WeightKg      *float64   `json:"weight_kg"`
-	DateReceived  *time.Time `json:"date_received"`
-	Validator     *string    `json:"validator"`
-	Remarks       *string    `json:"remarks"`
-	Status        string     `json:"status"`
-	CreatedBy     *string    `json:"created_by"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID             int64      `json:"id"`
+	UUID           string     `json:"uuid"`
+	UniqCode       string     `json:"uniq"`
+	PartNumber     *string    `json:"part_number"`
+	PartName       *string    `json:"part_name"`
+	Model          *string    `json:"model"`
+	PackingNumber  *string    `json:"packing_number"`
+	WONumber       *string    `json:"wo_number"`
+	ScrapType      string     `json:"scrap_type"`
+	DisposalReason *string    `json:"disposal_reason"`
+	Quantity       float64    `json:"quantity"`
+	UOM            *string    `json:"uom"`
+	WeightKg       *float64   `json:"weight_kg"`
+	DateReceived   *time.Time `json:"date_received"`
+	Validator      *string    `json:"validator"`
+	Remarks        *string    `json:"remarks"`
+	Status         string     `json:"status"`
+	CreatedBy      *string    `json:"created_by"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 // ScrapStockListResponse is the list envelope for GET /scrap-stocks.

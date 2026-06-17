@@ -10,10 +10,10 @@ type CreateScheduleResponse struct {
 }
 
 type ScheduleSummaryResponse struct {
-	TotalDeliveries  int `json:"total_deliveries"`
-	InTransit        int `json:"in_transit"`
-	PendingApproval  int `json:"pending_approval"`
-	DNCreated        int `json:"dn_created"`
+	TotalDeliveries int `json:"total_deliveries"`
+	InTransit       int `json:"in_transit"`
+	PendingApproval int `json:"pending_approval"`
+	DNCreated       int `json:"dn_created"`
 }
 
 type ScheduleListResponse struct {
@@ -22,10 +22,10 @@ type ScheduleListResponse struct {
 }
 
 type ScheduleGroup struct {
-	DeliveryDate string           `json:"delivery_date"`
-	ItemCount    int              `json:"item_count"`
-	Actions      GroupActions     `json:"actions"`
-	Items        []ScheduleRow    `json:"items"`
+	DeliveryDate string        `json:"delivery_date"`
+	ItemCount    int           `json:"item_count"`
+	Actions      GroupActions  `json:"actions"`
+	Items        []ScheduleRow `json:"items"`
 }
 
 type GroupActions struct {
@@ -49,29 +49,29 @@ type ScheduleRow struct {
 }
 
 type ScheduleDetailResponse struct {
-	ScheduleID           string                `json:"schedule_id"`
-	ScheduleDate         string                `json:"schedule_date"`
-	DeliveryDate         string                `json:"delivery_date"`
-	CustomerID           int64                 `json:"customer_id"`
-	CustomerName         string                `json:"customer_name"`
-	PONumber             string                `json:"po_number"`
+	ScheduleID            string               `json:"schedule_id"`
+	ScheduleDate          string               `json:"schedule_date"`
+	DeliveryDate          string               `json:"delivery_date"`
+	CustomerID            int64                `json:"customer_id"`
+	CustomerName          string               `json:"customer_name"`
+	PONumber              string               `json:"po_number"`
 	CustomerContactPerson string               `json:"customer_contact_person"`
-	CustomerPhoneNumber  string                `json:"customer_phone_number"`
-	DeliveryAddress      string                `json:"delivery_address"`
-	TotalItems           int                   `json:"total_items"`
-	TotalQuantity        float64               `json:"total_quantity"`
-	Priority             string                `json:"priority"`
-	Status               string                `json:"status"`
-	ApprovalStatus       string                `json:"approval_status"`
-	CreatedBy            string                `json:"created_by"`
-	TransportCompany     string                `json:"transport_company"`
-	VehicleNumber        string                `json:"vehicle_number"`
-	DriverName           string                `json:"driver_name"`
-	DriverContact        string                `json:"driver_contact"`
-	DepartureAt          *time.Time            `json:"departure_at"`
-	ArrivalAt            *time.Time            `json:"arrival_at"`
-	DeliveryInstructions string                `json:"delivery_instructions"`
-	Items                []ScheduleDetailItem  `json:"items"`
+	CustomerPhoneNumber   string               `json:"customer_phone_number"`
+	DeliveryAddress       string               `json:"delivery_address"`
+	TotalItems            int                  `json:"total_items"`
+	TotalQuantity         float64              `json:"total_quantity"`
+	Priority              string               `json:"priority"`
+	Status                string               `json:"status"`
+	ApprovalStatus        string               `json:"approval_status"`
+	CreatedBy             string               `json:"created_by"`
+	TransportCompany      string               `json:"transport_company"`
+	VehicleNumber         string               `json:"vehicle_number"`
+	DriverName            string               `json:"driver_name"`
+	DriverContact         string               `json:"driver_contact"`
+	DepartureAt           *time.Time           `json:"departure_at"`
+	ArrivalAt             *time.Time           `json:"arrival_at"`
+	DeliveryInstructions  string               `json:"delivery_instructions"`
+	Items                 []ScheduleDetailItem `json:"items"`
 }
 
 type ScheduleDetailItem struct {
@@ -93,24 +93,24 @@ type ApproveScheduleResponse struct {
 }
 
 type ApproveMultiResponse struct {
-	ApprovedCount int    `json:"approved_count"`
-	DNCreatedCount int   `json:"dn_created_count"`
-	DeliveryDate  string `json:"delivery_date"`
+	ApprovedCount  int    `json:"approved_count"`
+	DNCreatedCount int    `json:"dn_created_count"`
+	DeliveryDate   string `json:"delivery_date"`
 }
 
 // ─── Customer DN Responses ────────────────────────────────────────────────────
 
 type CreateDNResponse struct {
-	DNID           string              `json:"dn_id"`
-	ScheduleID     string              `json:"schedule_id"`
-	DNNumber       string              `json:"dn_number"`
-	TotalItems     int                 `json:"total_items"`
-	TotalQuantity  float64             `json:"total_quantity"`
-	Status         string              `json:"status"`
-	ApprovalStatus string              `json:"approval_status"`
-	CreatedBy      string              `json:"created_by"`
-	PrintedCount   int                 `json:"printed_count"`
-	Items          []CreateDNItemResp  `json:"items"`
+	DNID           string             `json:"dn_id"`
+	ScheduleID     string             `json:"schedule_id"`
+	DNNumber       string             `json:"dn_number"`
+	TotalItems     int                `json:"total_items"`
+	TotalQuantity  float64            `json:"total_quantity"`
+	Status         string             `json:"status"`
+	ApprovalStatus string             `json:"approval_status"`
+	CreatedBy      string             `json:"created_by"`
+	PrintedCount   int                `json:"printed_count"`
+	Items          []CreateDNItemResp `json:"items"`
 }
 
 type CreateDNItemResp struct {
@@ -149,30 +149,30 @@ type DNListRow struct {
 }
 
 type DNDetailResponse struct {
-	DNID                  string          `json:"dn_id"`
-	DNNumber              string          `json:"dn_number"`
-	CustomerID            int64           `json:"customer_id"`
-	CustomerName          string          `json:"customer_name"`
-	PONumber              string          `json:"po_number"`
-	CustomerContactPerson string          `json:"customer_contact_person"`
-	CustomerPhoneNumber   string          `json:"customer_phone_number"`
-	DeliveryAddress       string          `json:"delivery_address"`
-	DeliveryDate          string          `json:"delivery_date"`
-	Priority              string          `json:"priority"`
-	Status                string          `json:"status"`
-	ApprovalStatus        string          `json:"approval_status"`
-	TransportCompany      string          `json:"transport_company"`
-	VehicleNumber         string          `json:"vehicle_number"`
-	DriverName            string          `json:"driver_name"`
-	DriverContact         string          `json:"driver_contact"`
-	DepartureAt           *time.Time      `json:"departure_at"`
-	ArrivalAt             *time.Time      `json:"arrival_at"`
-	DeliveryInstructions  string          `json:"delivery_instructions"`
-	TotalItems            int             `json:"total_items"`
-	TotalQuantity         float64         `json:"total_quantity"`
-	PrintedCount          int             `json:"printed_count"`
-	CreatedBy             string          `json:"created_by"`
-	Items                 []DNDetailItem  `json:"items"`
+	DNID                  string         `json:"dn_id"`
+	DNNumber              string         `json:"dn_number"`
+	CustomerID            int64          `json:"customer_id"`
+	CustomerName          string         `json:"customer_name"`
+	PONumber              string         `json:"po_number"`
+	CustomerContactPerson string         `json:"customer_contact_person"`
+	CustomerPhoneNumber   string         `json:"customer_phone_number"`
+	DeliveryAddress       string         `json:"delivery_address"`
+	DeliveryDate          string         `json:"delivery_date"`
+	Priority              string         `json:"priority"`
+	Status                string         `json:"status"`
+	ApprovalStatus        string         `json:"approval_status"`
+	TransportCompany      string         `json:"transport_company"`
+	VehicleNumber         string         `json:"vehicle_number"`
+	DriverName            string         `json:"driver_name"`
+	DriverContact         string         `json:"driver_contact"`
+	DepartureAt           *time.Time     `json:"departure_at"`
+	ArrivalAt             *time.Time     `json:"arrival_at"`
+	DeliveryInstructions  string         `json:"delivery_instructions"`
+	TotalItems            int            `json:"total_items"`
+	TotalQuantity         float64        `json:"total_quantity"`
+	PrintedCount          int            `json:"printed_count"`
+	CreatedBy             string         `json:"created_by"`
+	Items                 []DNDetailItem `json:"items"`
 }
 
 type DNDetailItem struct {
@@ -194,20 +194,20 @@ type ConfirmDNResponse struct {
 // ─── Delivery Scan Responses ──────────────────────────────────────────────────
 
 type DeliveryLookupResponse struct {
-	DNID            string  `json:"dn_id"`
-	DNItemID        string  `json:"dn_item_id"`
-	DNNumber        string  `json:"dn_number"`
-	PODNReference   string  `json:"po_dn_reference"`
-	ItemUniqCode    string  `json:"item_uniq_code"`
-	PartName        string  `json:"part_name"`
-	Model           string  `json:"model"`
-	PartNo          string  `json:"part_no"`
-	PackingNumber   string  `json:"packing_number"`
-	QuantityOrder   float64 `json:"quantity_order"`
-	RemainingQty    float64 `json:"remaining_qty"`
-	UOM             string  `json:"uom"`
-	DeliveryDate    string  `json:"delivery_date"`
-	DeliveryCycle   string  `json:"delivery_cycle"`
+	DNID          string  `json:"dn_id"`
+	DNItemID      string  `json:"dn_item_id"`
+	DNNumber      string  `json:"dn_number"`
+	PODNReference string  `json:"po_dn_reference"`
+	ItemUniqCode  string  `json:"item_uniq_code"`
+	PartName      string  `json:"part_name"`
+	Model         string  `json:"model"`
+	PartNo        string  `json:"part_no"`
+	PackingNumber string  `json:"packing_number"`
+	QuantityOrder float64 `json:"quantity_order"`
+	RemainingQty  float64 `json:"remaining_qty"`
+	UOM           string  `json:"uom"`
+	DeliveryDate  string  `json:"delivery_date"`
+	DeliveryCycle string  `json:"delivery_cycle"`
 }
 
 type SubmitScanResponse struct {

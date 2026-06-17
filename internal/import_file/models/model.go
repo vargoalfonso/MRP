@@ -42,7 +42,8 @@ type PRL struct {
 	ForecastPeriod string  `gorm:"type:varchar(20);index"`
 	Quantity       float64 `gorm:"type:decimal(20,2)"`
 
-	Status string `gorm:"type:varchar(20);default:'pending'"`
+	Status  string  `gorm:"type:varchar(20);default:'pending'"`
+	Remarks *string `gorm:"type:text" json:"remarks,omitempty"`
 
 	ApprovedAt *time.Time
 	RejectedAt *time.Time

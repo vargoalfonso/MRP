@@ -8,13 +8,13 @@ package models
 // Fields come from form-data; the file comes separately.
 type UploadDatasetRequest struct {
 	RequestID  string `form:"request_id" validate:"required"`
-	Domain     string `form:"domain"`     // dn | prl (default dn)
+	Domain     string `form:"domain"`      // dn | prl (default dn)
 	SourceMode string `form:"source_mode"` // v4_excel | dn_excel_horizontal | prl_excel_horizontal | parquet_tar
 	Name       string `form:"name"`
 	Version    string `form:"version"`
-	Freq       string `form:"freq"`    // D | M (auto if empty)
-	Scope      string `form:"scope"`   // global | custom
-	Tenant     string `form:"tenant"`  // required if scope=custom
+	Freq       string `form:"freq"`   // D | M (auto if empty)
+	Scope      string `form:"scope"`  // global | custom
+	Tenant     string `form:"tenant"` // required if scope=custom
 	Uniq       string `form:"uniq"`   // required if scope=custom
 }
 
@@ -54,7 +54,7 @@ type PromoteRequest struct {
 	Domain         string `json:"domain" validate:"required"`
 	ModelVersionID string `json:"model_version_id" validate:"required"`
 	Stage          string `json:"stage" validate:"required"` // prod | staging
-	Scope          string `json:"scope"`   // global | custom
+	Scope          string `json:"scope"`                     // global | custom
 	Tenant         string `json:"tenant"`
 	Uniq           string `json:"uniq"`
 }
@@ -66,15 +66,15 @@ type PromoteRequest struct {
 // PredictRequest is the handler input for forecast prediction.
 // Supports both auto-observation mode and manual payload mode.
 type PredictRequest struct {
-	RequestID         string                 `json:"request_id" validate:"required"`
-	Domain           string                 `json:"domain" validate:"required"`
-	Tenant          string                 `json:"tenant,omitempty"`
-	AutoObservations bool                   `json:"auto_observations,omitempty"`
-	ItemID          string                 `json:"item_id,omitempty"`
-	Horizon         int                    `json:"horizon" validate:"required,min=1"`
-	LookbackPoints  int                    `json:"lookback_points,omitempty"`
-	Observations    []ObservationItemDTO    `json:"observations,omitempty"`
-	FutureCovariates []FutureCovariateDTO  `json:"future_covariates,omitempty"`
+	RequestID        string               `json:"request_id" validate:"required"`
+	Domain           string               `json:"domain" validate:"required"`
+	Tenant           string               `json:"tenant,omitempty"`
+	AutoObservations bool                 `json:"auto_observations,omitempty"`
+	ItemID           string               `json:"item_id,omitempty"`
+	Horizon          int                  `json:"horizon" validate:"required,min=1"`
+	LookbackPoints   int                  `json:"lookback_points,omitempty"`
+	Observations     []ObservationItemDTO `json:"observations,omitempty"`
+	FutureCovariates []FutureCovariateDTO `json:"future_covariates,omitempty"`
 }
 
 type ObservationItemDTO struct {

@@ -33,7 +33,7 @@ type ScrapTypeResponse struct {
 
 type ListScrapTypeResponse struct {
 	Items      []ScrapTypeResponse `json:"items"`
-	Pagination Pagination         `json:"pagination"`
+	Pagination Pagination          `json:"pagination"`
 }
 
 type Pagination struct {

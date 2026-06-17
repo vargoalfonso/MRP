@@ -5,10 +5,10 @@ import (
 	authMiddleware "github.com/ganasa18/go-template/internal/auth/middleware"
 	authService "github.com/ganasa18/go-template/internal/auth/service"
 	baseHandler "github.com/ganasa18/go-template/internal/base/handler"
+	dfHandler "github.com/ganasa18/go-template/internal/demand_forecasting/handler"
 	appmodule "github.com/ganasa18/go-template/internal/module"
 	roleMiddleware "github.com/ganasa18/go-template/internal/role/middleware"
 	roleService "github.com/ganasa18/go-template/internal/role/service"
-	dfHandler "github.com/ganasa18/go-template/internal/demand_forecasting/handler"
 	"github.com/gin-gonic/gin"
 )
 
@@ -16,8 +16,8 @@ var _ appmodule.HTTPModule = (*HTTPModule)(nil)
 
 type HTTPModule struct {
 	cfg           *config.Config
-	base         *baseHandler.BaseHTTPHandler
-	handler      *dfHandler.HTTPHandler
+	base          *baseHandler.BaseHTTPHandler
+	handler       *dfHandler.HTTPHandler
 	authenticator authService.Authenticator
 	roleService   roleService.IRoleService
 }

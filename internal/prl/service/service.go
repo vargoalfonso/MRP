@@ -609,7 +609,7 @@ func (s *service) ExportPRLs(ctx context.Context, query models.ListPRLQuery) (st
 
 	file := excelize.NewFile()
 	sheetName := file.GetSheetName(0)
-	headers := []string{"PRL ID", "Customer ID", "Customer Name", "UNIQ Code", "Product Model", "Part Name", "Part Number", "Forecast Period", "Quantity", "Status", "Created At"}
+	headers := []string{"PRL ID", "Customer ID", "Customer Name", "UNIQ Code", "Product Model", "Part Name", "Part Number", "Forecast Period", "Quantity", "Status", "Remarks", "Created At"}
 	for index, header := range headers {
 		cell, _ := excelize.CoordinatesToCellName(index+1, 1)
 		_ = file.SetCellValue(sheetName, cell, header)
@@ -617,7 +617,7 @@ func (s *service) ExportPRLs(ctx context.Context, query models.ListPRLQuery) (st
 
 	for rowIndex, item := range items {
 		row := rowIndex + 2
-		values := []interface{}{item.PRLID, item.CustomerCode, item.CustomerName, item.UniqCode, item.ProductModel, item.PartName, item.PartNumber, item.ForecastPeriod, item.Quantity, item.Status, item.CreatedAt.Format(time.RFC3339)}
+		values := []interface{}{item.PRLID, item.CustomerCode, item.CustomerName, item.UniqCode, item.ProductModel, item.PartName, item.PartNumber, item.ForecastPeriod, item.Quantity, item.Status, item.Remarks, item.CreatedAt.Format(time.RFC3339)}
 		for colIndex, value := range values {
 			cell, _ := excelize.CoordinatesToCellName(colIndex+1, row)
 			_ = file.SetCellValue(sheetName, cell, value)

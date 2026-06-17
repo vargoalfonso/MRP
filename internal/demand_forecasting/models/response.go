@@ -11,11 +11,11 @@ import (
 
 type TrainingRunListResponse struct {
 	Items      []TrainingRunResponse `json:"items"`
-	Pagination PaginationMeta       `json:"pagination"`
+	Pagination PaginationMeta        `json:"pagination"`
 }
 
 type TrainingRunResponse struct {
-	ID              string                 `json:"id"`
+	ID             string                 `json:"id"`
 	RequestID      string                 `json:"request_id"`
 	TrainingRunID  string                 `json:"training_run_id,omitempty"`
 	Domain         string                 `json:"domain"`
@@ -50,11 +50,11 @@ type TrainingRunResponse struct {
 
 type InferenceResultListResponse struct {
 	Items      []InferenceResultResponse `json:"items"`
-	Pagination PaginationMeta           `json:"pagination"`
+	Pagination PaginationMeta            `json:"pagination"`
 }
 
 type InferenceResultResponse struct {
-	ID               string                 `json:"id"`
+	ID              string                 `json:"id"`
 	RequestID       string                 `json:"request_id"`
 	Domain          string                 `json:"domain"`
 	Tenant          string                 `json:"tenant,omitempty"`
@@ -144,7 +144,7 @@ func NewPaginationMeta(total int64, page, limit int) PaginationMeta {
 
 func ToTrainingRunResponse(run *ForecastingTrainingRun) TrainingRunResponse {
 	resp := TrainingRunResponse{
-		ID:              run.UUID,
+		ID:             run.UUID,
 		RequestID:      run.RequestID,
 		TrainingRunID:  run.TrainingRunID,
 		Domain:         run.Domain,
@@ -182,19 +182,19 @@ func ToTrainingRunResponse(run *ForecastingTrainingRun) TrainingRunResponse {
 
 func ToInferenceResultResponse(result *ForecastingInferenceResult) InferenceResultResponse {
 	resp := InferenceResultResponse{
-		ID:              result.UUID,
-		RequestID:       result.RequestID,
-		Domain:          result.Domain,
-		Tenant:          result.Tenant,
-		ItemID:          result.ItemID,
-		ModelVersionID:  result.ModelVersionID,
-		Horizon:         result.Horizon,
-		LookbackPoints:  result.LookbackPoints,
-		Mode:            result.Mode,
-		Status:          result.Status,
-		ErrorMessage:    result.ErrorMessage,
-		CreatedBy:       result.CreatedBy,
-		CreatedAt:       result.CreatedAt,
+		ID:             result.UUID,
+		RequestID:      result.RequestID,
+		Domain:         result.Domain,
+		Tenant:         result.Tenant,
+		ItemID:         result.ItemID,
+		ModelVersionID: result.ModelVersionID,
+		Horizon:        result.Horizon,
+		LookbackPoints: result.LookbackPoints,
+		Mode:           result.Mode,
+		Status:         result.Status,
+		ErrorMessage:   result.ErrorMessage,
+		CreatedBy:      result.CreatedBy,
+		CreatedAt:      result.CreatedAt,
 	}
 	if len(result.RequestPayload) > 0 {
 		var m map[string]interface{}

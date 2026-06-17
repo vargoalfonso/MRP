@@ -20,11 +20,11 @@ const (
 
 // Options configures the Forecasting client.
 type Options struct {
-	BaseURL       string        // e.g. https://dev-mrp-forecasting-482804304.asia-southeast1.run.app
-	BasicAuthUser string        // if set, Basic Auth header is sent
+	BaseURL       string // e.g. https://dev-mrp-forecasting-482804304.asia-southeast1.run.app
+	BasicAuthUser string // if set, Basic Auth header is sent
 	BasicAuthPass string
 	Timeout       time.Duration // per-request timeout; defaults to 60s
-	HTTPClient    *http.Client // optional; defaults to http.DefaultClient
+	HTTPClient    *http.Client  // optional; defaults to http.DefaultClient
 }
 
 // Client wraps HTTP calls to the external forecasting pipeline API.

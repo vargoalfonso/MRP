@@ -2205,10 +2205,10 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 			Uom:            strings.TrimSpace(getImportValue(raw, headerIndex, "uom")),
 			Status:         strings.TrimSpace(getImportValue(raw, headerIndex, "status")),
 			Description:    strings.TrimSpace(getImportValue(raw, headerIndex, "description")),
-			MaterialGrade: strings.TrimSpace(getImportValue(raw, headerIndex, "material_grade")),
-			Form:          strings.TrimSpace(getImportValue(raw, headerIndex, "form")),
-			SupplierName:  strings.TrimSpace(getImportValue(raw, headerIndex, "supplier_name")),
-			QtyPerUniq: 1,
+			MaterialGrade:  strings.TrimSpace(getImportValue(raw, headerIndex, "material_grade")),
+			Form:           strings.TrimSpace(getImportValue(raw, headerIndex, "form")),
+			SupplierName:   strings.TrimSpace(getImportValue(raw, headerIndex, "supplier_name")),
+			QtyPerUniq:     1,
 		}
 
 		if row.BomGroup == "" && row.UniqCode == "" && row.PartName == "" {

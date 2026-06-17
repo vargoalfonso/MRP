@@ -5,20 +5,20 @@ package models
 type CreateScheduleRequest struct {
 	CustomerOrderDocumentUUID string               `json:"customer_order_document_uuid"`
 	CustomerOrderReference    string               `json:"customer_order_reference"`
-	CustomerID              int64                `json:"customer_id" validate:"required,gt=0"`
-	CustomerName            string               `json:"customer_name" validate:"required"`
-	DeliveryDate            string               `json:"delivery_date" validate:"required"`
-	Cycle                   string               `json:"cycle"`
-	Priority                string               `json:"priority"`
-	TransportCompany        string               `json:"transport_company"`
-	VehicleNumber           string               `json:"vehicle_number"`
-	DriverName              string               `json:"driver_name"`
-	DriverContact           string               `json:"driver_contact"`
-	DepartureAt             string               `json:"departure_at"`
-	ArrivalAt               string               `json:"arrival_at"`
-	DeliveryInstructions    string               `json:"delivery_instructions"`
-	Remarks                 string               `json:"remarks"`
-	Items                   []CreateScheduleItem `json:"items" validate:"required,min=1,dive"`
+	CustomerID                int64                `json:"customer_id" validate:"required,gt=0"`
+	CustomerName              string               `json:"customer_name" validate:"required"`
+	DeliveryDate              string               `json:"delivery_date" validate:"required"`
+	Cycle                     string               `json:"cycle"`
+	Priority                  string               `json:"priority"`
+	TransportCompany          string               `json:"transport_company"`
+	VehicleNumber             string               `json:"vehicle_number"`
+	DriverName                string               `json:"driver_name"`
+	DriverContact             string               `json:"driver_contact"`
+	DepartureAt               string               `json:"departure_at"`
+	ArrivalAt                 string               `json:"arrival_at"`
+	DeliveryInstructions      string               `json:"delivery_instructions"`
+	Remarks                   string               `json:"remarks"`
+	Items                     []CreateScheduleItem `json:"items" validate:"required,min=1,dive"`
 }
 
 type CreateScheduleItem struct {
@@ -56,27 +56,27 @@ type ApprovePartialRequest struct {
 // ─── Customer DN Requests ─────────────────────────────────────────────────────
 
 type CreateCustomerDNRequest struct {
-	ScheduleID             string                   `json:"schedule_id"`
-	ScheduleDate           string                   `json:"schedule_date"`
-	CustomerID             int64                    `json:"customer_id" validate:"required,gt=0"`
-	CustomerName           string                   `json:"customer_name" validate:"required"`
-	PONumber               string                   `json:"po_number"`
-	CustomerContactPerson  string                   `json:"customer_contact_person"`
-	CustomerPhoneNumber    string                   `json:"customer_phone_number"`
-	DeliveryAddress        string                   `json:"delivery_address"`
-	DeliveryDate           string                   `json:"delivery_date" validate:"required"`
-	Priority               string                   `json:"priority"`
-	TransportCompany       string                   `json:"transport_company"`
-	VehicleNumber          string                   `json:"vehicle_number"`
-	DriverName             string                   `json:"driver_name"`
-	DriverContact          string                   `json:"driver_contact"`
-	DepartureAt            string                   `json:"departure_at"`
-	ArrivalAt              string                   `json:"arrival_at"`
-	Status                 string                   `json:"status"`
-	ApprovalStatus         string                   `json:"approval_status"`
-	DeliveryInstructions   string                   `json:"delivery_instructions"`
-	Remarks                string                   `json:"remarks"`
-	Items                  []CreateCustomerDNItem   `json:"items" validate:"required,min=1,dive"`
+	ScheduleID            string                 `json:"schedule_id"`
+	ScheduleDate          string                 `json:"schedule_date"`
+	CustomerID            int64                  `json:"customer_id" validate:"required,gt=0"`
+	CustomerName          string                 `json:"customer_name" validate:"required"`
+	PONumber              string                 `json:"po_number"`
+	CustomerContactPerson string                 `json:"customer_contact_person"`
+	CustomerPhoneNumber   string                 `json:"customer_phone_number"`
+	DeliveryAddress       string                 `json:"delivery_address"`
+	DeliveryDate          string                 `json:"delivery_date" validate:"required"`
+	Priority              string                 `json:"priority"`
+	TransportCompany      string                 `json:"transport_company"`
+	VehicleNumber         string                 `json:"vehicle_number"`
+	DriverName            string                 `json:"driver_name"`
+	DriverContact         string                 `json:"driver_contact"`
+	DepartureAt           string                 `json:"departure_at"`
+	ArrivalAt             string                 `json:"arrival_at"`
+	Status                string                 `json:"status"`
+	ApprovalStatus        string                 `json:"approval_status"`
+	DeliveryInstructions  string                 `json:"delivery_instructions"`
+	Remarks               string                 `json:"remarks"`
+	Items                 []CreateCustomerDNItem `json:"items" validate:"required,min=1,dive"`
 }
 
 type CreateCustomerDNItem struct {
@@ -96,11 +96,11 @@ type ConfirmDNRequest struct {
 // ─── Delivery Scan Requests ───────────────────────────────────────────────────
 
 type SubmitScanRequest struct {
-	ClientEventID string         `json:"client_event_id" validate:"required"`
-	DNNumber      string         `json:"dn_number" validate:"required"`
-	ItemUniqCode  string         `json:"item_uniq_code" validate:"required"`
+	ClientEventID  string          `json:"client_event_id" validate:"required"`
+	DNNumber       string          `json:"dn_number" validate:"required"`
+	ItemUniqCode   string          `json:"item_uniq_code" validate:"required"`
 	ScannedKanbans []ScannedKanban `json:"scanned_kanbans" validate:"required,min=1,dive"`
-	DeliveryCycle string         `json:"delivery_cycle"`
+	DeliveryCycle  string          `json:"delivery_cycle"`
 }
 
 type ScannedKanban struct {

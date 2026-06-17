@@ -51,6 +51,7 @@ type PRL struct {
 	ForecastPeriod string         `gorm:"type:text;not null" json:"forecast_period"`
 	Quantity       int64          `gorm:"not null" json:"quantity"`
 	Status         string         `gorm:"not null;default:'pending'" json:"status"`
+	Remarks        *string        `gorm:"type:text" json:"remarks,omitempty"`
 	ApprovedAt     *time.Time     `gorm:"default:null" json:"approved_at,omitempty"`
 	RejectedAt     *time.Time     `gorm:"default:null" json:"rejected_at,omitempty"`
 	CreatedAt      time.Time      `json:"created_at"`

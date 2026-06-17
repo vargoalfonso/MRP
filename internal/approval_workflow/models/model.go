@@ -84,30 +84,30 @@ type ApprovalManagerPagination struct {
 }
 
 type ApprovalManagerItem struct {
-	InstanceID        int64  `json:"instance_id"`
-	Module            string `json:"module"`
-	ModuleLabel       string `json:"module_label"`
-	ReferenceTable    string `json:"reference_table"`
-	ReferenceID       int64  `json:"reference_id"`
-	DocumentID        string `json:"document_id"`
-	DocumentUUID      string `json:"document_uuid,omitempty"`
-	ItemName          string `json:"item_name"`
-	ItemCode          string `json:"item_code"`
-	SubmittedBy       string `json:"submitted_by"`
-	SubmittedByName   string `json:"submitted_by_name"`
-	SubmittedAt       string `json:"submitted_at,omitempty"`
-	Status            string `json:"status"`
-	CurrentLevel      int    `json:"current_level"`
-	MaxLevel          int    `json:"max_level"`
-	CurrentLevelRole  string `json:"current_level_role"`
-	IsFinalLevel      bool   `json:"is_final_level"`
-	CanView           bool   `json:"can_view"`
-	CanApprove        bool   `json:"can_approve"`
-	CanReject         bool   `json:"can_reject"`
-	IsMyTurn          bool   `json:"is_my_turn"`
-	ViewMode          string `json:"view_mode"`
-	DetailURL         string `json:"detail_url"`
-	ApprovalURL       string `json:"approval_url"`
+	InstanceID       int64  `json:"instance_id"`
+	Module           string `json:"module"`
+	ModuleLabel      string `json:"module_label"`
+	ReferenceTable   string `json:"reference_table"`
+	ReferenceID      int64  `json:"reference_id"`
+	DocumentID       string `json:"document_id"`
+	DocumentUUID     string `json:"document_uuid,omitempty"`
+	ItemName         string `json:"item_name"`
+	ItemCode         string `json:"item_code"`
+	SubmittedBy      string `json:"submitted_by"`
+	SubmittedByName  string `json:"submitted_by_name"`
+	SubmittedAt      string `json:"submitted_at,omitempty"`
+	Status           string `json:"status"`
+	CurrentLevel     int    `json:"current_level"`
+	MaxLevel         int    `json:"max_level"`
+	CurrentLevelRole string `json:"current_level_role"`
+	IsFinalLevel     bool   `json:"is_final_level"`
+	CanView          bool   `json:"can_view"`
+	CanApprove       bool   `json:"can_approve"`
+	CanReject        bool   `json:"can_reject"`
+	IsMyTurn         bool   `json:"is_my_turn"`
+	ViewMode         string `json:"view_mode"`
+	DetailURL        string `json:"detail_url"`
+	ApprovalURL      string `json:"approval_url"`
 }
 
 type ApprovalManagerListResponse struct {
