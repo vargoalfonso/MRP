@@ -452,6 +452,32 @@ func (s *deliveryNoteService) Scan(ctx context.Context, req models.QRPayload) (s
 			fromLoc = "supplier"
 			toLoc = "warehouse"
 			result = status
+
+			// INSERT KE QC LOGS
+			if status == "incoming" {
+				if err := tx.Exec(`
+                    INSERT INTO qc_logs (
+                        dn_item_id,
+                        uniq_code,
+                        qty_checked,
+                        qty_pass,
+                        qty_defect,
+                        qty_scrap,
+                        status,
+                        defect_source,
+                        checked_at
+                    )
+                    VALUES (?, ?, ?, 0, 0, 0, ?, ?, NOW())
+                    `,
+					item.ID,
+					item.ItemUniqCode,
+					qty,
+					"PENDING",
+					"incoming_material",
+				).Error; err != nil {
+					return err
+				}
+			}
 		}
 
 		// ======================================================
