@@ -43,8 +43,8 @@ func (r *repository) Create(ctx context.Context, supplier *models.Supplier) erro
 			return apperror.InternalWrap("create supplier failed", err)
 		}
 
-		// If SupplierCode was not provided (or is TMP-...), generate a stable code based on ID
-		if strings.TrimSpace(supplier.SupplierCode) == "" || strings.HasPrefix(strings.ToUpper(supplier.SupplierCode), "TMP-") {
+		// Only generate supplier_code when none was provided by caller
+		if strings.TrimSpace(supplier.SupplierCode) == "" {
 			supplierCode := fmt.Sprintf("SUP-%04d", supplier.ID)
 			if err := tx.Model(supplier).Update("supplier_code", supplierCode).Error; err != nil {
 				return apperror.InternalWrap("generate supplier code failed", err)
