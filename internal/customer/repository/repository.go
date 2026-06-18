@@ -43,6 +43,17 @@ func (r *repository) Create(ctx context.Context, customer *models.Customer) erro
 
 			customer.CustomerID = customerID
 		}
+
+		// If caller provided a CustomerID, ensure it's unique
+		if strings.TrimSpace(customer.CustomerID) != "" {
+			var cnt int64
+			if err := tx.Model(&models.Customer{}).Where("customer_id = ?", customer.CustomerID).Count(&cnt).Error; err != nil {
+				return apperror.InternalWrap("check customer id uniqueness failed", err)
+			}
+			if cnt > 0 {
+				return apperror.BadRequest("customer_id sudah digunakan")
+			}
+		}
 		if err := tx.Create(customer).Error; err != nil {
 			return apperror.InternalWrap("create customer failed", err)
 		}

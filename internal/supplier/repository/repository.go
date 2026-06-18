@@ -28,16 +28,30 @@ func New(db *gorm.DB) IRepository {
 
 func (r *repository) Create(ctx context.Context, supplier *models.Supplier) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// If caller provided SupplierCode, ensure uniqueness
+		if strings.TrimSpace(supplier.SupplierCode) != "" {
+			var cnt int64
+			if err := tx.Model(&models.Supplier{}).Where("supplier_code = ?", supplier.SupplierCode).Count(&cnt).Error; err != nil {
+				return apperror.InternalWrap("check supplier code uniqueness failed", err)
+			}
+			if cnt > 0 {
+				return apperror.BadRequest("supplier_code sudah digunakan")
+			}
+		}
+
 		if err := tx.Create(supplier).Error; err != nil {
 			return apperror.InternalWrap("create supplier failed", err)
 		}
 
-		supplierCode := fmt.Sprintf("SUP-%04d", supplier.ID)
-		if err := tx.Model(supplier).Update("supplier_code", supplierCode).Error; err != nil {
-			return apperror.InternalWrap("generate supplier code failed", err)
+		// If SupplierCode was not provided (or is TMP-...), generate a stable code based on ID
+		if strings.TrimSpace(supplier.SupplierCode) == "" || strings.HasPrefix(strings.ToUpper(supplier.SupplierCode), "TMP-") {
+			supplierCode := fmt.Sprintf("SUP-%04d", supplier.ID)
+			if err := tx.Model(supplier).Update("supplier_code", supplierCode).Error; err != nil {
+				return apperror.InternalWrap("generate supplier code failed", err)
+			}
+			supplier.SupplierCode = supplierCode
 		}
 
-		supplier.SupplierCode = supplierCode
 		return nil
 	})
 }
