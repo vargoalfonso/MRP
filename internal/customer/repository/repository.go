@@ -34,12 +34,15 @@ func (r *repository) Create(ctx context.Context, customer *models.Customer) erro
 			return apperror.InternalWrap("lock customers table failed", err)
 		}
 
-		customerID, err := nextCustomerID(tx)
-		if err != nil {
-			return err
-		}
+		// If caller provided a CustomerID (free-text), don't auto-generate.
+		if strings.TrimSpace(customer.CustomerID) == "" || customer.CustomerID == "PENDING" {
+			customerID, err := nextCustomerID(tx)
+			if err != nil {
+				return err
+			}
 
-		customer.CustomerID = customerID
+			customer.CustomerID = customerID
+		}
 		if err := tx.Create(customer).Error; err != nil {
 			return apperror.InternalWrap("create customer failed", err)
 		}

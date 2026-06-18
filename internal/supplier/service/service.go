@@ -39,9 +39,14 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierRequest) 
 		return nil, err
 	}
 
+	supplierCode := strings.ToUpper(strings.TrimSpace(req.SupplierCode))
+	if supplierCode == "" {
+		supplierCode = "TMP-" + strings.ToUpper(strings.ReplaceAll(uuid.NewString()[:8], "-", ""))
+	}
+
 	supplier := &models.Supplier{
 		UUID:                 uuid.NewString(),
-		SupplierCode:         "TMP-" + strings.ToUpper(strings.ReplaceAll(uuid.NewString()[:8], "-", "")),
+		SupplierCode:         supplierCode,
 		SupplierName:         models.Trimmed(req.SupplierName),
 		ContactPerson:        models.Trimmed(req.ContactPerson),
 		ContactNumber:        models.Trimmed(req.ContactNumber),

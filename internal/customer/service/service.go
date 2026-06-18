@@ -37,7 +37,7 @@ func (s *service) Create(ctx context.Context, req models.CreateCustomerRequest) 
 
 	customer := &models.Customer{
 		UUID:                  uuid.NewString(),
-		CustomerID:            "PENDING",
+		CustomerID:            models.Trimmed(req.CustomerID),
 		CustomerName:          models.Trimmed(req.CustomerName),
 		PhoneNumber:           models.Trimmed(req.PhoneNumber),
 		ShippingAddress:       models.Trimmed(req.ShippingAddress),

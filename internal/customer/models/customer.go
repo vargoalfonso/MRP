@@ -25,6 +25,7 @@ type Customer struct {
 }
 
 type CreateCustomerRequest struct {
+	CustomerID            string `json:"customer_id" validate:"omitempty,max=100"`
 	CustomerName          string `json:"customer_name" validate:"required,max=255"`
 	PhoneNumber           string `json:"phone_number" validate:"required,max=50"`
 	ShippingAddress       string `json:"shipping_address" validate:"required,max=1000"`

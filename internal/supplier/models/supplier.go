@@ -54,6 +54,7 @@ type Supplier struct {
 }
 
 type CreateSupplierRequest struct {
+	SupplierCode         string `json:"supplier_code" validate:"omitempty,max=100"`
 	SupplierName         string `json:"supplier_name" validate:"required,max=255"`
 	ContactPerson        string `json:"contact_person" validate:"required,max=255"`
 	ContactNumber        string `json:"contact_number" validate:"required,max=50"`
