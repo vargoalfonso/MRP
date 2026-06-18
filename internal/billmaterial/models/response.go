@@ -61,6 +61,7 @@ type ProcessRouteDetail struct {
 	CycleTimeSec  *float64        `json:"cycle_time_sec"`
 	SetupTimeMin  *float64        `json:"setup_time_min"`
 	MachineStroke *string         `json:"machine_stroke"`
+	Remark        *string         `json:"remark"`
 	ToolingRef    *string         `json:"tooling_ref"`
 	Toolings      []ToolingDetail `json:"toolings"`
 }

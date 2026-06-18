@@ -547,6 +547,7 @@ func (s *service) createRouting(ctx context.Context, itemID, revID int64, routes
 			SetupTimeMin:    pr.SetupTimeMin,
 			MachineStroke:   pr.MachineStroke, // free text e.g. "200 spm"
 			Notes:           pr.ToolingRef,    // lightweight UI input (dropdown + free text)
+			Remark:          pr.Remark,
 		}
 		if pr.MachineID != nil {
 			op.MachineID = pr.MachineID
@@ -1661,6 +1662,7 @@ func (s *service) toRouteDetails(
 			CycleTimeSec:  op.CycleTimeSec,
 			SetupTimeMin:  op.SetupTimeMin,
 			MachineStroke: op.MachineStroke,
+			Remark:        op.Remark,
 			ToolingRef:    op.Notes,
 		}
 		if op.MachineID != nil {

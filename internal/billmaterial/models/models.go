@@ -154,6 +154,7 @@ type RoutingOperation struct {
 	SetupTimeMin    *float64 `gorm:"type:numeric(18,4)"`
 	MachineStroke   *string  `gorm:"size:100"`
 	Notes           *string  `gorm:"type:text"`
+	Remark          *string  `gorm:"type:text"`
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }

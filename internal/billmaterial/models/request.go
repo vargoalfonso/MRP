@@ -18,6 +18,7 @@ type ProcessRouteInput struct {
 	CycleTimeSec  *float64       `json:"cycle_time_sec"`
 	SetupTimeMin  *float64       `json:"setup_time_min"`
 	MachineStroke *string        `json:"machine_stroke"`
+	Remark        *string        `json:"remark" validate:"omitempty,max=2000"`
 	ToolingRef    *string        `json:"tooling_ref" validate:"omitempty,max=500"`
 	Toolings      []ToolingInput `json:"toolings"`
 }
