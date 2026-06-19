@@ -61,14 +61,14 @@ type PRL struct {
 
 type CreateUniqBOMRequest struct {
 	UniqCode     string `json:"uniq_code" validate:"required,max=100"`
-	ProductModel string `json:"product_model" validate:"required,max=255"`
+	ProductModel string `json:"product_model" ,max=255"`
 	PartName     string `json:"part_name" validate:"required,max=255"`
 	PartNumber   string `json:"part_number" validate:"required,max=150"`
 }
 
 type UpdateUniqBOMRequest struct {
 	UniqCode     string `json:"uniq_code" validate:"required,max=100"`
-	ProductModel string `json:"product_model" validate:"required,max=255"`
+	ProductModel string `json:"product_model" ,max=255"`
 	PartName     string `json:"part_name" validate:"required,max=255"`
 	PartNumber   string `json:"part_number" validate:"required,max=150"`
 }

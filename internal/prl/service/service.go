@@ -146,9 +146,6 @@ func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest, su
 			productModel := models.Trimmed(req.ProductModel)
 			partName := models.Trimmed(req.PartName)
 			partNumber := models.Trimmed(req.PartNumber)
-			if productModel == "" {
-				return nil, apperror.BadRequest("product_model is required when uniq_code is new")
-			}
 			if partName == "" {
 				return nil, apperror.BadRequest("part_name is required when uniq_code is new")
 			}

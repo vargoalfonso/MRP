@@ -3,8 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
-
-	//"errors"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -14,33 +13,30 @@ import (
 	"github.com/ganasa18/go-template/internal/prl/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
 
-	//"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
-// func wrapPRLPersistError(msg string, err error) error {
-// 	var pgErr *pgconn.PgError
-// 	if errors.As(err, &pgErr) {
-// 		lowerMsg := strings.ToLower(pgErr.Message)
-// 		// Check violation (e.g., old constraint prls_forecast_period_check).
-// 		if pgErr.Code == "23514" && (strings.Contains(pgErr.ConstraintName, "prls_forecast_period_check") || strings.Contains(lowerMsg, "prls_forecast_period_check")) {
-// 			return apperror.BadRequest(
-// 				"forecast_period is now free-text, but DB still enforces quarter format; run migration scripts/migrations/0042_prls_forecast_period_freetext_up.sql",
-// 			)
-// 		}
-// 		// String truncation (e.g., forecast_period is still VARCHAR(7)).
-// 		if pgErr.Code == "22001" {
-// 			// On old schema: message is typically "value too long for type character varying(7)" (no column name).
-// 			if strings.Contains(lowerMsg, "character varying(7)") || strings.Contains(lowerMsg, "varchar(7)") || strings.Contains(lowerMsg, "forecast_period") {
-// 				return apperror.BadRequest(
-// 					"forecast_period is longer than the DB column allows; run migration scripts/migrations/0042_prls_forecast_period_freetext_up.sql",
-// 				)
-// 			}
-// 			return apperror.BadRequest("a field is longer than the DB column allows")
-// 		}
-// 	}
-// 	return apperror.InternalWrap(msg, err)
-// }
+func wrapPRLPersistError(msg string, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		lowerMsg := strings.ToLower(pgErr.Message)
+		if pgErr.Code == "23514" && (strings.Contains(pgErr.ConstraintName, "prls_forecast_period_check") || strings.Contains(lowerMsg, "prls_forecast_period_check")) {
+			return apperror.BadRequest(
+				"forecast_period is now free-text, but DB still enforces quarter format; run migration scripts/migrations/0042_prls_forecast_period_freetext_up.sql",
+			)
+		}
+		if pgErr.Code == "22001" {
+			if strings.Contains(lowerMsg, "character varying(7)") || strings.Contains(lowerMsg, "varchar(7)") || strings.Contains(lowerMsg, "forecast_period") {
+				return apperror.BadRequest(
+					"forecast_period is longer than the DB column allows; run migration scripts/migrations/0042_prls_forecast_period_freetext_up.sql",
+				)
+			}
+			return apperror.BadRequest("a field is longer than the DB column allows")
+		}
+	}
+	return apperror.InternalWrap(msg, err)
+}
 
 type IRepository interface {
 	CreateUniqBOM(ctx context.Context, item *models.UniqBillOfMaterial) error
@@ -161,7 +157,7 @@ func (r *repository) CreatePRLs(ctx context.Context, items []*models.PRL) error 
 			item.PRLID = fmt.Sprintf("PRL-%d-%03d", year, nextSequence)
 			nextSequence++
 			if err := tx.Create(item).Error; err != nil {
-				return apperror.InternalWrap("create prl failed", err)
+				return wrapPRLPersistError("create prl failed", err)
 			}
 		}
 
