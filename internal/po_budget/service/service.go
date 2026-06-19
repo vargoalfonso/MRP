@@ -1143,6 +1143,9 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 		}
 		// Create one approval instance per entry (MinLevels=1).
 		for _, e := range entries {
+			if e.ID == 0 {
+				return nil, apperror.Internal("bulk create po budget returned empty entry id")
+			}
 			if _, err := approval.CreateInstance(ctx, s.db, approval.CreateInstanceParams{
 				ActionName:     "po-budget",
 				ReferenceTable: "po_budget_entries",
