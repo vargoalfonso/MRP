@@ -5,44 +5,48 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
 type Customer struct {
-	ID                    int64          `gorm:"primaryKey;autoIncrement" json:"row_id"`
-	UUID                  string         `gorm:"uniqueIndex;not null" json:"id"`
-	CustomerID            string         `gorm:"uniqueIndex;not null" json:"customer_id"`
-	CustomerName          string         `gorm:"not null" json:"customer_name"`
-	PhoneNumber           string         `gorm:"not null" json:"phone_number"`
-	ShippingAddress       string         `gorm:"type:text;not null" json:"shipping_address"`
-	BillingAddress        string         `gorm:"type:text;not null" json:"billing_address"`
-	BillingSameAsShipping bool           `gorm:"not null;default:false" json:"billing_same_as_shipping"`
-	BankAccount           *string        `gorm:"default:null" json:"bank_account,omitempty"`
-	BankAccountNumber     *string        `gorm:"default:null" json:"bank_account_number,omitempty"`
-	CreatedAt             time.Time      `json:"created_at"`
-	UpdatedAt             time.Time      `json:"updated_at"`
-	DeletedAt             gorm.DeletedAt `gorm:"index" json:"-"`
+	ID                    int64                       `gorm:"primaryKey;autoIncrement" json:"row_id"`
+	UUID                  string                      `gorm:"uniqueIndex;not null" json:"id"`
+	CustomerID            string                      `gorm:"uniqueIndex;not null" json:"customer_id"`
+	CustomerName          string                      `gorm:"not null" json:"customer_name"`
+	PhoneNumber           string                      `gorm:"not null" json:"phone_number"`
+	ShippingAddress       string                      `gorm:"type:text;not null" json:"shipping_address"`
+	BillingAddress        string                      `gorm:"type:text;not null" json:"billing_address"`
+	BillingSameAsShipping bool                        `gorm:"not null;default:false" json:"billing_same_as_shipping"`
+	BankAccount           *string                     `gorm:"default:null" json:"bank_account,omitempty"`
+	BankAccountNumber     *string                     `gorm:"default:null" json:"bank_account_number,omitempty"`
+	BomCodes              datatypes.JSONSlice[string] `gorm:"column:bom_codes;type:jsonb;not null;default:'[]'::jsonb" json:"bom_codes"`
+	CreatedAt             time.Time                   `json:"created_at"`
+	UpdatedAt             time.Time                   `json:"updated_at"`
+	DeletedAt             gorm.DeletedAt              `gorm:"index" json:"-"`
 }
 
 type CreateCustomerRequest struct {
-	CustomerID            string `json:"customer_id" validate:"omitempty,max=100"`
-	CustomerName          string `json:"customer_name" validate:"required,max=255"`
-	PhoneNumber           string `json:"phone_number" validate:"required,max=50"`
-	ShippingAddress       string `json:"shipping_address" validate:"required,max=1000"`
-	BillingAddress        string `json:"billing_address" validate:"max=1000"`
-	BillingSameAsShipping bool   `json:"billing_same_as_shipping"`
-	BankAccount           string `json:"bank_account" validate:"omitempty,max=150"`
-	BankAccountNumber     string `json:"bank_account_number" validate:"omitempty,max=100"`
+	CustomerID            string   `json:"customer_id" validate:"omitempty,max=100"`
+	CustomerName          string   `json:"customer_name" validate:"required,max=255"`
+	PhoneNumber           string   `json:"phone_number" validate:"required,max=50"`
+	ShippingAddress       string   `json:"shipping_address" validate:"required,max=1000"`
+	BillingAddress        string   `json:"billing_address" validate:"max=1000"`
+	BillingSameAsShipping bool     `json:"billing_same_as_shipping"`
+	BankAccount           string   `json:"bank_account" validate:"omitempty,max=150"`
+	BankAccountNumber     string   `json:"bank_account_number" validate:"omitempty,max=100"`
+	BomCodes              []string `json:"bom_codes" validate:"omitempty,dive,max=100"`
 }
 
 type UpdateCustomerRequest struct {
-	CustomerName          string `json:"customer_name" validate:"required,max=255"`
-	PhoneNumber           string `json:"phone_number" validate:"required,max=50"`
-	ShippingAddress       string `json:"shipping_address" validate:"required,max=1000"`
-	BillingAddress        string `json:"billing_address" validate:"max=1000"`
-	BillingSameAsShipping bool   `json:"billing_same_as_shipping"`
-	BankAccount           string `json:"bank_account" validate:"omitempty,max=150"`
-	BankAccountNumber     string `json:"bank_account_number" validate:"omitempty,max=100"`
+	CustomerName          string   `json:"customer_name" validate:"required,max=255"`
+	PhoneNumber           string   `json:"phone_number" validate:"required,max=50"`
+	ShippingAddress       string   `json:"shipping_address" validate:"required,max=1000"`
+	BillingAddress        string   `json:"billing_address" validate:"max=1000"`
+	BillingSameAsShipping bool     `json:"billing_same_as_shipping"`
+	BankAccount           string   `json:"bank_account" validate:"omitempty,max=150"`
+	BankAccountNumber     string   `json:"bank_account_number" validate:"omitempty,max=100"`
+	BomCodes              []string `json:"bom_codes" validate:"omitempty,dive,max=100"`
 }
 
 type ListCustomerQuery struct {

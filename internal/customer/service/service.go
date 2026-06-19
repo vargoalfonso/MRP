@@ -8,6 +8,7 @@ import (
 	customerRepo "github.com/ganasa18/go-template/internal/customer/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 )
 
 type CustomerService interface {
@@ -45,6 +46,7 @@ func (s *service) Create(ctx context.Context, req models.CreateCustomerRequest) 
 		BillingSameAsShipping: req.BillingSameAsShipping,
 		BankAccount:           bankAccount,
 		BankAccountNumber:     bankAccountNumber,
+		BomCodes:              normalizeBomCodes(req.BomCodes),
 	}
 
 	if err := s.repo.Create(ctx, customer); err != nil {
@@ -112,6 +114,7 @@ func (s *service) Update(ctx context.Context, uuid string, req models.UpdateCust
 	customer.BillingSameAsShipping = req.BillingSameAsShipping
 	customer.BankAccount = normalizeOptionalString(req.BankAccount)
 	customer.BankAccountNumber = normalizeOptionalString(req.BankAccountNumber)
+	customer.BomCodes = normalizeBomCodes(req.BomCodes)
 
 	if err := s.repo.Update(ctx, customer); err != nil {
 		return nil, err
@@ -154,4 +157,24 @@ func normalizeOptionalString(value string) *string {
 	}
 
 	return &cleaned
+}
+
+func normalizeBomCodes(values []string) datatypes.JSONSlice[string] {
+	seen := make(map[string]struct{}, len(values))
+	codes := make([]string, 0, len(values))
+
+	for _, value := range values {
+		code := models.Trimmed(value)
+		if code == "" {
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			continue
+		}
+
+		seen[code] = struct{}{}
+		codes = append(codes, code)
+	}
+
+	return datatypes.NewJSONSlice(codes)
 }
