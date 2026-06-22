@@ -36,20 +36,24 @@ func (s *importService) BulkInsertPRL(ctx context.Context, data []models.ImportD
 	customerCache := make(map[string]*models.Customer)
 	itemCache := make(map[string]*models.Item)
 
+	// CustomerID -> PRL ID
+	customerPRLMap := make(map[string]string)
+
 	year := time.Now().Format("2006")
 	baseNumber, err := s.repo.GetMaxPRLNumber(ctx, year)
 	if err != nil {
 		return nil, err
 	}
 
+	prlCounter := baseNumber
+
 	for i, item := range data {
 		customerName := strings.TrimSpace(item.CustomerName)
 		uniqCode := strings.TrimSpace(item.UniqCode)
 
-		// Template helper untuk failed row agar tidak repetitif
 		createFailedRow := func(msg string) models.FailedImport {
 			return models.FailedImport{
-				RowNumber:      i + 2, // Baris di excel (asumsi header di baris 1)
+				RowNumber:      i + 2,
 				CustomerName:   customerName,
 				UniqCode:       uniqCode,
 				ProductModel:   item.ProductModel,
@@ -90,8 +94,17 @@ func (s *importService) BulkInsertPRL(ctx context.Context, data []models.ImportD
 			itm = iData
 		}
 
-		// GENERATE PRL ID
-		prlID := fmt.Sprintf("PRL-%s-%03d", year, baseNumber+int64(i)+1)
+		// ==========================================
+		// SATU CUSTOMER = SATU PRL ID
+		// ==========================================
+		prlID, exists := customerPRLMap[customer.CustomerID]
+		if !exists {
+			prlCounter++
+
+			prlID = fmt.Sprintf("PRL-%s-%s-%03d", year, customer.CustomerID, prlCounter)
+
+			customerPRLMap[customer.CustomerID] = prlID
+		}
 
 		// INSERT
 		err = s.repo.InsertPRL(ctx, &models.PRL{
@@ -120,11 +133,7 @@ func (s *importService) BulkInsertPRL(ctx context.Context, data []models.ImportD
 		success++
 	}
 
-	// =========================
-	// MODIFIKASI FILE ASLI (Jika ada yang gagal)
-	// =========================
 	if len(failedRows) > 0 {
-		// Panggil fungsi untuk nambahin kolom "Error" ke file yang diupload tadi
 		err := s.appendErrorToExcel(filePath, failedRows)
 		if err != nil {
 			return nil, fmt.Errorf("gagal menulis error ke excel: %v", err)
@@ -134,7 +143,7 @@ func (s *importService) BulkInsertPRL(ctx context.Context, data []models.ImportD
 	return &models.BulkInsertResponse{
 		Success:    success,
 		Failed:     len(failedRows),
-		FailedFile: filePath, // Balikin path yang sama
+		FailedFile: filePath,
 	}, nil
 }
 
