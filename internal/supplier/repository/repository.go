@@ -72,23 +72,26 @@ func (r *repository) FindByUUID(ctx context.Context, uuid string) (*models.Suppl
 func (r *repository) List(ctx context.Context, filters models.SupplierListFilters) ([]models.Supplier, int64, error) {
 	query := r.db.WithContext(ctx).Model(&models.Supplier{})
 
+	if filters.UniqCode != "" {
+		query = query.
+			Joins("JOIN supplier_item si ON si.supplier_uuid = suppliers.uuid AND si.deleted_at IS NULL AND si.uniq_code = ?", strings.ToUpper(strings.TrimSpace(filters.UniqCode))).
+			Select("suppliers.*")
+	}
+
 	if filters.Search != "" {
 		search := "%" + strings.TrimSpace(filters.Search) + "%"
 		query = query.Where(
-			"supplier_code ILIKE ? OR supplier_name ILIKE ? OR contact_person ILIKE ? OR email_address ILIKE ?",
-			search,
-			search,
-			search,
-			search,
+			"suppliers.supplier_code ILIKE ? OR suppliers.supplier_name ILIKE ? OR suppliers.contact_person ILIKE ? OR suppliers.email_address ILIKE ?",
+			search, search, search, search,
 		)
 	}
 
 	if filters.Status != nil {
-		query = query.Where("status = ?", *filters.Status)
+		query = query.Where("suppliers.status = ?", *filters.Status)
 	}
 
 	if filters.MaterialCategory != nil {
-		query = query.Where("material_category = ?", *filters.MaterialCategory)
+		query = query.Where("suppliers.material_category = ?", *filters.MaterialCategory)
 	}
 
 	var total int64

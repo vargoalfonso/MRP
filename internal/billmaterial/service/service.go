@@ -571,6 +571,7 @@ func (s *service) saveMaterialSpec(ctx context.Context, revID int64, ms *models.
 	spec := &models.ItemMaterialSpec{
 		ItemRevisionID: revID,
 		MaterialGrade:  ms.MaterialGrade,
+		Grade:          ms.Grade,
 		Form:           ms.Form,
 		WidthMm:        ms.WidthMm,
 		DiameterMm:     ms.DiameterMm,
@@ -1625,6 +1626,7 @@ func (s *service) buildDetailTree(lines []models.BomLine, preload *bomPreload, p
 func (s *service) toSpecDetail(spec *models.ItemMaterialSpec) *models.MaterialSpecDetail {
 	d := &models.MaterialSpecDetail{
 		MaterialGrade: spec.MaterialGrade,
+		Grade:         spec.Grade,
 		Form:          spec.Form,
 		WidthMm:       spec.WidthMm,
 		DiameterMm:    spec.DiameterMm,
@@ -1977,8 +1979,8 @@ var bomImportItemHeaders = func() []string {
 	h := []string{
 		"bom_group", "row_type", "uniq_code", "parent_uniq_code", "part_name", "part_number", "model", "uom", "level",
 		"qty_per_uniq",
-		"status", "description", "material_grade", "form",
-		"width_mm", "thickness_mm", "length_mm", "diameter_mm", "weight_kg", "supplier_name", "customer_cycle",
+		"status", "description", "material_grade", "grade", "form",
+		"width_mm", "thickness_mm", "length_mm", "diameter_mm", "weight_kg", "supplier_code", "customer_cycle",
 	}
 	for n := 1; n <= bomMaxRoutes; n++ {
 		s := fmt.Sprintf("%d", n)
@@ -1991,7 +1993,16 @@ var bomImportItemHeaders = func() []string {
 }()
 
 func (s *service) DownloadImportTemplate(ctx context.Context) ([]byte, error) {
-	f, err := bulkimport.BuildBomTemplate()
+	suppliers, err := s.repo.ListAllSuppliers(ctx)
+	if err != nil {
+		return nil, apperror.InternalWrap("list suppliers for template", err)
+	}
+	refs := make([]bulkimport.SupplierRef, len(suppliers))
+	for i, sp := range suppliers {
+		refs[i] = bulkimport.SupplierRef{Code: sp.SupplierCode, Name: sp.SupplierName}
+	}
+
+	f, err := bulkimport.BuildBomTemplate(refs)
 	if err != nil {
 		return nil, apperror.InternalWrap("build bom template", err)
 	}
@@ -2033,32 +2044,25 @@ func (s *service) ImportFromExcel(ctx context.Context, filePath string) (bulkimp
 		return bulkimport.BulkResult{}, err
 	}
 
-	// Resolve supplier names → IDs (batch, unique names only)
-	supplierCache := make(map[string]string) // name → uuid string
+	// Resolve supplier codes → IDs (batch, unique codes only)
+	supplierCache := make(map[string]string) // code → uuid string
 	for i, row := range itemRows {
-		if row.SupplierName == "" {
+		if row.SupplierCode == "" {
 			continue
 		}
-		if id, cached := supplierCache[row.SupplierName]; cached {
+		if id, cached := supplierCache[row.SupplierCode]; cached {
 			itemRows[i].SupplierID = &id
 			continue
 		}
-		supplier, lookupErr := s.repo.FindSupplierByName(ctx, row.SupplierName)
+		supplier, lookupErr := s.repo.FindSupplierByCode(ctx, row.SupplierCode)
 		if lookupErr != nil {
 			return bulkimport.BulkResult{}, lookupErr
 		}
 		if supplier == nil {
-			itemErrs = append(itemErrs, bulkimport.RowError{
-				Sheet:   "Items",
-				Row:     row.SheetRow,
-				Field:   "supplier_name",
-				Message: fmt.Sprintf("supplier '%s' tidak ditemukan", row.SupplierName),
-				RawData: row.RawData,
-			})
-			continue
+			continue // supplier_code tidak ditemukan → supplier_id tetap null
 		}
 		idStr := supplier.UUID.String()
-		supplierCache[row.SupplierName] = idStr
+		supplierCache[row.SupplierCode] = idStr
 		itemRows[i].SupplierID = &idStr
 	}
 
@@ -2207,9 +2211,10 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 			Uom:            strings.TrimSpace(getImportValue(raw, headerIndex, "uom")),
 			Status:         strings.TrimSpace(getImportValue(raw, headerIndex, "status")),
 			Description:    strings.TrimSpace(getImportValue(raw, headerIndex, "description")),
-			MaterialGrade:  strings.TrimSpace(getImportValue(raw, headerIndex, "material_grade")),
-			Form:           strings.TrimSpace(getImportValue(raw, headerIndex, "form")),
-			SupplierName:   strings.TrimSpace(getImportValue(raw, headerIndex, "supplier_name")),
+			MaterialGrade: strings.TrimSpace(getImportValue(raw, headerIndex, "material_grade")),
+			Grade:         strings.TrimSpace(getImportValue(raw, headerIndex, "grade")),
+			Form:          strings.TrimSpace(getImportValue(raw, headerIndex, "form")),
+			SupplierCode:  strings.TrimSpace(getImportValue(raw, headerIndex, "supplier_code")),
 			QtyPerUniq:     1,
 		}
 
@@ -2530,7 +2535,7 @@ func toMaterialSpec(row *models.BomImportItemRow) *models.MaterialSpecInput {
 	if row == nil {
 		return nil
 	}
-	hasAny := row.MaterialGrade != "" || row.Form != "" || row.WidthMM != nil || row.ThicknessMM != nil || row.LengthMM != nil || row.DiameterMM != nil || row.WeightKG != nil || row.SupplierID != nil || row.CustomerCycle != ""
+	hasAny := row.MaterialGrade != "" || row.Grade != "" || row.Form != "" || row.WidthMM != nil || row.ThicknessMM != nil || row.LengthMM != nil || row.DiameterMM != nil || row.WeightKG != nil || row.SupplierID != nil || row.CustomerCycle != ""
 	if !hasAny {
 		return nil
 	}
@@ -2545,6 +2550,10 @@ func toMaterialSpec(row *models.BomImportItemRow) *models.MaterialSpecInput {
 	if row.MaterialGrade != "" {
 		v := row.MaterialGrade
 		ms.MaterialGrade = &v
+	}
+	if row.Grade != "" {
+		v := row.Grade
+		ms.Grade = &v
 	}
 	if row.Form != "" {
 		v := row.Form

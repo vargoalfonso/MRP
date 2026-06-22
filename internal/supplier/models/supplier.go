@@ -96,6 +96,7 @@ type ListSupplierQuery struct {
 	Search           string `form:"search"`
 	Status           string `form:"status"`
 	MaterialCategory string `form:"material_category"`
+	UniqCode         string `form:"uniq_code"` // filter: only suppliers that supply this item
 	Page             int    `form:"page"`
 	Limit            int    `form:"limit"`
 }
@@ -104,6 +105,7 @@ type SupplierListFilters struct {
 	Search           string
 	Status           *string
 	MaterialCategory *string
+	UniqCode         string // JOIN supplier_item ON uniq_code when set
 	Page             int
 	Limit            int
 	Offset           int

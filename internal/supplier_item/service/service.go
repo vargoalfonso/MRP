@@ -46,6 +46,10 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierItemReque
 	if err != nil {
 		return nil, err
 	}
+	percentage, err := parseOptionalFloat64(req.Percentage, "percentage")
+	if err != nil {
+		return nil, err
+	}
 
 	item := &models.SupplierItem{
 		UUID:          uuid.NewString(),
@@ -60,6 +64,7 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierItemReque
 		Weight:        weight,
 		PcsPerKanban:  pcsPerKanban,
 		CustomerCycle: models.NormalizeOptionalString(toOptionalString(req.CustomerCycle)),
+		Percentage:    percentage,
 		Status:        normalizeStatus(req.Status),
 	}
 
@@ -140,6 +145,10 @@ func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupp
 	if err != nil {
 		return nil, err
 	}
+	percentage, err := parseOptionalFloat64(req.Percentage, "percentage")
+	if err != nil {
+		return nil, err
+	}
 
 	item.SupplierUUID = supplier.UUID
 	item.SupplierName = supplier.SupplierName
@@ -152,6 +161,7 @@ func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupp
 	item.Weight = weight
 	item.PcsPerKanban = pcsPerKanban
 	item.CustomerCycle = models.NormalizeOptionalString(toOptionalString(req.CustomerCycle))
+	item.Percentage = percentage
 	item.Status = normalizeStatus(req.Status)
 
 	if err := s.repo.Update(ctx, item); err != nil {
