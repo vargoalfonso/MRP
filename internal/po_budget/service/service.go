@@ -1011,12 +1011,6 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 		return nil, apperror.BadRequest("invalid period format, use 'Month YYYY', e.g. 'October 2025'")
 	}
 
-	// Validate PRL exists
-	prl, err := s.repo.GetPRLDocByPrlID(ctx, req.PrlID)
-	if err != nil {
-		return nil, apperror.NotFound(fmt.Sprintf("PRL %s tidak ditemukan", req.PrlID))
-	}
-
 	// Allocation requires po_budget_entries.prl_row_id (migration 0011).
 	has, err := s.repo.HasColumn(ctx, "po_budget_entries", "prl_row_id")
 	if err != nil {
@@ -1026,7 +1020,7 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 		return nil, apperror.BadRequest("missing DB column po_budget_entries.prl_row_id; run migration scripts/migrations/0011_po_budget_link_prls_up.sql")
 	}
 
-	// Load PRL rows for requested item IDs and validate they belong to the PRL doc.
+	// Load PRL rows for requested item IDs.
 	itemIDs := make([]int64, len(req.Items))
 	for i, it := range req.Items {
 		itemIDs[i] = it.PrlItemID
@@ -1040,12 +1034,8 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 		rowMap[r.ID] = r
 	}
 	for _, it := range req.Items {
-		r, ok := rowMap[it.PrlItemID]
-		if !ok {
+		if _, ok := rowMap[it.PrlItemID]; !ok {
 			return nil, apperror.BadRequest(fmt.Sprintf("prl_item_id %d tidak ditemukan", it.PrlItemID))
-		}
-		if r.PrlID != req.PrlID {
-			return nil, apperror.BadRequest(fmt.Sprintf("prl_item_id %d does not belong to prl_id %s (belongs to %s)", it.PrlItemID, req.PrlID, r.PrlID))
 		}
 	}
 
@@ -1058,11 +1048,11 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 	result := &models.BulkFromPRLResult{}
 	var entries []models.POBudgetEntry
 
-	prlRef := req.PrlID
 	subtype := req.BudgetSubtype
 
 	for _, item := range req.Items {
 		r := rowMap[item.PrlItemID]
+		prlRef := r.PrlID
 		budgetQty := r.Quantity
 		uniqCode := ptrVal(r.UniqCode)
 		if uniqCode == "" {
@@ -1110,7 +1100,7 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 			entries = append(entries, models.POBudgetEntry{
 				BudgetType:      budgetType,
 				CustomerID:      nil,
-				CustomerName:    prl.CustomerName,
+				CustomerName:    r.CustomerName,
 				UniqCode:        uniqCode,
 				ProductModel:    productModel,
 				MaterialType:    nil,
