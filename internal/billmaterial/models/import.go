@@ -19,13 +19,14 @@ type BomImportItemRow struct {
 	Description    string
 
 	MaterialGrade string
+	Grade         string
 	Form          string
 	WidthMM       *float64
 	ThicknessMM   *float64
 	LengthMM      *float64
 	DiameterMM    *float64
 	WeightKG      *float64
-	SupplierName  string  // input dari Excel
+	SupplierCode  string  // input dari Excel (supplier_code)
 	SupplierID    *string // resolved UUID setelah lookup ke DB
 	CustomerCycle string
 

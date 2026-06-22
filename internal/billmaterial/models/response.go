@@ -74,6 +74,7 @@ type ToolingDetail struct {
 
 type MaterialSpecDetail struct {
 	MaterialGrade *string  `json:"material_grade"`
+	Grade         *string  `json:"grade"`
 	Form          *string  `json:"form"`
 	WidthMm       *float64 `json:"width_mm"`
 	DiameterMm    *float64 `json:"diameter_mm"`

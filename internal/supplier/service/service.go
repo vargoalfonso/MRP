@@ -279,6 +279,7 @@ func (s *service) List(ctx context.Context, query models.ListSupplierQuery) (*mo
 		Search:           models.Trimmed(query.Search),
 		Status:           status,
 		MaterialCategory: materialCategory,
+		UniqCode:         models.Trimmed(query.UniqCode),
 		Page:             page,
 		Limit:            limit,
 		Offset:           (page - 1) * limit,

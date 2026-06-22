@@ -63,7 +63,8 @@ type IRepository interface {
 	GetRoutingOperationsByHeaderIDs(ctx context.Context, headerIDs []int64) ([]models.RoutingOperation, error)
 	GetToolingsByOperationIDs(ctx context.Context, operationIDs []int64) ([]models.RoutingOperationTooling, error)
 	GetSupplierNamesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
-	FindSupplierByName(ctx context.Context, name string) (*models.Supplier, error)
+	FindSupplierByCode(ctx context.Context, code string) (*models.Supplier, error)
+	ListAllSuppliers(ctx context.Context) ([]models.Supplier, error)
 	GetProcessNamesByIDs(ctx context.Context, ids []int64) (map[int64]string, error)
 	GetProcessSequencesByIDs(ctx context.Context, ids []int64) (map[int64]int, error)
 	GetMachineNamesByIDs(ctx context.Context, ids []int64) (map[int64]string, error)
@@ -681,18 +682,30 @@ func isMissingRoutingToolingsTable(err error) bool {
 	return strings.Contains(msg, "routing_operation_toolings") && strings.Contains(msg, "does not exist")
 }
 
-func (r *repository) FindSupplierByName(ctx context.Context, name string) (*models.Supplier, error) {
+func (r *repository) FindSupplierByCode(ctx context.Context, code string) (*models.Supplier, error) {
 	var s models.Supplier
 	err := r.db.WithContext(ctx).
-		Where("supplier_name ILIKE ?", name+"%").
+		Where("supplier_code = ?", code).
 		First(&s).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
-		return nil, apperror.InternalWrap("FindSupplierByName", err)
+		return nil, apperror.InternalWrap("FindSupplierByCode", err)
 	}
 	return &s, nil
+}
+
+func (r *repository) ListAllSuppliers(ctx context.Context) ([]models.Supplier, error) {
+	var suppliers []models.Supplier
+	if err := r.db.WithContext(ctx).
+		Select("id", "uuid", "supplier_code", "supplier_name").
+		Where("status = ?", "Active").
+		Order("supplier_name").
+		Find(&suppliers).Error; err != nil {
+		return nil, apperror.InternalWrap("ListAllSuppliers", err)
+	}
+	return suppliers, nil
 }
 
 func (r *repository) GetSupplierNamesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {

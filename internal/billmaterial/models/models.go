@@ -112,6 +112,7 @@ type ItemMaterialSpec struct {
 	CycleTimeSec   *float64 `gorm:"type:numeric(18,4)"`
 	SetupTimeMin   *float64 `gorm:"type:numeric(18,4)"`
 	CustomerCycle  *string  `gorm:"column:customer_cycle;size:100"`
+	Grade          *string  `gorm:"size:100"`
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }

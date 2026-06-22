@@ -75,12 +75,16 @@ func GenerateErrorExcel(sheets []SheetDef, errors []RowError) (*excelize.File, e
 	return f, nil
 }
 
+// SupplierRef is a lightweight supplier record used to populate the Suppliers
+// reference sheet in the BOM import template.
+type SupplierRef struct{ Code, Name string }
+
 // GenerateBomErrorExcel builds the BOM import error file using the official
 // template as a base (headers + sample rows intact) so users can see the
 // expected format while correcting their data. Failed rows are appended
 // after the last sample row.
 func GenerateBomErrorExcel(errors []RowError) (*excelize.File, error) {
-	f, err := BuildBomTemplate()
+	f, err := BuildBomTemplate(nil)
 	if err != nil {
 		return nil, fmt.Errorf("build base template: %w", err)
 	}
@@ -125,10 +129,10 @@ type bomSampleRow struct {
 	partName, partNumber, model, uom        string
 	level, qtyPerUniq                       string
 	status, description                     string
-	materialGrade, form                     string
+	materialGrade, grade, form              string
 	widthMM, thicknessMM, lengthMM          string
 	diameterMM, weightKG                    string
-	supplierName, customerCycle             string
+	supplierCode, customerCycle             string
 	routes                                  []bomSampleRoute
 }
 
@@ -139,10 +143,10 @@ func (r bomSampleRow) toSlice(totalCols int) []string {
 		r.partName, r.partNumber, r.model, r.uom,
 		r.level, r.qtyPerUniq,
 		r.status, r.description,
-		r.materialGrade, r.form,
+		r.materialGrade, r.grade, r.form,
 		r.widthMM, r.thicknessMM, r.lengthMM,
 		r.diameterMM, r.weightKG,
-		r.supplierName, r.customerCycle,
+		r.supplierCode, r.customerCycle,
 	}
 	for _, rt := range r.routes {
 		vals = append(vals,
@@ -157,10 +161,11 @@ func (r bomSampleRow) toSlice(totalCols int) []string {
 	return vals
 }
 
-// BuildBomTemplate creates the blank BOM import template Excel with a single
-// Items sheet. Route fields are inlined as numbered columns per item row:
-// op_seq_1, process_code_1, machine_number_1, … tooling_ref_7.
-func BuildBomTemplate() (*excelize.File, error) {
+// BuildBomTemplate creates the BOM import template Excel.
+// Sheet 1 "Items" has headers + sample rows.
+// Sheet 2 "Suppliers" lists all active suppliers for reference (skipped when suppliers is nil).
+// Route fields are inlined as numbered columns: op_seq_1 … tooling_ref_7.
+func BuildBomTemplate(suppliers []SupplierRef) (*excelize.File, error) {
 	f := excelize.NewFile()
 	f.SetSheetName("Sheet1", "Items")
 
@@ -171,8 +176,8 @@ func BuildBomTemplate() (*excelize.File, error) {
 		"part_name", "part_number", "model", "uom", "level",
 		"qty_per_uniq",
 		"status", "description",
-		"material_grade", "form", "width_mm", "thickness_mm", "length_mm",
-		"diameter_mm", "weight_kg", "supplier_name", "customer_cycle",
+		"material_grade", "grade", "form", "width_mm", "thickness_mm", "length_mm",
+		"diameter_mm", "weight_kg", "supplier_code", "customer_cycle",
 	}
 	for n := 1; n <= bomTemplateMaxRoutes; n++ {
 		s := fmt.Sprintf("%d", n)
@@ -189,20 +194,20 @@ func BuildBomTemplate() (*excelize.File, error) {
 	}
 
 	// helper: write a row, skipping empty cells
-	writeRow := func(rowNum int, vals []string) error {
+	writeRow := func(sheet string, rowNum int, vals []string) error {
 		for colIdx, v := range vals {
 			if v == "" {
 				continue
 			}
 			cell, _ := excelize.CoordinatesToCellName(colIdx+1, rowNum)
-			if err := f.SetCellValue("Items", cell, v); err != nil {
+			if err := f.SetCellValue(sheet, cell, v); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 
-	const supplier = "PT INDONESIA STEEL TUBE WORKS"
+	const supplierCode = "SUP-2024-001"
 
 	samples := []bomSampleRow{
 		// ROOT — Engine Mount Assembly (4 routes, all fully filled)
@@ -211,9 +216,9 @@ func BuildBomTemplate() (*excelize.File, error) {
 			uniqCode: "EMA-LV7-001",
 			partName: "Engine Mount Assembly", partNumber: "EMA-001-LV7", model: "LV7", uom: "PCS",
 			status: "Active", description: "Engine mount sub-assembly LV7 model",
-			materialGrade: "STKM550", form: "Plate",
+			materialGrade: "STKM550", grade: "Grade-A", form: "Plate",
 			widthMM: "200", thicknessMM: "5", lengthMM: "300", weightKG: "2.34",
-			supplierName: supplier, customerCycle: "daily",
+			supplierCode: supplierCode, customerCycle: "daily",
 			routes: []bomSampleRoute{
 				{opSeq: "10", processCode: "STAMP", machineNum: "PM-A1-001", cycleTimeSec: "45", setupTimeMin: "10", machineStroke: "220 spm", toolingRef: "Dies"},
 				{opSeq: "20", processCode: "WELD", machineNum: "M-WELD-01", cycleTimeSec: "60", setupTimeMin: "15", machineStroke: "200 spm", toolingRef: "JIG"},
@@ -229,7 +234,7 @@ func BuildBomTemplate() (*excelize.File, error) {
 			level: "1", qtyPerUniq: "1", status: "Active",
 			materialGrade: "STKM550", form: "Plate",
 			widthMM: "150", thicknessMM: "4", lengthMM: "250", weightKG: "1.5",
-			supplierName: supplier,
+			supplierCode: supplierCode,
 			routes: []bomSampleRoute{
 				{opSeq: "10", processCode: "STAMP", machineNum: "M-STAMP-02", cycleTimeSec: "30", setupTimeMin: "10", machineStroke: "180 spm", toolingRef: "Dies"},
 				{opSeq: "20", processCode: "BEND", machineNum: "M-BEND-01", cycleTimeSec: "25", setupTimeMin: "8", machineStroke: "150 spm", toolingRef: "Dies"},
@@ -257,7 +262,7 @@ func BuildBomTemplate() (*excelize.File, error) {
 			level: "1", qtyPerUniq: "2", status: "Active",
 			materialGrade: "SS400", form: "Plate",
 			widthMM: "150", thicknessMM: "4", weightKG: "1.5",
-			supplierName: supplier,
+			supplierCode: supplierCode,
 		},
 		// CHILD L1-C — Bolt M10 x 30 (no routes)
 		{
@@ -267,13 +272,25 @@ func BuildBomTemplate() (*excelize.File, error) {
 			level: "1", qtyPerUniq: "4", status: "Active",
 			materialGrade: "SS400", form: "Plate",
 			widthMM: "150", thicknessMM: "4", weightKG: "1.5",
-			supplierName: supplier,
+			supplierCode: supplierCode,
 		},
 	}
 
 	for i, s := range samples {
-		if err := writeRow(i+2, s.toSlice(len(headers))); err != nil {
+		if err := writeRow("Items", i+2, s.toSlice(len(headers))); err != nil {
 			return nil, err
+		}
+	}
+
+	// Sheet 2 — Suppliers reference list
+	if len(suppliers) > 0 {
+		f.NewSheet("Suppliers")
+		_ = f.SetCellValue("Suppliers", "A1", "supplier_code")
+		_ = f.SetCellValue("Suppliers", "B1", "supplier_name")
+		for i, sp := range suppliers {
+			rowNum := i + 2
+			_ = f.SetCellValue("Suppliers", fmt.Sprintf("A%d", rowNum), sp.Code)
+			_ = f.SetCellValue("Suppliers", fmt.Sprintf("B%d", rowNum), sp.Name)
 		}
 	}
 
