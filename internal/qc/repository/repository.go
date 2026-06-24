@@ -198,6 +198,10 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 			return fmt.Errorf("update delivery_note_items: %w", err)
 		}
 
+		if err := tx.Model(&procModels.IncomingDN{}).Where("id = ?", dnItem.IncomingDNID).Update("total_po_incoming", approvedQty).Error; err != nil {
+			return fmt.Errorf("update total po incoming delivery_note: %w", err)
+		}
+
 		event := map[string]interface{}{
 			"event":             "qc_approve",
 			"approved_qty":      approvedQty,
@@ -215,6 +219,7 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 		if err != nil {
 			return err
 		}
+
 		if approvedQty > 0 {
 			// Look up warehouse_location from the most recent scan for this dn_item.
 			var warehouseLocation *string
@@ -311,7 +316,28 @@ func (r *repo) RejectIncoming(ctx context.Context, taskID int64, numberOfDefects
 			return err
 		}
 
+		_, poNumber, err := loadDNTypeAndPONumber(tx, dnItem.IncomingDNID)
+		if err != nil {
+			return err
+		}
+
 		qtyScrap := sumDefectScrap(defects)
+		qtyDefect := sumDefectDefect(defects)
+
+		productReturn := map[string]interface{}{
+			"uniq":            dnItem.ItemUniqCode,
+			"dn_number":       poNumber,
+			"quantity_scrap":  qtyScrap,
+			"quantity_rework": qtyDefect,
+			"status":          "pending",
+			"created_at":      time.Now(),
+			"updated_at":      time.Now(),
+		}
+
+		if err := tx.Table("product_returns").Create(productReturn).Error; err != nil {
+			return fmt.Errorf("create product_return: %w", err)
+		}
+
 		qcLogID, err := insertIncomingQCLog(tx, task, dnItem, checkedAt, performedBy, 0, numberOfDefects, qtyScrap, "REJECTED", defects)
 		if err != nil {
 			return err
@@ -343,6 +369,14 @@ func sumDefectScrap(defects []qcModels.DefectInput) float64 {
 	total := 0.0
 	for _, defect := range defects {
 		total += defect.QtyScrap
+	}
+	return total
+}
+
+func sumDefectDefect(defects []qcModels.DefectInput) float64 {
+	total := 0.0
+	for _, defect := range defects {
+		total += defect.QtyDefect
 	}
 	return total
 }

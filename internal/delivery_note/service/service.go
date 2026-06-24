@@ -452,129 +452,6 @@ func (s *deliveryNoteService) Scan(ctx context.Context, req models.QRPayload) (s
 			fromLoc = "supplier"
 			toLoc = "warehouse"
 			result = status
-
-			// INSERT KE QC LOGS
-			if status == "incoming" {
-				if err := tx.Exec(`
-                    INSERT INTO qc_logs (
-                        dn_item_id,
-                        uniq_code,
-                        qty_checked,
-                        qty_pass,
-                        qty_defect,
-                        qty_scrap,
-                        status,
-                        defect_source,
-                        checked_at
-                    )
-                    VALUES (?, ?, ?, 0, 0, 0, ?, ?, NOW())
-                    `,
-					item.ID,
-					item.ItemUniqCode,
-					qty,
-					"PENDING",
-					"incoming_material",
-				).Error; err != nil {
-					return err
-				}
-			}
-			if status == "completed" {
-
-				var table string
-				switch dn.Type {
-				case "RM":
-					table = "raw_materials"
-				case "IRM":
-					table = "indirect_raw_materials"
-				default:
-					return fmt.Errorf("unsupported delivery note type: %s", dn.Type)
-				}
-
-				type ItemMaster struct {
-					ID         uuid.UUID `gorm:"column:id"`
-					PartNumber string    `gorm:"column:part_number"`
-					PartName   string    `gorm:"column:part_name"`
-				}
-
-				var checkItem ItemMaster
-
-				if err := tx.Raw(`
-                    SELECT
-                        id,
-                        part_number,
-                        part_name
-                    FROM items
-                    WHERE uniq_code = ?
-                    LIMIT 1
-                `, item.ItemUniqCode).Scan(&checkItem).Error; err != nil {
-					return err
-				}
-
-				if checkItem.ID == uuid.Nil {
-					return fmt.Errorf("item master dengan uniq_code %s tidak ditemukan", item.ItemUniqCode)
-				}
-
-				var count int64
-				if err := tx.Raw(
-					fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE uniq_code = ?`, table),
-					item.ItemUniqCode,
-				).Scan(&count).Error; err != nil {
-					return err
-				}
-
-				if count > 0 {
-					if err := tx.Exec(
-						fmt.Sprintf(`
-                            UPDATE %s
-                            SET
-                                stock_qty = COALESCE(stock_qty,0) + ?,
-                                updated_at = NOW()
-                            WHERE uniq_code = ?
-                        `, table),
-						qty,
-						item.ItemUniqCode,
-					).Error; err != nil {
-						return err
-					}
-				} else {
-					// Insert stock baru
-					if err := tx.Exec(
-						fmt.Sprintf(`
-                        INSERT INTO %s (
-                            uuid,
-                            uniq_code,
-                            part_number,
-                            part_name,
-                            item_id,
-                            stock_qty,
-                            status,
-                            buy_not_buy,
-                            created_at,
-                            updated_at
-                        )
-                        VALUES (
-                            gen_random_uuid(),
-                            ?,
-                            ?,
-                            ?,
-                            ?,
-                            ?,
-                            'normal',
-                            'not_buy',
-                            NOW(),
-                            NOW()
-                        )
-                    `, table),
-						item.ItemUniqCode,
-						checkItem.PartNumber,
-						checkItem.PartName,
-						checkItem.ID,
-						qty,
-					).Error; err != nil {
-						return err
-					}
-				}
-			}
 		}
 
 		// ======================================================
@@ -621,41 +498,30 @@ func (s *deliveryNoteService) Scan(ctx context.Context, req models.QRPayload) (s
 				toLoc = "vendor"
 				result = status
 
-			} else {
-
-				// ===============================
-				// 🟢 INCOMING (RETURN)
-				// ===============================
-				remaining := item.QtySent - item.QtyReceived
-
-				if qty > remaining {
-					return fmt.Errorf("qty melebihi sisa return")
-				}
-
-				newQty := item.QtyReceived + qty
-
-				if item.QtyReceived == 0 {
-					status = "incoming"
-				} else if newQty < item.QtySent {
-					status = "remaining"
-				} else {
-					status = "completed"
-				}
-
-				if err := tx.Model(&models.DeliveryNoteItem{}).
-					Where("id = ?", item.ID).
-					Updates(map[string]interface{}{
-						"qty_received": gorm.Expr("COALESCE(qty_received,0) + ?", qty),
-						"check":        status,
-					}).Error; err != nil {
-					return err
-				}
-
-				scanType = "incoming"
-				fromLoc = "vendor"
-				toLoc = "warehouse"
-				result = status
 			}
+		}
+
+		if err := tx.Exec(`
+                    INSERT INTO qc_logs (
+                        dn_item_id,
+                        uniq_code,
+                        qty_checked,
+                        qty_pass,
+                        qty_defect,
+                        qty_scrap,
+                        status,
+                        defect_source,
+                        checked_at
+                    )
+                    VALUES (?, ?, ?, 0, 0, 0, ?, ?, NOW())
+                    `,
+			item.ID,
+			item.ItemUniqCode,
+			qty,
+			"PENDING",
+			"incoming_material",
+		).Error; err != nil {
+			return err
 		}
 
 		// ======================================================

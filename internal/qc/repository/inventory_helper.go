@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -18,22 +19,13 @@ type inventoryHelper struct {
 }
 
 // postToInventoryByDNType routes to the appropriate inventory table based on DN type.
-func (r *repo) postToInventoryByDNType(
-	tx *gorm.DB,
-	dnType string,
-	itemUniqCode string,
-	approvedQty int,
-	weightKg *float64,
-	uom *string,
-	warehouseLocation *string,
-	createdBy string,
-) error {
+func (r *repo) postToInventoryByDNType(tx *gorm.DB, dnType string, itemUniqCode string, approvedQty int, weightKg *float64, uom *string, warehouseLocation *string, createdBy string) error {
 	createdBy = normalizeActor(createdBy)
 
 	switch strings.ToUpper(strings.TrimSpace(dnType)) {
 	case "RM", "RAW MATERIAL":
 		return r.upsertRawMaterial(tx, itemUniqCode, float64(approvedQty), weightKg, uom, warehouseLocation, createdBy)
-	case "IB", "INDIRECT", "INDIRECT RAW MATERIAL":
+	case "IRM", "IB", "INDIRECT", "INDIRECT RAW MATERIAL":
 		return r.upsertIndirectRawMaterial(tx, itemUniqCode, float64(approvedQty), weightKg, uom, warehouseLocation, createdBy)
 	case "SC", "SUBCON", "SUBCON MATERIAL", "SUBCON RAW MATERIAL", "SUB CON", "SUB-CON":
 		return r.upsertSubconInventory(tx, itemUniqCode, float64(approvedQty), weightKg, uom, createdBy)
@@ -65,31 +57,68 @@ func (r *repo) upsertRawMaterial(
 	warehouseLocation *string,
 	createdBy string,
 ) error {
+
 	var rm invModels.RawMaterial
 
-	// Try to find existing entry
-	result := tx.Where("uniq_code = ? AND deleted_at IS NULL", itemUniqCode).
+	// Lock jika sudah ada
+	result := tx.
 		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("uniq_code = ? AND deleted_at IS NULL", itemUniqCode).
 		First(&rm)
 
-	if result.Error == gorm.ErrRecordNotFound {
-		// CREATE new entry — enrich with PO item details
-		partNumber, partName, materialType := lookupPOItem(tx, itemUniqCode)
+	// =====================================================
+	// CREATE
+	// =====================================================
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+
+		// Ambil master item
+		var item struct {
+			ID           *int64  `gorm:"column:id"`
+			UniqCode     string  `gorm:"column:uniq_code"`
+			PartNumber   string  `gorm:"column:part_number"`
+			PartName     string  `gorm:"column:part_name"`
+			MaterialType string  `gorm:"column:material_type"`
+			UOM          *string `gorm:"column:uom"`
+		}
+
+		if err := tx.
+			Table("items").
+			Select(`
+				id,
+				uniq_code,
+				part_number,
+				part_name,
+				material_type,
+				uom
+			`).
+			Where("uniq_code = ?", itemUniqCode).
+			First(&item).Error; err != nil {
+
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("item master dengan uniq_code %s tidak ditemukan", itemUniqCode)
+			}
+
+			return fmt.Errorf("query item master: %w", err)
+		}
+
 		now := time.Now()
+
+		// pakai uom dari parameter kalau ada, kalau tidak ambil dari item master
+		finalUOM := item.UOM
+		if uom != nil {
+			finalUOM = uom
+		}
+
 		rm = invModels.RawMaterial{
-			UUID:       uuid.New(),
-			UniqCode:   itemUniqCode,
-			PartNumber: partNumber,
-			PartName:   partName,
-			RawMaterialType: func() string {
-				if materialType != nil {
-					return *materialType
-				}
-				return ""
-			}(),
+			UUID:              uuid.New(),
+			UniqCode:          item.UniqCode,
+			PartNumber:        &item.PartNumber,
+			PartName:          &item.PartName,
+			ItemID:            item.ID,
+			RawMaterialType:   item.MaterialType,
 			RMSource:          "supplier",
-			UOM:               uom,
 			WarehouseLocation: warehouseLocation,
+			UOM:               finalUOM,
 			StockQty:          approvedQty,
 			Status:            "normal",
 			BuyNotBuy:         "not_buy",
@@ -127,7 +156,9 @@ func (r *repo) upsertRawMaterial(
 		return fmt.Errorf("query raw_material: %w", result.Error)
 	}
 
-	// UPDATE existing entry
+	// =====================================================
+	// UPDATE
+	// =====================================================
 	updates := map[string]interface{}{
 		"stock_qty":  gorm.Expr("stock_qty + ?", approvedQty),
 		"updated_by": &createdBy,
@@ -135,20 +166,19 @@ func (r *repo) upsertRawMaterial(
 	}
 
 	if weightKg != nil {
-		updates["stock_weight_kg"] = gorm.Expr("COALESCE(stock_weight_kg, 0) + ?", *weightKg)
+		updates["stock_weight_kg"] = gorm.Expr("COALESCE(stock_weight_kg,0) + ?", *weightKg)
 	}
 
 	if err := tx.Model(&rm).Updates(updates).Error; err != nil {
 		return fmt.Errorf("update raw_material stock: %w", err)
 	}
 
-	// Recalculate derived fields
 	if err := r.recalculateRawMaterialStatus(tx, rm.ID); err != nil {
 		return fmt.Errorf("recalculate raw_material status: %w", err)
 	}
 
-	// Log transaction
 	now := time.Now()
+
 	if err := writeInventoryMovementLog(tx, inventoryLogInput{
 		Category:     "raw_material",
 		MovementType: "incoming",
@@ -176,22 +206,63 @@ func (r *repo) upsertIndirectRawMaterial(
 	warehouseLocation *string,
 	createdBy string,
 ) error {
+
 	var irm invModels.IndirectRawMaterial
 
-	result := tx.Where("uniq_code = ? AND deleted_at IS NULL", itemUniqCode).
+	result := tx.
 		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("uniq_code = ? AND deleted_at IS NULL", itemUniqCode).
 		First(&irm)
 
-	if result.Error == gorm.ErrRecordNotFound {
-		partNumber, partName, _ := lookupPOItem(tx, itemUniqCode)
+	// =====================================================
+	// CREATE
+	// =====================================================
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+
+		// Ambil data master dari items
+		var item struct {
+			ID         *int64  `gorm:"column:id"`
+			UniqCode   string  `gorm:"column:uniq_code"`
+			PartNumber string  `gorm:"column:part_number"`
+			PartName   string  `gorm:"column:part_name"`
+			UOM        *string `gorm:"column:uom"`
+		}
+
+		if err := tx.
+			Table("items").
+			Select(`
+				id,
+				uniq_code,
+				part_number,
+				part_name,
+				uom
+			`).
+			Where("uniq_code = ?", itemUniqCode).
+			First(&item).Error; err != nil {
+
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("item master dengan uniq_code %s tidak ditemukan", itemUniqCode)
+			}
+
+			return fmt.Errorf("query item master: %w", err)
+		}
+
 		now := time.Now()
+
+		// Prioritaskan parameter uom, jika kosong ambil dari master item
+		finalUOM := item.UOM
+		if uom != nil {
+			finalUOM = uom
+		}
+
 		irm = invModels.IndirectRawMaterial{
 			UUID:              uuid.New(),
-			UniqCode:          itemUniqCode,
-			PartNumber:        partNumber,
-			PartName:          partName,
-			UOM:               uom,
+			UniqCode:          item.UniqCode,
+			PartNumber:        &item.PartNumber,
+			PartName:          &item.PartName,
+			ItemID:            item.ID,
 			WarehouseLocation: warehouseLocation,
+			UOM:               finalUOM,
 			StockQty:          approvedQty,
 			Status:            stringPtr("normal"),
 			BuyNotBuy:         "not_buy",
@@ -229,7 +300,9 @@ func (r *repo) upsertIndirectRawMaterial(
 		return fmt.Errorf("query indirect_raw_material: %w", result.Error)
 	}
 
-	// UPDATE existing entry
+	// =====================================================
+	// UPDATE
+	// =====================================================
 	updates := map[string]interface{}{
 		"stock_qty":  gorm.Expr("stock_qty + ?", approvedQty),
 		"updated_by": &createdBy,
@@ -244,13 +317,12 @@ func (r *repo) upsertIndirectRawMaterial(
 		return fmt.Errorf("update indirect_raw_material stock: %w", err)
 	}
 
-	// Recalculate derived fields
 	if err := r.recalculateIndirectRawMaterialStatus(tx, irm.ID); err != nil {
 		return fmt.Errorf("recalculate indirect_raw_material status: %w", err)
 	}
 
-	// Log transaction
 	now := time.Now()
+
 	if err := writeInventoryMovementLog(tx, inventoryLogInput{
 		Category:     "indirect_raw_material",
 		MovementType: "incoming",
@@ -269,14 +341,7 @@ func (r *repo) upsertIndirectRawMaterial(
 }
 
 // upsertSubconInventory creates or updates subcon inventory entry.
-func (r *repo) upsertSubconInventory(
-	tx *gorm.DB,
-	itemUniqCode string,
-	approvedQty float64,
-	weightKg *float64,
-	uom *string,
-	createdBy string,
-) error {
+func (r *repo) upsertSubconInventory(tx *gorm.DB, itemUniqCode string, approvedQty float64, weightKg *float64, uom *string, createdBy string) error {
 	var si invModels.SubconInventory
 
 	result := tx.Where("uniq_code = ? AND deleted_at IS NULL", itemUniqCode).
