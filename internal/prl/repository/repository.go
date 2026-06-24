@@ -65,6 +65,9 @@ type IRepository interface {
 	FindCustomerByUUID(ctx context.Context, uuid string) (*customerModels.Customer, error)
 	FindCustomerByRowID(ctx context.Context, id int64) (*customerModels.Customer, error)
 	FindCustomerByCode(ctx context.Context, customerCode string) (*customerModels.Customer, error)
+
+	GetByActionAndReference(ctx context.Context, actionName string, referenceID int64) (*models.ApproveInstance, error)
+	DeleteApprove(ctx context.Context, id int64) error
 }
 
 type repository struct {
@@ -73,6 +76,26 @@ type repository struct {
 
 func New(db *gorm.DB) IRepository {
 	return &repository{db: db}
+}
+
+func (r *repository) GetByActionAndReference(ctx context.Context, actionName string, referenceID int64) (*models.ApproveInstance, error) {
+
+	var data models.ApproveInstance
+
+	err := r.db.WithContext(ctx).
+		Where("action_name = ? AND reference_id = ?", actionName, referenceID).
+		First(&data).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &data, nil
+}
+
+func (r *repository) DeleteApprove(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).
+		Delete(&models.ApproveInstance{}, id).Error
 }
 
 func (r *repository) CreateUniqBOM(ctx context.Context, item *models.UniqBillOfMaterial) error {

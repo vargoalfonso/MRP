@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -503,6 +504,22 @@ func (s *service) DeletePRL(ctx context.Context, uuid string) error {
 	if err != nil {
 		return err
 	}
+
+	approveInstance, err := s.repo.GetByActionAndReference(ctx, "prl", item.ID)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	if approveInstance != nil {
+		if approveInstance.Status == "approved" {
+			return errors.New("PRL sudah di-approve, tidak dapat dihapus")
+		}
+
+		if err := s.repo.DeleteApprove(ctx, approveInstance.ID); err != nil {
+			return err
+		}
+	}
+
 	return s.repo.DeletePRL(ctx, item)
 }
 

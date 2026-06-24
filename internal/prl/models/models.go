@@ -357,3 +357,22 @@ func NewPaginationMeta(page, limit int, total int64) PaginationMeta {
 func Trimmed(value string) string {
 	return strings.TrimSpace(value)
 }
+
+type ApproveInstance struct {
+	ID                 int64     `gorm:"column:id;primaryKey;autoIncrement"`
+	ActionName         string    `gorm:"column:action_name"`
+	ReferenceTable     string    `gorm:"column:reference_table"`
+	ReferenceID        uint      `gorm:"column:reference_id"`
+	ApprovalWorkflowID uint      `gorm:"column:approval_workflow_id"`
+	CurrentLevel       int       `gorm:"column:current_level"`
+	MaxLevel           int       `gorm:"column:max_level"`
+	Status             string    `gorm:"column:status"`
+	SubmittedBy        uint      `gorm:"column:submitted_by"`
+	ApprovalProgress   string    `gorm:"column:approval_progress"`
+	CreatedAt          time.Time `gorm:"column:created_at"`
+	UpdatedAt          time.Time `gorm:"column:updated_at"`
+}
+
+func (ApproveInstance) TableName() string {
+	return "approve_instances"
+}
