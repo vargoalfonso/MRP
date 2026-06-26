@@ -133,6 +133,7 @@ type bomSampleRow struct {
 	widthMM, thicknessMM, lengthMM          string
 	diameterMM, weightKG                    string
 	supplierCode, customerCycle             string
+	typeMaterial                            string
 	routes                                  []bomSampleRoute
 }
 
@@ -146,7 +147,7 @@ func (r bomSampleRow) toSlice(totalCols int) []string {
 		r.materialGrade, r.grade, r.form,
 		r.widthMM, r.thicknessMM, r.lengthMM,
 		r.diameterMM, r.weightKG,
-		r.supplierCode, r.customerCycle,
+		r.supplierCode, r.customerCycle, r.typeMaterial,
 	}
 	for _, rt := range r.routes {
 		vals = append(vals,
@@ -177,7 +178,7 @@ func BuildBomTemplate(suppliers []SupplierRef) (*excelize.File, error) {
 		"qty_per_uniq",
 		"status", "description",
 		"material_grade", "grade", "form", "width_mm", "thickness_mm", "length_mm",
-		"diameter_mm", "weight_kg", "supplier_code", "customer_cycle",
+		"diameter_mm", "weight_kg", "supplier_code", "customer_cycle", "type_material",
 	}
 	for n := 1; n <= bomTemplateMaxRoutes; n++ {
 		s := fmt.Sprintf("%d", n)
@@ -234,7 +235,7 @@ func BuildBomTemplate(suppliers []SupplierRef) (*excelize.File, error) {
 			level: "1", qtyPerUniq: "1", status: "Active",
 			materialGrade: "STKM550", form: "Plate",
 			widthMM: "150", thicknessMM: "4", lengthMM: "250", weightKG: "1.5",
-			supplierCode: supplierCode,
+			supplierCode: supplierCode, typeMaterial: "raw",
 			routes: []bomSampleRoute{
 				{opSeq: "10", processCode: "STAMP", machineNum: "M-STAMP-02", cycleTimeSec: "30", setupTimeMin: "10", machineStroke: "180 spm", toolingRef: "Dies"},
 				{opSeq: "20", processCode: "BEND", machineNum: "M-BEND-01", cycleTimeSec: "25", setupTimeMin: "8", machineStroke: "150 spm", toolingRef: "Dies"},
@@ -248,7 +249,7 @@ func BuildBomTemplate(suppliers []SupplierRef) (*excelize.File, error) {
 			partName: "Steel Sheet 4mm", partNumber: "SS-001-LV7", uom: "KG",
 			level: "2", qtyPerUniq: "1.5", status: "Active",
 			materialGrade: "SS400", form: "Plate",
-			widthMM: "150", thicknessMM: "4",
+			widthMM: "150", thicknessMM: "4", typeMaterial: "raw",
 			routes: []bomSampleRoute{
 				{opSeq: "10", processCode: "STAMP", machineNum: "PM-A2-001", cycleTimeSec: "15", setupTimeMin: "5", machineStroke: "160 spm", toolingRef: "Dies"},
 				{opSeq: "20", processCode: "TRIM", cycleTimeSec: "10", setupTimeMin: "3", toolingRef: "CF"},
@@ -262,7 +263,7 @@ func BuildBomTemplate(suppliers []SupplierRef) (*excelize.File, error) {
 			level: "1", qtyPerUniq: "2", status: "Active",
 			materialGrade: "SS400", form: "Plate",
 			widthMM: "150", thicknessMM: "4", weightKG: "1.5",
-			supplierCode: supplierCode,
+			supplierCode: supplierCode, typeMaterial: "subcon",
 		},
 		// CHILD L1-C — Bolt M10 x 30 (no routes)
 		{
@@ -272,7 +273,7 @@ func BuildBomTemplate(suppliers []SupplierRef) (*excelize.File, error) {
 			level: "1", qtyPerUniq: "4", status: "Active",
 			materialGrade: "SS400", form: "Plate",
 			widthMM: "150", thicknessMM: "4", weightKG: "1.5",
-			supplierCode: supplierCode,
+			supplierCode: supplierCode, typeMaterial: "indirect",
 		},
 	}
 

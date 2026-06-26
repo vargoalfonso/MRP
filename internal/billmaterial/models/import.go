@@ -29,6 +29,7 @@ type BomImportItemRow struct {
 	SupplierCode  string  // input dari Excel (supplier_code)
 	SupplierID    *string // resolved UUID setelah lookup ke DB
 	CustomerCycle string
+	TypeMaterial  string
 
 	// Inline route fields — index 0 = route 1, up to MaxBomRoutes (7) per item.
 	ProcessCodes   []string

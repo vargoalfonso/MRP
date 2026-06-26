@@ -26,6 +26,7 @@ type ProcessRouteInput struct {
 type MaterialSpecInput struct {
 	MaterialGrade *string  `json:"material_grade"`
 	Grade         *string  `json:"grade"`
+	TypeMaterial  *string  `json:"type_material" validate:"omitempty,oneof=subcon raw indirect"`
 	Form          *string  `json:"form" validate:"omitempty,oneof=Plate Coil Pipe Rod Wire Other"`
 	WidthMm       *float64 `json:"width_mm"`
 	DiameterMm    *float64 `json:"diameter_mm"`
