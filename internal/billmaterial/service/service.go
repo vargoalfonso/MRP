@@ -572,6 +572,7 @@ func (s *service) saveMaterialSpec(ctx context.Context, revID int64, ms *models.
 		ItemRevisionID: revID,
 		MaterialGrade:  ms.MaterialGrade,
 		Grade:          ms.Grade,
+		TypeMaterial:   ms.TypeMaterial,
 		Form:           ms.Form,
 		WidthMm:        ms.WidthMm,
 		DiameterMm:     ms.DiameterMm,
@@ -1627,6 +1628,7 @@ func (s *service) toSpecDetail(spec *models.ItemMaterialSpec) *models.MaterialSp
 	d := &models.MaterialSpecDetail{
 		MaterialGrade: spec.MaterialGrade,
 		Grade:         spec.Grade,
+		TypeMaterial:  spec.TypeMaterial,
 		Form:          spec.Form,
 		WidthMm:       spec.WidthMm,
 		DiameterMm:    spec.DiameterMm,
@@ -1980,7 +1982,7 @@ var bomImportItemHeaders = func() []string {
 		"bom_group", "row_type", "uniq_code", "parent_uniq_code", "part_name", "part_number", "model", "uom", "level",
 		"qty_per_uniq",
 		"status", "description", "material_grade", "grade", "form",
-		"width_mm", "thickness_mm", "length_mm", "diameter_mm", "weight_kg", "supplier_code", "customer_cycle",
+		"width_mm", "thickness_mm", "length_mm", "diameter_mm", "weight_kg", "supplier_code", "customer_cycle", "type_material",
 	}
 	for n := 1; n <= bomMaxRoutes; n++ {
 		s := fmt.Sprintf("%d", n)
@@ -2315,6 +2317,22 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 		row.WeightKG = parseOptionalFloat(getImportValue(raw, headerIndex, "weight_kg"))
 		row.CustomerCycle = strings.TrimSpace(getImportValue(raw, headerIndex, "customer_cycle"))
 
+		if tm := strings.ToLower(strings.TrimSpace(getImportValue(raw, headerIndex, "type_material"))); tm != "" {
+			switch tm {
+			case "subcon", "raw", "indirect":
+				row.TypeMaterial = tm
+			default:
+				errRows = append(errRows, bulkimport.RowError{
+					Sheet:   "Items",
+					Row:     sheetRow,
+					Field:   "type_material",
+					Message: fmt.Sprintf("nilai type_material '%s' tidak dikenal. Gunakan salah satu: subcon, raw, indirect", tm),
+					RawData: raw,
+				})
+				continue
+			}
+		}
+
 		row.ProcessCodes = make([]string, bomMaxRoutes)
 		row.MachineNumbers = make([]string, bomMaxRoutes)
 		row.OpSeqs = make([]string, bomMaxRoutes)
@@ -2535,7 +2553,7 @@ func toMaterialSpec(row *models.BomImportItemRow) *models.MaterialSpecInput {
 	if row == nil {
 		return nil
 	}
-	hasAny := row.MaterialGrade != "" || row.Grade != "" || row.Form != "" || row.WidthMM != nil || row.ThicknessMM != nil || row.LengthMM != nil || row.DiameterMM != nil || row.WeightKG != nil || row.SupplierID != nil || row.CustomerCycle != ""
+	hasAny := row.MaterialGrade != "" || row.Grade != "" || row.TypeMaterial != "" || row.Form != "" || row.WidthMM != nil || row.ThicknessMM != nil || row.LengthMM != nil || row.DiameterMM != nil || row.WeightKG != nil || row.SupplierID != nil || row.CustomerCycle != ""
 	if !hasAny {
 		return nil
 	}
@@ -2554,6 +2572,10 @@ func toMaterialSpec(row *models.BomImportItemRow) *models.MaterialSpecInput {
 	if row.Grade != "" {
 		v := row.Grade
 		ms.Grade = &v
+	}
+	if row.TypeMaterial != "" {
+		v := row.TypeMaterial
+		ms.TypeMaterial = &v
 	}
 	if row.Form != "" {
 		v := row.Form
