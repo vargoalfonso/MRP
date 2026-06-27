@@ -34,6 +34,14 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierItemReque
 		return nil, err
 	}
 
+	exists, err := s.repo.ExistsBySupplierAndUniq(ctx, req.SupplierUUID, req.UniqCode)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, apperror.BadRequest(fmt.Sprintf("uniq code '%s' sudah terdaftar untuk supplier ini", strings.ToUpper(strings.TrimSpace(req.UniqCode))))
+	}
+
 	quantity, err := parseRequiredInt64(req.Quantity, "quantity")
 	if err != nil {
 		return nil, err

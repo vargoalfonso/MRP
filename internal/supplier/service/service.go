@@ -261,8 +261,8 @@ func (s *service) List(ctx context.Context, query models.ListSupplierQuery) (*mo
 	if limit <= 0 {
 		limit = 10
 	}
-	if limit > 100 {
-		limit = 100
+	if limit > 1000 {
+		limit = 1000
 	}
 
 	status, err := normalizeOptionalStatus(query.Status)

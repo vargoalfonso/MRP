@@ -170,7 +170,9 @@ type ListBomQuery struct {
 	UniqCode       string
 	Status         string
 	Search         string // searches uniq_code + part_name
-	SupplierID     string // UUID — filter by material spec supplier
+	SupplierID          string // UUID — filter by material spec supplier
+	TypeMaterial        string // raw | indirect | subcon
+	ExcludeSupplierUUID string // exclude uniq_codes already inserted for this supplier
 	Page           int    // default 1
 	Limit          int    // default 20, max 200
 	OrderBy        string
