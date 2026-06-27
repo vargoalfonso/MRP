@@ -91,6 +91,7 @@ type IncomingDN struct {
 	PoNumber        string    `gorm:"column:po_number;size:128;not null"`
 	DnType          string    `gorm:"column:type;size:64;not null"`
 	TotalPoQty      *int      `gorm:"column:total_po_qty"`
+	TotalPoIncoming *int      `gorm:"column:total_po_incoming"`
 	TotalDnCreated  *int      `gorm:"column:total_dn_created"`
 	TotalDnIncoming *int      `gorm:"column:total_dn_incoming"`
 	SupplierID      *int64    `gorm:"column:supplier_id"`

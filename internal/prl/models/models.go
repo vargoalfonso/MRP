@@ -36,6 +36,13 @@ type UniqBillOfMaterial struct {
 	DeletedAt    gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
+type ItemLookup struct {
+	UniqCode     string  `gorm:"column:uniq_code"`
+	ProductModel *string `gorm:"column:model"`
+	PartName     string  `gorm:"column:part_name"`
+	PartNumber   *string `gorm:"column:part_number"`
+}
+
 type PRL struct {
 	ID             int64          `gorm:"primaryKey;autoIncrement" json:"row_id"`
 	UUID           string         `gorm:"uniqueIndex;not null" json:"id"`
@@ -132,7 +139,87 @@ func (c *CustomerUUIDInput) UnmarshalJSON(data []byte) error {
 	return fmt.Errorf("customer_uuid must be a string UUID or integer")
 }
 
+type FlexibleStringList []string
+
+func (l *FlexibleStringList) UnmarshalJSON(data []byte) error {
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" || trimmed == "null" {
+		*l = nil
+		return nil
+	}
+
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*l = normalizeStringList(arr)
+		return nil
+	}
+
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*l = normalizeStringList(splitCSVLikeString(s))
+		return nil
+	}
+
+	return fmt.Errorf("must be a string or array of strings")
+}
+
+func normalizeStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func splitCSVLikeString(value string) []string {
+	if !strings.Contains(value, ",") {
+		return []string{value}
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		out = append(out, part)
+	}
+	return out
+}
+
+func (r CreatePRLRequest) AllUniqCodes() []string {
+	values := make([]string, 0, len(r.UniqCode)+len(r.UniqCodes))
+	values = append(values, r.UniqCode...)
+	values = append(values, r.UniqCodes...)
+	return normalizeStringList(values)
+}
+
+func PickFlexibleString(values FlexibleStringList, index int) string {
+	if len(values) == 0 {
+		return ""
+	}
+	if index >= 0 && index < len(values) {
+		return strings.TrimSpace(values[index])
+	}
+	if index >= len(values) {
+		return strings.TrimSpace(values[len(values)-1])
+	}
+	return ""
+}
+
 type CreatePRLRequest struct {
+	CustomerUUID   CustomerUUIDInput  `json:"customer_uuid" validate:"-"`
+	CustomerCode   string             `json:"customer_code" validate:"omitempty,max=32"`
+	UniqCode       FlexibleStringList `json:"uniq_code" validate:"omitempty,dive,required,max=100"`
+	UniqCodes      FlexibleStringList `json:"uniq_codes" validate:"omitempty,dive,required,max=100"`
+	ProductModel   FlexibleStringList `json:"product_model" validate:"-"`
+	PartName       FlexibleStringList `json:"part_name" validate:"-"`
+	PartNumber     FlexibleStringList `json:"part_number" validate:"-"`
+	ForecastPeriod string             `json:"forecast_period" validate:"required"`
+	Quantity       int64              `json:"quantity" validate:"required,gte=1"`
+	Remarks        string             `json:"remarks" validate:"omitempty"`
+}
+
+type CreatePRLEntryRequest struct {
 	CustomerUUID   CustomerUUIDInput `json:"customer_uuid" validate:"-"`
 	CustomerCode   string            `json:"customer_code" validate:"omitempty,max=32"`
 	UniqCode       string            `json:"uniq_code" validate:"required,max=100"`
@@ -141,14 +228,7 @@ type CreatePRLRequest struct {
 	PartNumber     string            `json:"part_number" validate:"omitempty,max=150"`
 	ForecastPeriod string            `json:"forecast_period" validate:"required"`
 	Quantity       int64             `json:"quantity" validate:"required,gte=1"`
-}
-
-type CreatePRLEntryRequest struct {
-	CustomerUUID   CustomerUUIDInput `json:"customer_uuid" validate:"-"`
-	CustomerCode   string            `json:"customer_code" validate:"omitempty,max=32"`
-	UniqCode       string            `json:"uniq_code" validate:"required,max=100"`
-	ForecastPeriod string            `json:"forecast_period" validate:"required"`
-	Quantity       int64             `json:"quantity" validate:"required,gte=1"`
+	Remarks        string            `json:"remarks" validate:"omitempty"`
 }
 
 type BulkCreatePRLRequest struct {

@@ -42,6 +42,7 @@ type IRepository interface {
 	CreateUniqBOM(ctx context.Context, item *models.UniqBillOfMaterial) error
 	FindUniqBOMByUUID(ctx context.Context, uuid string) (*models.UniqBillOfMaterial, error)
 	FindUniqBOMByUniqCode(ctx context.Context, uniqCode string) (*models.UniqBillOfMaterial, error)
+	FindItemByUniqCode(ctx context.Context, uniqCode string) (*models.ItemLookup, error)
 	ListUniqBOMs(ctx context.Context, filters models.UniqBOMListFilters) ([]models.UniqBillOfMaterial, int64, error)
 	UpdateUniqBOM(ctx context.Context, item *models.UniqBillOfMaterial) error
 	DeleteUniqBOM(ctx context.Context, item *models.UniqBillOfMaterial) error
@@ -125,6 +126,27 @@ func (r *repository) FindUniqBOMByUniqCode(ctx context.Context, uniqCode string)
 			return nil, apperror.NotFound("uniq bom tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("find uniq bom failed", err)
+	}
+	return &item, nil
+}
+
+func (r *repository) FindItemByUniqCode(ctx context.Context, uniqCode string) (*models.ItemLookup, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return nil, apperror.BadRequest("uniq_code is required")
+	}
+
+	var item models.ItemLookup
+	err := r.db.WithContext(ctx).
+		Table("items").
+		Select("uniq_code, model, part_name, part_number").
+		Where("uniq_code ILIKE ? AND deleted_at IS NULL", uniqCode).
+		Take(&item).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, apperror.NotFound("item tidak ditemukan")
+		}
+		return nil, apperror.InternalWrap("find item by uniq_code failed", err)
 	}
 	return &item, nil
 }

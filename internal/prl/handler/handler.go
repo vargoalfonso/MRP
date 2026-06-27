@@ -81,7 +81,8 @@ func (h *HTTPHandler) DeleteUniqBOM(appCtx *app.Context) *app.CostumeResponse {
 
 // CreatePRL supports:
 //  1. Single create payload (no wrapper): {customer_uuid, uniq_code, product_model, part_name, part_number, forecast_period, quantity}
-//  2. Bulk create payload (wrapper): {"entries":[...]}
+//  2. Multi-uniq create payload (no wrapper): {customer_uuid, uniq_code/uniq_codes array, product_model, part_name, part_number, forecast_period, quantity}
+//  3. Bulk create payload (wrapper): {"entries":[...]}
 func (h *HTTPHandler) CreatePRL(appCtx *app.Context) *app.CostumeResponse {
 	body, err := appCtx.GetRawData()
 	if err != nil {
@@ -117,6 +118,28 @@ func (h *HTTPHandler) CreatePRL(appCtx *app.Context) *app.CostumeResponse {
 	userID, claimErr := mustUserID(appCtx)
 	if claimErr != nil {
 		return app.NewError(appCtx, claimErr)
+	}
+	uniqCodes := req.AllUniqCodes()
+	if len(uniqCodes) == 0 {
+		return badRequest(appCtx, "uniq_code is required")
+	}
+	if len(uniqCodes) > 1 {
+		entries := make([]models.CreatePRLEntryRequest, 0, len(uniqCodes))
+		for _, uniqCode := range uniqCodes {
+			entries = append(entries, models.CreatePRLEntryRequest{
+				CustomerUUID:   req.CustomerUUID,
+				CustomerCode:   req.CustomerCode,
+				UniqCode:       uniqCode,
+				ForecastPeriod: req.ForecastPeriod,
+				Quantity:       req.Quantity,
+				Remarks:        req.Remarks,
+			})
+		}
+		result, svcErr := h.service.BulkCreatePRLs(appCtx.Request.Context(), models.BulkCreatePRLRequest{Entries: entries}, userID)
+		if svcErr != nil {
+			return app.NewError(appCtx, svcErr)
+		}
+		return &app.CostumeResponse{RequestID: appCtx.APIReqID, Status: http.StatusCreated, Message: "prls created successfully", Data: result}
 	}
 	item, svcErr := h.service.CreatePRL(appCtx.Request.Context(), req, userID)
 	if svcErr != nil {

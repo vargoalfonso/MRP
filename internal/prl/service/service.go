@@ -140,51 +140,19 @@ func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest, su
 		return nil, err
 	}
 
-	uniqCode := models.Trimmed(req.UniqCode)
-	bom, err := s.repo.FindUniqBOMByUniqCode(ctx, uniqCode)
+	uniqCodes := req.AllUniqCodes()
+	uniqCode := ""
+	if len(uniqCodes) > 0 {
+		uniqCode = models.Trimmed(uniqCodes[0])
+	}
+	if uniqCode == "" {
+		return nil, apperror.BadRequest("uniq_code or uniq_codes is required")
+	}
+	bom, err := s.resolveUniqBOMForPRL(ctx, uniqCode)
 	if err != nil {
-		if appErr, ok := apperror.As(err); ok && appErr.Code == apperror.CodeNotFound {
-			productModel := models.Trimmed(req.ProductModel)
-			partName := models.Trimmed(req.PartName)
-			partNumber := models.Trimmed(req.PartNumber)
-			if partName == "" {
-				return nil, apperror.BadRequest("part_name is required when uniq_code is new")
-			}
-			if partNumber == "" {
-				return nil, apperror.BadRequest("part_number is required when uniq_code is new")
-			}
-
-			newBOM := &models.UniqBillOfMaterial{
-				UUID:         uuid.NewString(),
-				UniqCode:     uniqCode,
-				ProductModel: productModel,
-				PartName:     partName,
-				PartNumber:   partNumber,
-			}
-			if createErr := s.repo.CreateUniqBOM(ctx, newBOM); createErr != nil {
-				return nil, createErr
-			}
-			bom = newBOM
-		} else {
-			return nil, err
-		}
+		return nil, err
 	}
 
-	// Optional mismatch guard: if client supplies BOM fields, they must match the existing UNIQ BOM.
-	if models.Trimmed(req.ProductModel) != "" && !strings.EqualFold(models.Trimmed(req.ProductModel), bom.ProductModel) {
-		return nil, apperror.BadRequest("product_model does not match existing uniq bom")
-	}
-	if models.Trimmed(req.PartName) != "" && !strings.EqualFold(models.Trimmed(req.PartName), bom.PartName) {
-		return nil, apperror.BadRequest("part_name does not match existing uniq bom")
-	}
-	if models.Trimmed(req.PartNumber) != "" && !strings.EqualFold(models.Trimmed(req.PartNumber), bom.PartNumber) {
-		return nil, apperror.BadRequest("part_number does not match existing uniq bom")
-	}
-
-	partNumber := bom.PartNumber
-	if p := models.Trimmed(req.PartNumber); p != "" {
-		partNumber = p
-	}
 	existing, dupErr := s.repo.FindPRLByBusinessKey(ctx, customer.UUID, uniqCode, period)
 	if dupErr != nil && !apperror.IsNotFound(dupErr) {
 		return nil, dupErr
@@ -203,10 +171,11 @@ func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest, su
 		UniqCode:       uniqCode,
 		ProductModel:   bom.ProductModel,
 		PartName:       bom.PartName,
-		PartNumber:     partNumber,
+		PartNumber:     bom.PartNumber,
 		ForecastPeriod: period,
 		Quantity:       req.Quantity,
 		Status:         models.PRLStatusPending,
+		Remarks:        normalizeOptionalString(req.Remarks),
 	}
 
 	if err := s.repo.CreatePRLs(ctx, []*models.PRL{item}); err != nil {
@@ -660,17 +629,21 @@ func (s *service) buildPRLFromEntry(ctx context.Context, entry models.CreatePRLE
 	if err != nil {
 		return nil, err
 	}
-	bom, err := s.repo.FindUniqBOMByUniqCode(ctx, models.Trimmed(entry.UniqCode))
+	uniqCode := models.Trimmed(entry.UniqCode)
+	if uniqCode == "" {
+		return nil, apperror.BadRequest("uniq_code is required")
+	}
+	bom, err := s.resolveUniqBOMForPRL(ctx, uniqCode)
 	if err != nil {
 		return nil, err
 	}
 
-	existing, dupErr := s.repo.FindPRLByBusinessKey(ctx, customer.UUID, models.Trimmed(entry.UniqCode), period)
+	existing, dupErr := s.repo.FindPRLByBusinessKey(ctx, customer.UUID, uniqCode, period)
 	if dupErr != nil && !apperror.IsNotFound(dupErr) {
 		return nil, dupErr
 	}
 	if existing != nil {
-		return nil, apperror.BadRequest(fmt.Sprintf("PRL sudah ada untuk customer %s, uniq_code %s, periode %s (PRL ID: %s)", customer.CustomerID, models.Trimmed(entry.UniqCode), period, existing.PRLID))
+		return nil, apperror.BadRequest(fmt.Sprintf("PRL sudah ada untuk customer %s, uniq_code %s, periode %s (PRL ID: %s)", customer.CustomerID, uniqCode, period, existing.PRLID))
 	}
 
 	return &models.PRL{
@@ -680,14 +653,70 @@ func (s *service) buildPRLFromEntry(ctx context.Context, entry models.CreatePRLE
 		CustomerCode:   customer.CustomerID,
 		CustomerName:   customer.CustomerName,
 		UniqBOMUUID:    bom.UUID,
-		UniqCode:       models.Trimmed(entry.UniqCode),
+		UniqCode:       uniqCode,
 		ProductModel:   bom.ProductModel,
 		PartName:       bom.PartName,
 		PartNumber:     bom.PartNumber,
 		ForecastPeriod: period,
 		Quantity:       entry.Quantity,
 		Status:         models.PRLStatusPending,
+		Remarks:        normalizeOptionalString(entry.Remarks),
 	}, nil
+}
+
+func (s *service) resolveUniqBOMForPRL(ctx context.Context, uniqCode string) (*models.UniqBillOfMaterial, error) {
+	uniqCode = models.Trimmed(uniqCode)
+	item, err := s.repo.FindItemByUniqCode(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	productModel := models.Trimmed(derefString(item.ProductModel))
+	partName := models.Trimmed(item.PartName)
+	partNumber := models.Trimmed(derefString(item.PartNumber))
+	if partName == "" {
+		return nil, apperror.BadRequest(fmt.Sprintf("part_name item %s kosong", uniqCode))
+	}
+	if partNumber == "" {
+		return nil, apperror.BadRequest(fmt.Sprintf("part_number item %s kosong", uniqCode))
+	}
+
+	bom, err := s.repo.FindUniqBOMByUniqCode(ctx, uniqCode)
+	if err != nil {
+		if appErr, ok := apperror.As(err); ok && appErr.Code == apperror.CodeNotFound {
+			newBOM := &models.UniqBillOfMaterial{
+				UUID:         uuid.NewString(),
+				UniqCode:     item.UniqCode,
+				ProductModel: productModel,
+				PartName:     partName,
+				PartNumber:   partNumber,
+			}
+			if createErr := s.repo.CreateUniqBOM(ctx, newBOM); createErr != nil {
+				return nil, createErr
+			}
+			return newBOM, nil
+		}
+		return nil, err
+	}
+
+	if bom.UniqCode != item.UniqCode || bom.ProductModel != productModel || bom.PartName != partName || bom.PartNumber != partNumber {
+		bom.UniqCode = item.UniqCode
+		bom.ProductModel = productModel
+		bom.PartName = partName
+		bom.PartNumber = partNumber
+		if err := s.repo.UpdateUniqBOM(ctx, bom); err != nil {
+			return nil, err
+		}
+	}
+
+	return bom, nil
+}
+
+func derefString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }
 
 func (s *service) resolveCustomer(ctx context.Context, customerUUID models.CustomerUUIDInput, customerCode string) (*struct {

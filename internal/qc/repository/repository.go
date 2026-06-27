@@ -160,12 +160,6 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 		if task.TaskType != "incoming_qc" {
 			return apperror.UnprocessableEntity("task_type must be incoming_qc")
 		}
-		if task.Status == "approved" {
-			return nil
-		}
-		if task.Status == "rejected" {
-			return apperror.Conflict("qc task already rejected")
-		}
 		if task.IncomingDNItemID == nil || *task.IncomingDNItemID <= 0 {
 			return apperror.UnprocessableEntity("incoming_dn_item_id is required for incoming_qc")
 		}
@@ -173,6 +167,12 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 		var dnItem procModels.IncomingDNItem
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&dnItem, "id = ?", *task.IncomingDNItemID).Error; err != nil {
 			return apperror.NotFound("incoming_dn_item tidak ditemukan")
+		}
+		if task.Status == "approved" {
+			return updateDeliveryNoteTotalPOIncoming(tx, dnItem.IncomingDNID)
+		}
+		if task.Status == "rejected" {
+			return apperror.Conflict("qc task already rejected")
 		}
 
 		if numberOfDefects > dnItem.QtyReceived {
@@ -198,8 +198,8 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 			return fmt.Errorf("update delivery_note_items: %w", err)
 		}
 
-		if err := tx.Model(&procModels.IncomingDN{}).Where("id = ?", dnItem.IncomingDNID).Update("total_po_incoming", approvedQty).Error; err != nil {
-			return fmt.Errorf("update total po incoming delivery_note: %w", err)
+		if err := updateDeliveryNoteTotalPOIncoming(tx, dnItem.IncomingDNID); err != nil {
+			return err
 		}
 
 		event := map[string]interface{}{
@@ -468,6 +468,36 @@ func loadDNTypeAndPONumber(tx *gorm.DB, dnID int64) (dnType string, poNumber str
 		return "", "", fmt.Errorf("load delivery_notes: %w", err)
 	}
 	return row.DnType, row.PoNumber, nil
+}
+
+func updateDeliveryNoteTotalPOIncoming(tx *gorm.DB, dnID int64) error {
+	if dnID <= 0 {
+		return apperror.UnprocessableEntity("dn_id is required for incoming_qc")
+	}
+
+	var total int
+	if err := tx.Table("qc_tasks qt").
+		Select("COALESCE(SUM(qt.good_quantity), 0)").
+		Joins("JOIN delivery_note_items dni ON dni.id = qt.incoming_dn_item_id").
+		Where("dni.dn_id = ? AND qt.task_type = ? AND qt.status = ?", dnID, "incoming_qc", "approved").
+		Scan(&total).Error; err != nil {
+		return fmt.Errorf("calculate total po incoming delivery_note: %w", err)
+	}
+
+	result := tx.Table("delivery_notes").
+		Where("id = ?", dnID).
+		Updates(map[string]interface{}{
+			"total_po_incoming": total,
+			"updated_at":        time.Now(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("update total po incoming delivery_note: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return apperror.NotFound("delivery_note tidak ditemukan")
+	}
+
+	return nil
 }
 
 func normalizeActor(actor string) string {
