@@ -126,11 +126,13 @@ func (s *service) ListBom(ctx context.Context, q models.ListBomQuery) (*models.L
 		UniqCode:       q.UniqCode,
 		Status:         q.Status,
 		Search:         q.Search,
-		SupplierID:     q.SupplierID,
-		Page:           page,
-		Limit:          limit,
-		OrderBy:        q.OrderBy,
-		OrderDirection: q.OrderDirection,
+		SupplierID:          q.SupplierID,
+		TypeMaterial:        q.TypeMaterial,
+		ExcludeSupplierUUID: q.ExcludeSupplierUUID,
+		Page:                page,
+		Limit:               limit,
+		OrderBy:             q.OrderBy,
+		OrderDirection:      q.OrderDirection,
 	})
 	if err != nil {
 		return nil, err
@@ -185,7 +187,7 @@ func (s *service) ListBom(ctx context.Context, q models.ListBomQuery) (*models.L
 			}
 		}
 
-		row.Children = s.buildChildTree(linesByBomID[b.ID], preload, parent.ID, 1)
+		row.Children = s.buildChildTree(linesByBomID[b.ID], preload, parent.ID, 1, q.TypeMaterial)
 
 		rows = append(rows, row)
 	}
@@ -200,7 +202,8 @@ func (s *service) ListBom(ctx context.Context, q models.ListBomQuery) (*models.L
 }
 
 // buildChildTree recursively builds child rows at a given level from flat lines.
-func (s *service) buildChildTree(lines []models.BomLine, preload *bomPreload, parentItemID int64, level int16) []models.BomTreeRow {
+// typeMaterialFilter: when non-empty, only children whose spec.TypeMaterial matches are included.
+func (s *service) buildChildTree(lines []models.BomLine, preload *bomPreload, parentItemID int64, level int16, typeMaterialFilter string) []models.BomTreeRow {
 	children := preload.childrenByParent(parentItemID, level, lines)
 	rows := make([]models.BomTreeRow, 0, len(children))
 	for _, line := range children {
@@ -227,10 +230,19 @@ func (s *service) buildChildTree(lines []models.BomLine, preload *bomPreload, pa
 			row.Version = &rev.Revision
 			if spec, ok := preload.specs[rev.ID]; ok {
 				row.MaterialSpec = s.toSpecDetail(&spec)
+				if typeMaterialFilter != "" {
+					if spec.TypeMaterial == nil || *spec.TypeMaterial != typeMaterialFilter {
+						continue
+					}
+				}
+			} else if typeMaterialFilter != "" {
+				continue
 			}
+		} else if typeMaterialFilter != "" {
+			continue
 		}
 		if level < 4 {
-			row.Children = s.buildChildTree(lines, preload, child.ID, level+1)
+			row.Children = s.buildChildTree(lines, preload, child.ID, level+1, typeMaterialFilter)
 		}
 		rows = append(rows, row)
 	}

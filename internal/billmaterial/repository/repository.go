@@ -103,7 +103,9 @@ type ListFilter struct {
 	Status         string
 	Search         string // ILIKE on uniq_code OR part_name
 	SupplierID     string // UUID — filter by material spec supplier
-	Page           int
+	TypeMaterial        string // raw | indirect | subcon — filter by item_material_specs.type_material
+	ExcludeSupplierUUID string // exclude bom items whose uniq_code already exists in supplier_item for this supplier
+	Page                int
 	Limit          int
 	OrderBy        string
 	OrderDirection string
@@ -785,7 +787,8 @@ func (r *repository) GetMachineNamesByIDs(ctx context.Context, ids []int64) (map
 // ---------------------------------------------------------------------------
 
 func (r *repository) ListBomItems(ctx context.Context, f ListFilter) ([]models.BomItem, int64, error) {
-	needItemJoin := f.UniqCode != "" || f.Search != "" || f.SupplierID != ""
+	needItemJoin := f.UniqCode != "" || f.Search != ""
+	needSpecJoin := f.SupplierID != ""
 
 	q := r.db.WithContext(ctx).Model(&models.BomItem{})
 	q = q.Where("bom_item.is_current = ?", true)
@@ -802,10 +805,35 @@ func (r *repository) ListBomItems(ctx context.Context, f ListFilter) ([]models.B
 	if f.Search != "" {
 		q = q.Where("items.uniq_code ILIKE ? OR items.part_name ILIKE ?", "%"+f.Search+"%", "%"+f.Search+"%")
 	}
-	if f.SupplierID != "" {
-		q = q.Joins(`JOIN item_revisions ON item_revisions.item_id = items.id`).
-			Joins(`JOIN item_material_specs ON item_material_specs.item_revision_id = item_revisions.id`).
-			Where("item_material_specs.supplier_id = ?", f.SupplierID)
+	if needSpecJoin {
+		q = q.Joins(`JOIN item_revisions ON item_revisions.id = bom_item.root_item_revision_id`).
+			Joins(`JOIN item_material_specs ON item_material_specs.item_revision_id = item_revisions.id`)
+		if f.SupplierID != "" {
+			q = q.Where("item_material_specs.supplier_id = ?", f.SupplierID)
+		}
+	}
+	if f.TypeMaterial != "" {
+		// Child: BOM yang salah satu child-nya punya type_material cocok.
+		childSub := r.db.Table("bom_lines").
+			Select("bom_lines.bom_item_id").
+			Joins(`JOIN item_revisions cr ON cr.id = COALESCE(bom_lines.child_item_revision_id, (SELECT MAX(ir.id) FROM item_revisions ir WHERE ir.item_id = bom_lines.child_item_id))`).
+			Joins("JOIN item_material_specs ims ON ims.item_revision_id = cr.id").
+			Where("ims.type_material = ?", f.TypeMaterial)
+		// Root: BOM yang root item-nya sendiri punya type_material cocok.
+		rootSub := r.db.Table("bom_item bi_r").
+			Select("bi_r.id").
+			Joins(`JOIN item_revisions rr ON rr.id = COALESCE(bi_r.root_item_revision_id, (SELECT MAX(ir2.id) FROM item_revisions ir2 WHERE ir2.item_id = bi_r.item_id))`).
+			Joins("JOIN item_material_specs rims ON rims.item_revision_id = rr.id").
+			Where("rims.type_material = ?", f.TypeMaterial)
+		q = q.Where("bom_item.id IN (?) OR bom_item.id IN (?)", childSub, rootSub)
+	}
+	if f.ExcludeSupplierUUID != "" {
+		// Exclude root BOM items whose uniq_code is already registered in supplier_item for this supplier.
+		alreadyAdded := r.db.Table("items AS ex_items").
+			Select("ex_items.id").
+			Joins("JOIN supplier_item si ON si.uniq_code = ex_items.uniq_code").
+			Where("si.supplier_uuid = ? AND si.deleted_at IS NULL AND ex_items.deleted_at IS NULL", f.ExcludeSupplierUUID)
+		q = q.Where("bom_item.item_id NOT IN (?)", alreadyAdded)
 	}
 
 	var total int64
