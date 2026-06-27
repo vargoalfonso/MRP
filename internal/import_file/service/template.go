@@ -144,3 +144,118 @@ func (s *importService) GenerateTemplatePrls(ctx context.Context) (*bytes.Buffer
 
 	return buf, nil
 }
+
+func (s *importService) GenerateTemplateKanban(ctx context.Context) (*bytes.Buffer, error) {
+	f := excelize.NewFile()
+
+	templateSheet := "Template"
+	masterSheet := "Master"
+
+	f.SetSheetName("Sheet1", templateSheet)
+	f.NewSheet(masterSheet)
+
+	// =========================
+	// Header Style
+	// =========================
+	headerStyle, _ := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{
+			Bold: true,
+		},
+	})
+
+	// =========================
+	// TEMPLATE SHEET
+	// =========================
+
+	headers := []string{
+		"item_uniq_code",
+		"kanban_qty",
+		"min_stock",
+		"max_stock",
+		"status",
+	}
+
+	for i, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(templateSheet, cell, h)
+		f.SetCellStyle(templateSheet, cell, cell, headerStyle)
+	}
+
+	// contoh data
+	example := []interface{}{
+		"EMA-001-LV2",
+		100,
+		20,
+		200,
+		"ACTIVE",
+	}
+
+	for i, v := range example {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 2)
+		f.SetCellValue(templateSheet, cell, v)
+	}
+
+	f.SetColWidth(templateSheet, "A", "E", 20)
+
+	f.SetPanes(templateSheet, &excelize.Panes{
+		Freeze:      true,
+		YSplit:      1,
+		TopLeftCell: "A2",
+	})
+
+	// =========================
+	// MASTER SHEET
+	// =========================
+
+	masterHeaders := []string{
+		"No",
+		"Kanban Number",
+		"Item Uniq Code",
+		"Kanban Qty",
+		"Min Stock",
+		"Max Stock",
+		"Status",
+		"Created At",
+	}
+
+	for i, h := range masterHeaders {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(masterSheet, cell, h)
+		f.SetCellStyle(masterSheet, cell, cell, headerStyle)
+	}
+
+	kanbans, err := s.repo.GetAllKanban(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for i, k := range kanbans {
+		row := i + 2
+
+		f.SetCellValue(masterSheet, fmt.Sprintf("A%d", row), i+1)
+		f.SetCellValue(masterSheet, fmt.Sprintf("B%d", row), k.KanbanNumber)
+		f.SetCellValue(masterSheet, fmt.Sprintf("C%d", row), k.ItemUniqCode)
+		f.SetCellValue(masterSheet, fmt.Sprintf("D%d", row), k.KanbanQty)
+		f.SetCellValue(masterSheet, fmt.Sprintf("E%d", row), k.MinStock)
+		f.SetCellValue(masterSheet, fmt.Sprintf("F%d", row), k.MaxStock)
+		f.SetCellValue(masterSheet, fmt.Sprintf("G%d", row), k.Status)
+		f.SetCellValue(masterSheet, fmt.Sprintf("H%d", row), k.CreatedAt.Format("2006-01-02 15:04:05"))
+	}
+
+	f.SetColWidth(masterSheet, "A", "H", 20)
+
+	f.SetPanes(masterSheet, &excelize.Panes{
+		Freeze:      true,
+		YSplit:      1,
+		TopLeftCell: "A2",
+	})
+
+	f.SetActiveSheet(0)
+
+	buf, err := f.WriteToBuffer()
+	if err != nil {
+		return nil, err
+	}
+
+	return buf, nil
+}

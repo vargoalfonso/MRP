@@ -15,10 +15,13 @@ import (
 
 type ImportService interface {
 	GenerateTemplatePrls(ctx context.Context) (*bytes.Buffer, error)
+	GenerateTemplateKanban(ctx context.Context) (*bytes.Buffer, error)
 
 	ParsingPRL(ctx context.Context, filePath string) ([]models.ImportDataRequest, error)
+	ParsingKanban(ctx context.Context, filePath string) ([]models.CreateKanbanParameterRequest, error)
 
 	BulkInsertPRL(ctx context.Context, data []models.ImportDataRequest, filePath string) (*models.BulkInsertResponse, error)
+	BulkInsertKanban(ctx context.Context, data []models.CreateKanbanParameterRequest, filePath string) (*models.BulkInsertResponse, error)
 }
 
 type importService struct {
@@ -173,4 +176,132 @@ func (s *importService) appendErrorToExcel(filePath string, failedRows []models.
 	}
 
 	return nil
+}
+
+func (s *importService) BulkInsertKanban(ctx context.Context, data []models.CreateKanbanParameterRequest, filePath string) (*models.BulkInsertResponse, error) {
+
+	var failedRows []models.FailedImportKanban
+	success := 0
+
+	itemCache := make(map[string]*models.Item)
+
+	totalKanban, err := s.repo.CountKanban(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	counter := totalKanban
+
+	for i, item := range data {
+
+		uniqCode := strings.TrimSpace(item.ItemUniqCode)
+
+		createFailedRow := func(msg string) models.FailedImportKanban {
+			return models.FailedImportKanban{
+				RowNumber:    i + 2,
+				ItemUniqCode: uniqCode,
+				KanbanQty:    item.KanbanQty,
+				MinStock:     item.MinStock,
+				MaxStock:     item.MaxStock,
+				Status:       item.Status,
+				ErrorMessage: msg,
+			}
+		}
+
+		if uniqCode == "" {
+			failedRows = append(failedRows, createFailedRow("item_uniq_code kosong"))
+			continue
+		}
+
+		// cek item master
+		if _, ok := itemCache[uniqCode]; !ok {
+			itm, err := s.repo.GetItemByUniqCode(ctx, uniqCode)
+			if err != nil || itm == nil {
+				failedRows = append(failedRows, createFailedRow("item tidak ditemukan"))
+				continue
+			}
+
+			itemCache[uniqCode] = itm
+		}
+
+		// cek duplicate
+		exist, err := s.repo.IsKanbanExist(ctx, uniqCode)
+		if err != nil {
+			failedRows = append(failedRows, createFailedRow(err.Error()))
+			continue
+		}
+
+		if exist {
+			failedRows = append(failedRows, createFailedRow("kanban sudah ada"))
+			continue
+		}
+
+		counter++
+
+		kanbanNumber := fmt.Sprintf(
+			"KBN-%d-%04d",
+			time.Now().Year(),
+			counter,
+		)
+
+		kanban := models.KanbanParameter{
+			KanbanNumber: kanbanNumber,
+			ItemUniqCode: uniqCode,
+			KanbanQty:    item.KanbanQty,
+			MinStock:     item.MinStock,
+			MaxStock:     item.MaxStock,
+			Status:       item.Status,
+			CreatedAt:    time.Now(),
+			UpdatedAt:    time.Now(),
+		}
+
+		err = s.repo.CreateKanban(ctx, &kanban)
+		if err != nil {
+			failedRows = append(failedRows, createFailedRow(err.Error()))
+			continue
+		}
+
+		success++
+	}
+
+	if len(failedRows) > 0 {
+		if err := s.appendKanbanErrorToExcel(filePath, failedRows); err != nil {
+			return nil, fmt.Errorf("gagal menulis error ke excel: %v", err)
+		}
+	}
+
+	return &models.BulkInsertResponse{
+		Success:    success,
+		Failed:     len(failedRows),
+		FailedFile: filePath,
+	}, nil
+}
+
+func (s *importService) appendKanbanErrorToExcel(filePath string, failedRows []models.FailedImportKanban) error {
+	f, err := excelize.OpenFile(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	sheet := f.GetSheetName(0)
+
+	// Template Kanban punya 5 kolom
+	// A=item_uniq_code
+	// B=kanban_qty
+	// C=min_stock
+	// D=max_stock
+	// E=status
+	// F=Keterangan Error
+
+	errCol := "F"
+
+	f.SetCellValue(sheet, errCol+"1", "Keterangan Error")
+
+	for _, row := range failedRows {
+		cell := fmt.Sprintf("%s%d", errCol, row.RowNumber)
+		f.SetCellValue(sheet, cell, row.ErrorMessage)
+	}
+
+	return f.Save()
 }

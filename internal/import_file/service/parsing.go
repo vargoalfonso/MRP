@@ -81,3 +81,60 @@ func (s *importService) ParsingPRL(ctx context.Context, filePath string) ([]mode
 
 	return result, nil
 }
+
+func (s *importService) ParsingKanban(ctx context.Context, filePath string) ([]models.CreateKanbanParameterRequest, error) {
+	f, err := excelize.OpenFile(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	sheet := f.GetSheetName(0)
+
+	rows, err := f.GetRows(sheet)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(rows) < 2 {
+		return nil, fmt.Errorf("file kosong")
+	}
+
+	var result []models.CreateKanbanParameterRequest
+
+	for i := 1; i < len(rows); i++ {
+		row := rows[i]
+
+		item := models.CreateKanbanParameterRequest{
+			ItemUniqCode: helper.SafeGet(row, 0),
+			Status:       helper.SafeGet(row, 4),
+		}
+
+		if item.ItemUniqCode == "" {
+			continue
+		}
+
+		kanbanQty, err := strconv.Atoi(cleanNumber(helper.SafeGet(row, 1)))
+		if err != nil {
+			return nil, fmt.Errorf("row %d: kanban_qty tidak valid", i+1)
+		}
+
+		minStock, err := strconv.Atoi(cleanNumber(helper.SafeGet(row, 2)))
+		if err != nil {
+			return nil, fmt.Errorf("row %d: min_stock tidak valid", i+1)
+		}
+
+		maxStock, err := strconv.Atoi(cleanNumber(helper.SafeGet(row, 3)))
+		if err != nil {
+			return nil, fmt.Errorf("row %d: max_stock tidak valid", i+1)
+		}
+
+		item.KanbanQty = kanbanQty
+		item.MinStock = minStock
+		item.MaxStock = maxStock
+
+		result = append(result, item)
+	}
+
+	return result, nil
+}

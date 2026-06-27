@@ -17,6 +17,10 @@ type ImportRepository interface {
 	GetAllSuppliers(ctx context.Context) ([]map[string]interface{}, error)
 	GetAllCustomers(ctx context.Context) ([]map[string]interface{}, error)
 	GetAllSupplierItems(ctx context.Context) ([]map[string]interface{}, error)
+	GetAllKanban(ctx context.Context) ([]models.KanbanParameter, error)
+	IsKanbanExist(ctx context.Context, uniqCode string) (bool, error)
+	CreateKanban(ctx context.Context, data *models.KanbanParameter) error
+	CountKanban(ctx context.Context) (int64, error)
 }
 
 type importRepository struct {
@@ -161,4 +165,41 @@ func (r *importRepository) GetAllSupplierItems(ctx context.Context) ([]map[strin
 	}
 
 	return results, nil
+}
+
+func (r *importRepository) GetAllKanban(ctx context.Context) ([]models.KanbanParameter, error) {
+	var data []models.KanbanParameter
+
+	err := r.db.WithContext(ctx).
+		Order("kanban_number asc").
+		Find(&data).Error
+
+	return data, err
+}
+
+func (r *importRepository) IsKanbanExist(ctx context.Context, uniqCode string) (bool, error) {
+	var count int64
+
+	err := r.db.WithContext(ctx).
+		Model(&models.KanbanParameter{}).
+		Where("item_uniq_code = ?", uniqCode).
+		Count(&count).Error
+
+	return count > 0, err
+}
+
+func (r *importRepository) CreateKanban(ctx context.Context, data *models.KanbanParameter) error {
+	return r.db.WithContext(ctx).
+		Create(data).
+		Error
+}
+
+func (r *importRepository) CountKanban(ctx context.Context) (int64, error) {
+	var total int64
+
+	err := r.db.WithContext(ctx).
+		Model(&models.KanbanParameter{}).
+		Count(&total).Error
+
+	return total, err
 }

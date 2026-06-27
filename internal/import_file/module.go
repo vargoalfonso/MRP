@@ -45,14 +45,12 @@ func NewHTTPModule(
 func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	v1 := r.Group("/api/v1")
 
-	v1.GET("/template/prls", m.base.RunAction(m.handler.DownloadTemplate))
+	v1.GET("/template/:type", m.base.RunAction(m.handler.DownloadTemplate))
 
-	importGroup := v1.Group("/import/prls")
-	// importGroup.Use(authMiddleware.JWTMiddleware(m.authenticator))
-
+	importGroup := v1.Group("/import/:type")
 	{
 		importGroup.POST("",
-			m.base.RunAction(m.handler.BulkImportPRL),
+			m.base.RunAction(m.handler.BulkImport),
 		)
 
 		importGroup.GET("/failed/:filename",
