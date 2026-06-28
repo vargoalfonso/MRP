@@ -17,6 +17,7 @@ type IRoleRepository interface {
 
 	GetPermissionsByRole(ctx context.Context, roleName string) (map[string]interface{}, error)
 	FindByName(ctx context.Context, name string) (*models.Role, error)
+	FindUsersByRoleID(ctx context.Context, roleID int64) ([]models.RoleUser, error)
 }
 
 type repository struct {
@@ -29,10 +30,25 @@ func New(db *gorm.DB) IRoleRepository {
 
 func (r *repository) FindAll(ctx context.Context) ([]models.Role, error) {
 	var roles []models.Role
-
-	err := r.db.WithContext(ctx).Find(&roles).Error
-	if err != nil {
+	if err := r.db.WithContext(ctx).Find(&roles).Error; err != nil {
 		return nil, err
+	}
+
+	type roleCount struct {
+		RoleID int64 `gorm:"column:role_id"`
+		Count  int64 `gorm:"column:count"`
+	}
+	var counts []roleCount
+	if err := r.db.WithContext(ctx).
+		Raw("SELECT role_id, COUNT(*) AS count FROM employees GROUP BY role_id").
+		Scan(&counts).Error; err == nil {
+		cm := make(map[int64]int64, len(counts))
+		for _, c := range counts {
+			cm[c.RoleID] = c.Count
+		}
+		for i := range roles {
+			roles[i].UserCount = cm[roles[i].ID]
+		}
 	}
 
 	return roles, nil
@@ -128,4 +144,18 @@ func (r *repository) FindByName(ctx context.Context, name string) (*models.Role,
 	}
 
 	return &role, nil
+}
+
+func (r *repository) FindUsersByRoleID(ctx context.Context, roleID int64) ([]models.RoleUser, error) {
+	var users []models.RoleUser
+	err := r.db.WithContext(ctx).
+		Table("employees").
+		Select("id, full_name, email, job_title, status, department_id, join_date").
+		Where("role_id = ?", roleID).
+		Order("id ASC").
+		Scan(&users).Error
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
 }

@@ -152,6 +152,32 @@ func (h *HTTPHandler) UpdateRole(appCtx *app.Context) *app.CostumeResponse {
 	}
 }
 
+// GetUsersByRoleID handles GET /roles/:id/users
+func (h *HTTPHandler) GetUsersByRoleID(appCtx *app.Context) *app.CostumeResponse {
+	idParam := appCtx.Param("id")
+
+	id, err := strconv.ParseInt(idParam, 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid id",
+		}
+	}
+
+	users, err := h.service.GetUsersByRoleID(appCtx.Request.Context(), id)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      users,
+	}
+}
+
 // DeleteRole handles DELETE /roles/:id
 func (h *HTTPHandler) DeleteRole(appCtx *app.Context) *app.CostumeResponse {
 	idParam := appCtx.Param("id")

@@ -17,6 +17,7 @@ type IRoleService interface {
 
 	// 🔥 RBAC
 	GetPermissions(ctx context.Context, role string) (map[string]interface{}, error)
+	GetUsersByRoleID(ctx context.Context, roleID int64) ([]models.RoleUser, error)
 }
 
 // implementation
@@ -59,4 +60,8 @@ func (s *service) Delete(ctx context.Context, id int64) error {
 
 func (s *service) GetPermissions(ctx context.Context, role string) (map[string]interface{}, error) {
 	return s.repo.GetPermissionsByRole(ctx, role)
+}
+
+func (s *service) GetUsersByRoleID(ctx context.Context, roleID int64) ([]models.RoleUser, error) {
+	return s.repo.FindUsersByRoleID(ctx, roleID)
 }
