@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ganasa18/go-template/internal/inventory/models"
 	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"gorm.io/gorm"
@@ -81,6 +82,7 @@ type RawMaterialRow struct {
 	CreatedAt             time.Time `gorm:"column:created_at"`
 	UpdatedBy             *string   `gorm:"column:updated_by"`
 	UpdatedAt             time.Time `gorm:"column:updated_at"`
+	QR                    *string   `gorm:"column:qr"`
 }
 
 type IndirectRow struct {
@@ -271,6 +273,9 @@ type IRepository interface {
 	// GetCyclePengiriman returns the delivery cycle (integer) from supplier_item.customer_cycle.
 	// Returns 1 when no record exists or parsing fails (safe default).
 	GetCyclePengiriman(ctx context.Context, uniqCode string) (int, error)
+
+	FindDNByItemUniqCode(ctx context.Context, uniqCode string) (*string, error)
+	UpdateRawMaterialQR(ctx context.Context, uniqCode, qr string) error
 }
 
 type ItemLookupRow struct {
@@ -1318,4 +1323,32 @@ func (r *repo) GetCyclePengiriman(ctx context.Context, uniqCode string) (int, er
 		return 1, nil
 	}
 	return cycle, nil
+}
+
+func (r *repo) FindDNByItemUniqCode(ctx context.Context, uniqCode string) (*string, error) {
+	var packingNumber string
+
+	err := r.db.WithContext(ctx).
+		Table("delivery_note_items").
+		Select("packing_number").
+		Where("item_uniq_code = ?", uniqCode).
+		Where(`"check" = ?`, "progress").
+		Limit(1).
+		Scan(&packingNumber).Error
+	if err != nil {
+		return nil, err
+	}
+
+	if packingNumber == "" {
+		return nil, nil
+	}
+
+	return &packingNumber, nil
+}
+
+func (r *repo) UpdateRawMaterialQR(ctx context.Context, uniqCode, qr string) error {
+	return r.db.WithContext(ctx).
+		Model(&models.RawMaterial{}).
+		Where("uniq_code = ?", uniqCode).
+		Update("qr", qr).Error
 }

@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"math"
 	"strings"
 	"time"
@@ -11,6 +14,7 @@ import (
 	"github.com/ganasa18/go-template/pkg/inventoryconst"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/google/uuid"
+	"github.com/skip2/go-qrcode"
 	"gorm.io/gorm"
 )
 
@@ -54,6 +58,8 @@ type IService interface {
 	// Work Order consumption — deducts stock and writes outgoing movement logs for each WO item.
 	ConsumeStockForWorkOrder(ctx context.Context, items []ConsumeItem, woNumber string, performedBy string) error
 	AppendMovementLog(ctx context.Context, tx *gorm.DB, input MovementLogInput) error
+
+	GenerateQR(ctx context.Context, uniqCode string) (*string, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -1060,6 +1066,7 @@ func rawMaterialRowToItem(r repository.RawMaterialRow) invModels.RawMaterialItem
 		CreatedAt:             r.CreatedAt,
 		UpdatedBy:             r.UpdatedBy,
 		UpdatedAt:             r.UpdatedAt,
+		QR:                    r.QR,
 	}
 }
 
@@ -1405,4 +1412,50 @@ func (s *service) AppendMovementLog(ctx context.Context, tx *gorm.DB, input Move
 	}
 	s.writeMovementLog(ctx, input)
 	return nil
+}
+
+func (s *service) GenerateQR(ctx context.Context, uniqCode string) (*string, error) {
+	packingNumber, err := s.repo.FindDNByItemUniqCode(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	if packingNumber == nil {
+		return nil, errors.New("delivery note not found")
+	}
+
+	payload := map[string]string{
+		"packing": *packingNumber,
+	}
+
+	qrBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	qrBase64, err := generateQRBase64(string(qrBytes))
+	if err != nil {
+		return nil, err
+	}
+
+	// Simpan QR ke raw_material
+	if err := s.repo.UpdateRawMaterialQR(ctx, uniqCode, qrBase64); err != nil {
+		return nil, err
+	}
+
+	return &qrBase64, nil
+}
+
+func generateQRBase64(value string) (string, error) {
+	// generate PNG QR (256x256)
+	png, err := qrcode.Encode(value, qrcode.Medium, 256)
+	if err != nil {
+		return "", err
+	}
+
+	// encode ke base64
+	base64Str := base64.StdEncoding.EncodeToString(png)
+
+	// optional: prefix biar langsung bisa dipakai di frontend
+	return "data:image/png;base64," + base64Str, nil
 }

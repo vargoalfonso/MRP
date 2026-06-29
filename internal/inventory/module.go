@@ -96,6 +96,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	rm.PUT("/:id", perm("inventory", "update"), m.base.RunAction(m.handler.UpdateRawMaterial))
 	rm.DELETE("/:id", perm("inventory", "delete"), m.base.RunAction(m.handler.DeleteRawMaterial))
 	rm.GET("/:id/history", perm("inventory", "view"), m.base.RunAction(m.handler.GetRawMaterialHistory))
+	rm.GET("/:id/create-qr", m.base.RunAction(m.handler.CreateQR))
 
 	// --- Indirect Raw Material ---
 	ind := g.Group("/indirect-materials")

@@ -100,6 +100,7 @@ type RawMaterialItem struct {
 	CreatedAt             time.Time `json:"created_at"`
 	UpdatedBy             *string   `json:"updated_by"`
 	UpdatedAt             time.Time `json:"updated_at"`
+	QR                    *string   `json:"qr"`
 }
 
 type RawMaterialListResponse struct {

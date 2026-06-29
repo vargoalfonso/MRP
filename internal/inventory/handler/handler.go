@@ -598,3 +598,21 @@ func (h *HTTPHandler) GetKanbanSummary(ctx *app.Context) *app.CostumeResponse {
 		Data:      data,
 	}
 }
+
+func (h *HTTPHandler) CreateQR(ctx *app.Context) *app.CostumeResponse {
+	code := ctx.Param("id")
+
+	qr, err := h.svc.GenerateQR(ctx.Request.Context(), code)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "Success",
+		Data: map[string]interface{}{
+			"qr": qr,
+		},
+	}
+}
