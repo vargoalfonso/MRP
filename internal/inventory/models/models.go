@@ -49,6 +49,7 @@ type RawMaterial struct {
 	UpdatedBy *string    `gorm:"size:255"`
 	UpdatedAt time.Time  `gorm:"not null;default:now()"`
 	DeletedAt *time.Time `gorm:"index"`
+	QR        *string
 }
 
 func (RawMaterial) TableName() string { return "raw_materials" }

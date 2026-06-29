@@ -232,7 +232,7 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 				Order("scanned_at DESC").Limit(1).Scan(&latestScan)
 			warehouseLocation = latestScan.WarehouseLocation
 
-			if err := r.postToInventoryByDNType(tx, dnType, dnItem.ItemUniqCode, approvedQty, dnItem.WeightReceived, dnItem.Uom, warehouseLocation, performedBy); err != nil {
+			if err := r.postToInventoryByDNType(tx, dnType, dnItem.ItemUniqCode, approvedQty, dnItem.WeightReceived, dnItem.Uom, warehouseLocation, performedBy, *task.IncomingDNItemID); err != nil {
 				return err
 			}
 			_ = poNumber // reserved for future PO rollup

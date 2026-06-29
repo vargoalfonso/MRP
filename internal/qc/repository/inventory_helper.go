@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	procModels "github.com/ganasa18/go-template/internal/procurement/models"
 	"github.com/google/uuid"
+	"github.com/skip2/go-qrcode"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -19,12 +22,24 @@ type inventoryHelper struct {
 }
 
 // postToInventoryByDNType routes to the appropriate inventory table based on DN type.
-func (r *repo) postToInventoryByDNType(tx *gorm.DB, dnType string, itemUniqCode string, approvedQty int, weightKg *float64, uom *string, warehouseLocation *string, createdBy string) error {
+func (r *repo) postToInventoryByDNType(tx *gorm.DB, dnType string, itemUniqCode string, approvedQty int, weightKg *float64, uom *string, warehouseLocation *string, createdBy string, DNID int64) error {
 	createdBy = normalizeActor(createdBy)
+
+	var dnNumber string
+
+	err := tx.
+		Table("delivery_notes").
+		Select("dn_number").
+		Where("id = ?", DNID).
+		Scan(&dnNumber).Error
+
+	if err != nil {
+		return fmt.Errorf("get delivery note: %w", err)
+	}
 
 	switch strings.ToUpper(strings.TrimSpace(dnType)) {
 	case "RM", "RAW MATERIAL":
-		return r.upsertRawMaterial(tx, itemUniqCode, float64(approvedQty), weightKg, uom, warehouseLocation, createdBy)
+		return r.upsertRawMaterial(tx, itemUniqCode, float64(approvedQty), weightKg, uom, warehouseLocation, createdBy, dnNumber)
 	case "IRM", "IB", "INDIRECT", "INDIRECT RAW MATERIAL":
 		return r.upsertIndirectRawMaterial(tx, itemUniqCode, float64(approvedQty), weightKg, uom, warehouseLocation, createdBy)
 	case "SC", "SUBCON", "SUBCON MATERIAL", "SUBCON RAW MATERIAL", "SUB CON", "SUB-CON":
@@ -47,6 +62,20 @@ func lookupPOItem(tx *gorm.DB, itemUniqCode string) (partNumber, partName, mater
 	return
 }
 
+func generateQRBase64(value string) (string, error) {
+	// generate PNG QR (256x256)
+	png, err := qrcode.Encode(value, qrcode.Medium, 256)
+	if err != nil {
+		return "", err
+	}
+
+	// encode ke base64
+	base64Str := base64.StdEncoding.EncodeToString(png)
+
+	// optional: prefix biar langsung bisa dipakai di frontend
+	return "data:image/png;base64," + base64Str, nil
+}
+
 // upsertRawMaterial creates or updates raw material entry and posts stock increase.
 func (r *repo) upsertRawMaterial(
 	tx *gorm.DB,
@@ -56,7 +85,25 @@ func (r *repo) upsertRawMaterial(
 	uom *string,
 	warehouseLocation *string,
 	createdBy string,
+	dnNumber string,
 ) error {
+
+	payload := map[string]string{
+		"packing": dnNumber,
+		"code":    itemUniqCode,
+	}
+
+	qrBytes, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	qrValue := string(qrBytes)
+
+	qrBase64, err := generateQRBase64(qrValue)
+	if err != nil {
+		return err
+	}
 
 	var rm invModels.RawMaterial
 
@@ -125,6 +172,7 @@ func (r *repo) upsertRawMaterial(
 			CreatedBy:         &createdBy,
 			CreatedAt:         now,
 			UpdatedAt:         now,
+			QR:                &qrBase64,
 		}
 
 		if weightKg != nil {
@@ -163,6 +211,7 @@ func (r *repo) upsertRawMaterial(
 		"stock_qty":  gorm.Expr("stock_qty + ?", approvedQty),
 		"updated_by": &createdBy,
 		"updated_at": time.Now(),
+		"qr":         &qrBase64,
 	}
 
 	if weightKg != nil {
