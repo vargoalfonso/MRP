@@ -84,6 +84,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 
 	// ✅ QC Process (round 1 / 2 / Scan Out Baru Lanjut Round 3/Round Final)
 	qcGroup := qc.Group("/process")
+	qcGroup.POST("/list", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.IssueList))
 	qcGroup.POST("/approve", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.QCApprove))
 	qcGroup.POST("/reject", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.QCReject))
 }
