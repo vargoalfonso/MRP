@@ -51,7 +51,7 @@ type ChildInput struct {
 	Uom        *string `json:"uom"`
 
 	// BOM line
-	Level       int16    `json:"level" validate:"required,min=1,max=4"`
+	Level       int16    `json:"level" validate:"required,min=1,max=6"`
 	QtyPerUniq  float64  `json:"qty_per_uniq" validate:"required,gt=0"`
 	ScrapFactor *float64 `json:"scrap_factor"`
 	IsPhantom   *bool    `json:"is_phantom"`

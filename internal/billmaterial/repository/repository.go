@@ -65,6 +65,9 @@ type IRepository interface {
 	GetSupplierNamesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
 	FindSupplierByCode(ctx context.Context, code string) (*models.Supplier, error)
 	ListAllSuppliers(ctx context.Context) ([]models.Supplier, error)
+	ListAllProcesses(ctx context.Context) ([]models.ProcessParameter, error)
+	ListAllMachines(ctx context.Context) ([]models.MasterMachine, error)
+	ListAllUoms(ctx context.Context) ([]models.UomParameter, error)
 	GetProcessNamesByIDs(ctx context.Context, ids []int64) (map[int64]string, error)
 	GetProcessSequencesByIDs(ctx context.Context, ids []int64) (map[int64]int, error)
 	GetMachineNamesByIDs(ctx context.Context, ids []int64) (map[int64]string, error)
@@ -696,6 +699,39 @@ func (r *repository) FindSupplierByCode(ctx context.Context, code string) (*mode
 		return nil, apperror.InternalWrap("FindSupplierByCode", err)
 	}
 	return &s, nil
+}
+
+func (r *repository) ListAllProcesses(ctx context.Context) ([]models.ProcessParameter, error) {
+	var rows []models.ProcessParameter
+	if err := r.db.WithContext(ctx).
+		Select("id", "process_code", "process_name").
+		Order("process_code").
+		Find(&rows).Error; err != nil {
+		return nil, apperror.InternalWrap("ListAllProcesses", err)
+	}
+	return rows, nil
+}
+
+func (r *repository) ListAllMachines(ctx context.Context) ([]models.MasterMachine, error) {
+	var rows []models.MasterMachine
+	if err := r.db.WithContext(ctx).
+		Select("id", "machine_number", "machine_name").
+		Order("machine_number").
+		Find(&rows).Error; err != nil {
+		return nil, apperror.InternalWrap("ListAllMachines", err)
+	}
+	return rows, nil
+}
+
+func (r *repository) ListAllUoms(ctx context.Context) ([]models.UomParameter, error) {
+	var rows []models.UomParameter
+	if err := r.db.WithContext(ctx).
+		Select("id", "code", "name").
+		Order("code").
+		Find(&rows).Error; err != nil {
+		return nil, apperror.InternalWrap("ListAllUoms", err)
+	}
+	return rows, nil
 }
 
 func (r *repository) ListAllSuppliers(ctx context.Context) ([]models.Supplier, error) {

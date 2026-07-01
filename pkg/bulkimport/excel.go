@@ -166,7 +166,7 @@ func (r bomSampleRow) toSlice(totalCols int) []string {
 // Sheet 1 "Items" has headers + sample rows.
 // Sheet 2 "Suppliers" lists all active suppliers for reference (skipped when suppliers is nil).
 // Route fields are inlined as numbered columns: op_seq_1 … tooling_ref_7.
-func BuildBomTemplate(suppliers []SupplierRef) (*excelize.File, error) {
+func BuildBomTemplate(md *BomTemplateMasterData) (*excelize.File, error) {
 	f := excelize.NewFile()
 	f.SetSheetName("Sheet1", "Items")
 
@@ -284,16 +284,110 @@ func BuildBomTemplate(suppliers []SupplierRef) (*excelize.File, error) {
 	}
 
 	// Sheet 2 — Suppliers reference list
-	if len(suppliers) > 0 {
-		f.NewSheet("Suppliers")
-		_ = f.SetCellValue("Suppliers", "A1", "supplier_code")
-		_ = f.SetCellValue("Suppliers", "B1", "supplier_name")
-		for i, sp := range suppliers {
-			rowNum := i + 2
-			_ = f.SetCellValue("Suppliers", fmt.Sprintf("A%d", rowNum), sp.Code)
-			_ = f.SetCellValue("Suppliers", fmt.Sprintf("B%d", rowNum), sp.Name)
+	if md != nil {
+		if err := writeMasterDataSheet(f, md); err != nil {
+			return nil, err
 		}
 	}
 
 	return f, nil
+}
+
+// RefRow adalah baris referensi code/name generik untuk sheet Master Data.
+type RefRow struct{ Code, Name string }
+
+// BomTemplateMasterData menampung daftar referensi yang dirender di sheet "Master Data".
+type BomTemplateMasterData struct {
+	Processes []RefRow
+	Machines  []RefRow
+	Uoms      []RefRow
+	Suppliers []RefRow
+}
+
+func writeMasterDataSheet(f *excelize.File, md *BomTemplateMasterData) error {
+	const sheet = "Master Data"
+	f.NewSheet(sheet)
+
+	row := 1
+	set := func(col, r int, v string) error {
+		cell, _ := excelize.CoordinatesToCellName(col, r)
+		return f.SetCellValue(sheet, cell, v)
+	}
+	section := func(title string) error {
+		if err := set(1, row, title); err != nil {
+			return err
+		}
+		row++
+		return nil
+	}
+	table := func(header []string, data [][]string) error {
+		for i, h := range header {
+			if err := set(i+1, row, h); err != nil {
+				return err
+			}
+		}
+		row++
+		for _, rr := range data {
+			for i, v := range rr {
+				if err := set(i+1, row, v); err != nil {
+					return err
+				}
+			}
+			row++
+		}
+		row++ // spacer antar tabel
+		return nil
+	}
+
+	_ = section("PROCESS (isi process_code_n dengan process_code)")
+	procData := make([][]string, 0, len(md.Processes))
+	for _, pr := range md.Processes {
+		procData = append(procData, []string{pr.Code, pr.Name})
+	}
+	if err := table([]string{"process_code", "process_name"}, procData); err != nil {
+		return err
+	}
+
+	_ = section("MACHINE (isi machine_number_n dengan machine_number)")
+	machData := make([][]string, 0, len(md.Machines))
+	for _, m := range md.Machines {
+		machData = append(machData, []string{m.Code, m.Name})
+	}
+	if err := table([]string{"machine_number", "machine_name"}, machData); err != nil {
+		return err
+	}
+
+	_ = section("UOM (isi uom dengan code)")
+	uomData := make([][]string, 0, len(md.Uoms))
+	for _, u := range md.Uoms {
+		uomData = append(uomData, []string{u.Code, u.Name})
+	}
+	if err := table([]string{"code", "name"}, uomData); err != nil {
+		return err
+	}
+
+	_ = section("SUPPLIER (isi supplier_code dengan supplier_code)")
+	supData := make([][]string, 0, len(md.Suppliers))
+	for _, sp := range md.Suppliers {
+		supData = append(supData, []string{sp.Code, sp.Name})
+	}
+	if err := table([]string{"supplier_code", "supplier_name"}, supData); err != nil {
+		return err
+	}
+
+	_ = section("NILAI ENUM (pilihan valid)")
+	if err := table([]string{"kolom", "nilai valid"}, [][]string{
+		{"row_type", "ROOT | CHILD"},
+		{"status", "Active | Inactive"},
+		{"level", "1 - 6 (1 = child, 2 = grand child, dst.)"},
+		{"form", "Plate | Coil | Pipe | Rod | Wire | Other"},
+		{"type_material", "raw | indirect | subcon"},
+		{"tooling_ref_n", "Dies | JIG | CF | Other"},
+	}); err != nil {
+		return err
+	}
+
+	_ = f.SetColWidth(sheet, "A", "A", 28)
+	_ = f.SetColWidth(sheet, "B", "B", 40)
+	return nil
 }

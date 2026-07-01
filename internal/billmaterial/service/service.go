@@ -241,7 +241,7 @@ func (s *service) buildChildTree(lines []models.BomLine, preload *bomPreload, pa
 		} else if typeMaterialFilter != "" {
 			continue
 		}
-		if level < 4 {
+		if level < 6 {
 			row.Children = s.buildChildTree(lines, preload, child.ID, level+1, typeMaterialFilter)
 		}
 		rows = append(rows, row)
@@ -426,7 +426,7 @@ func (s *service) createChildren(ctx context.Context, bomID, parentItemID int64,
 			return err
 		}
 
-		if len(c.Children) > 0 && c.Level < 4 {
+		if len(c.Children) > 0 && c.Level < 6 {
 			if err := s.createChildren(ctx, bomID, childID, c.Children); err != nil {
 				return err
 			}
@@ -1628,7 +1628,7 @@ func (s *service) buildDetailTree(lines []models.BomLine, preload *bomPreload, p
 				row.ProcessRoutes = routes
 			}
 		}
-		if level < 4 {
+		if level < 6 {
 			row.Children = s.buildDetailTree(lines, preload, child.ID, level+1)
 		}
 		rows = append(rows, row)
@@ -2007,16 +2007,41 @@ var bomImportItemHeaders = func() []string {
 }()
 
 func (s *service) DownloadImportTemplate(ctx context.Context) ([]byte, error) {
+	md := &bulkimport.BomTemplateMasterData{}
+
 	suppliers, err := s.repo.ListAllSuppliers(ctx)
 	if err != nil {
 		return nil, apperror.InternalWrap("list suppliers for template", err)
 	}
-	refs := make([]bulkimport.SupplierRef, len(suppliers))
-	for i, sp := range suppliers {
-		refs[i] = bulkimport.SupplierRef{Code: sp.SupplierCode, Name: sp.SupplierName}
+	for _, sp := range suppliers {
+		md.Suppliers = append(md.Suppliers, bulkimport.RefRow{Code: sp.SupplierCode, Name: sp.SupplierName})
 	}
 
-	f, err := bulkimport.BuildBomTemplate(refs)
+	processes, err := s.repo.ListAllProcesses(ctx)
+	if err != nil {
+		return nil, apperror.InternalWrap("list processes for template", err)
+	}
+	for _, pr := range processes {
+		md.Processes = append(md.Processes, bulkimport.RefRow{Code: pr.ProcessCode, Name: pr.ProcessName})
+	}
+
+	machines, err := s.repo.ListAllMachines(ctx)
+	if err != nil {
+		return nil, apperror.InternalWrap("list machines for template", err)
+	}
+	for _, m := range machines {
+		md.Machines = append(md.Machines, bulkimport.RefRow{Code: m.MachineNumber, Name: m.MachineName})
+	}
+
+	uoms, err := s.repo.ListAllUoms(ctx)
+	if err != nil {
+		return nil, apperror.InternalWrap("list uoms for template", err)
+	}
+	for _, u := range uoms {
+		md.Uoms = append(md.Uoms, bulkimport.RefRow{Code: u.Code, Name: u.Name})
+	}
+
+	f, err := bulkimport.BuildBomTemplate(md)   // <-- sekarang menerima *BomTemplateMasterData
 	if err != nil {
 		return nil, apperror.InternalWrap("build bom template", err)
 	}
@@ -2805,7 +2830,7 @@ func (s *service) buildFullChildTree(lines []models.BomLine, preload *bomPreload
 				row.ProcessRoutes = routes
 			}
 		}
-		if level < 4 {
+		if level < 6 {
 			row.Children = s.buildFullChildTree(lines, preload, child.UniqCode, child.ID, level+1)
 		}
 		rows = append(rows, row)
@@ -3093,7 +3118,7 @@ func (s *service) replaceChildren(
 		}
 
 		// Recurse
-		if len(c.Children) > 0 && c.Level < 4 {
+		if len(c.Children) > 0 && c.Level < 6 {
 			ru, up, err := s.replaceChildren(ctx, bomID, c.UniqCode, childItem.ID, c.Children, uploadedMap)
 			if err != nil {
 				return reused, uploaded, err
