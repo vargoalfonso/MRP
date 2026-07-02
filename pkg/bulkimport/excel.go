@@ -308,86 +308,72 @@ func writeMasterDataSheet(f *excelize.File, md *BomTemplateMasterData) error {
 	const sheet = "Master Data"
 	f.NewSheet(sheet)
 
-	row := 1
 	set := func(col, r int, v string) error {
 		cell, _ := excelize.CoordinatesToCellName(col, r)
 		return f.SetCellValue(sheet, cell, v)
 	}
-	section := func(title string) error {
-		if err := set(1, row, title); err != nil {
+
+	// writeBlock merender satu section sebagai kolom-grup vertikal mulai dari startCol.
+	// baris 1 = judul, baris 2 = header, baris 3+ = data.
+	writeBlock := func(startCol int, title string, header []string, data [][]string) error {
+		if err := set(startCol, 1, title); err != nil {
 			return err
 		}
-		row++
-		return nil
-	}
-	table := func(header []string, data [][]string) error {
 		for i, h := range header {
-			if err := set(i+1, row, h); err != nil {
+			if err := set(startCol+i, 2, h); err != nil {
 				return err
 			}
 		}
-		row++
-		for _, rr := range data {
+		for r, rr := range data {
 			for i, v := range rr {
-				if err := set(i+1, row, v); err != nil {
+				if err := set(startCol+i, 3+r, v); err != nil {
 					return err
 				}
 			}
-			row++
 		}
-		row++ // spacer antar tabel
 		return nil
 	}
 
-	_ = section("PROCESS (isi process_code_n dengan process_code)")
-	procData := make([][]string, 0, len(md.Processes))
-	for _, pr := range md.Processes {
-		procData = append(procData, []string{pr.Code, pr.Name})
-	}
-	if err := table([]string{"process_code", "process_name"}, procData); err != nil {
-		return err
-	}
-
-	_ = section("MACHINE (isi machine_number_n dengan machine_number)")
-	machData := make([][]string, 0, len(md.Machines))
-	for _, m := range md.Machines {
-		machData = append(machData, []string{m.Code, m.Name})
-	}
-	if err := table([]string{"machine_number", "machine_name"}, machData); err != nil {
-		return err
+	toRows := func(refs []RefRow) [][]string {
+		out := make([][]string, 0, len(refs))
+		for _, ref := range refs {
+			out = append(out, []string{ref.Code, ref.Name})
+		}
+		return out
 	}
 
-	_ = section("UOM (isi uom dengan code)")
-	uomData := make([][]string, 0, len(md.Uoms))
-	for _, u := range md.Uoms {
-		uomData = append(uomData, []string{u.Code, u.Name})
+	type block struct {
+		title  string
+		header []string
+		data   [][]string
 	}
-	if err := table([]string{"code", "name"}, uomData); err != nil {
-		return err
-	}
-
-	_ = section("SUPPLIER (isi supplier_code dengan supplier_code)")
-	supData := make([][]string, 0, len(md.Suppliers))
-	for _, sp := range md.Suppliers {
-		supData = append(supData, []string{sp.Code, sp.Name})
-	}
-	if err := table([]string{"supplier_code", "supplier_name"}, supData); err != nil {
-		return err
-	}
-
-	_ = section("NILAI ENUM (pilihan valid)")
-	if err := table([]string{"kolom", "nilai valid"}, [][]string{
-		{"row_type", "ROOT | CHILD"},
-		{"status", "Active | Inactive"},
-		{"level", "1 - 6 (1 = child, 2 = grand child, dst.)"},
-		{"form", "Plate | Coil | Pipe | Rod | Wire | Other"},
-		{"type_material", "raw | indirect | subcon"},
-		{"tooling_ref_n", "Dies | JIG | CF | Other"},
-	}); err != nil {
-		return err
+	blocks := []block{
+		{"PROCESS (isi process_code_n)", []string{"process_code", "process_name"}, toRows(md.Processes)},
+		{"MACHINE (isi machine_number_n)", []string{"machine_number", "machine_name"}, toRows(md.Machines)},
+		{"UOM (isi kolom uom)", []string{"code", "name"}, toRows(md.Uoms)},
+		{"SUPPLIER (isi supplier_code)", []string{"supplier_code", "supplier_name"}, toRows(md.Suppliers)},
+		{"NILAI ENUM (pilihan valid)", []string{"kolom", "nilai valid"}, [][]string{
+			{"row_type", "ROOT | CHILD"},
+			{"status", "Active | Inactive"},
+			{"level", "1 - 6 (1 = child, 2 = grand child, dst.)"},
+			{"form", "Plate | Coil | Pipe | Rod | Wire | Other"},
+			{"type_material", "raw | indirect | subcon"},
+			{"tooling_ref_n", "Dies | JIG | CF | Other"},
+		}},
 	}
 
-	_ = f.SetColWidth(sheet, "A", "A", 28)
-	_ = f.SetColWidth(sheet, "B", "B", 40)
+	// Tiap block = 2 kolom data + 1 kolom spacer = lebar 3 kolom, disusun ke samping.
+	startCol := 1
+	for _, b := range blocks {
+		if err := writeBlock(startCol, b.title, b.header, b.data); err != nil {
+			return err
+		}
+		c1, _ := excelize.ColumnNumberToName(startCol)
+		c2, _ := excelize.ColumnNumberToName(startCol + 1)
+		_ = f.SetColWidth(sheet, c1, c1, 24)
+		_ = f.SetColWidth(sheet, c2, c2, 36)
+		startCol += 3 // 2 kolom data + 1 kolom kosong sebagai pemisah
+	}
+
 	return nil
 }
