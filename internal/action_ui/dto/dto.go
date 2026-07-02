@@ -3,10 +3,10 @@ package dto
 import "time"
 
 type ScanContextResponse struct {
-	WOID     int64  `json:"wo_id"`
-	WONumber string `json:"wo_number"`
-	Uniq     string `json:"uniq"`
-	// KanbanNumber   string                   `json:"kanban_number"`
+	WOID           int64   `json:"wo_id"`
+	WONumber       string  `json:"wo_number"`
+	Uniq           string  `json:"uniq"`
+	KanbanNumber   string  `json:"kanban_number"`
 	PartName       string  `json:"part_name"`
 	PartNumber     string  `json:"part_number"`
 	Model          string  `json:"model"`

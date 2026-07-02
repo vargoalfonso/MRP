@@ -165,9 +165,9 @@ func (s *service) ScanContext(ctx context.Context, woNumber string) (*dto.ScanCo
 		TotalQCStep:    totalStep * 3,
 		PartName:       item.PartName,
 		PartNumber:     item.PartNumber,
-		// KanbanNumber:   item.KanbanNumber,
-		UOM:    item.UOM,
-		Status: item.Status,
+		KanbanNumber:   item.KanbanNumber,
+		UOM:            item.UOM,
+		Status:         item.Status,
 		// RawMaterials:   rawMaterials,
 	}, nil
 }
