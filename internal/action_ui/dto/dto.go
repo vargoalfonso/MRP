@@ -3,25 +3,25 @@ package dto
 import "time"
 
 type ScanContextResponse struct {
-	WOID           int64                    `json:"wo_id"`
-	WONumber       string                   `json:"wo_number"`
-	Uniq           string                   `json:"uniq"`
-	KanbanNumber   string                   `json:"kanban_number"`
-	PartName       string                   `json:"part_name"`
-	PartNumber     string                   `json:"part_number"`
-	Model          string                   `json:"model"`
-	UOM            string                   `json:"uom"`
-	MachineID      string                   `json:"machine_id"`
-	ProductionLine string                   `json:"production_line"`
-	ProcessName    string                   `json:"process_name"`
-	NextProcess    string                   `json:"next_process"`
-	CurrentStep    int                      `json:"current_step"`
-	TotalStep      int                      `json:"total_step"`
-	CurrentQCStep  int64                    `json:"current_qc_step"`
-	TotalQCStep    int                      `json:"total_qc_step"`
-	DefaultQty     float64                  `json:"default_qty"`
-	Status         string                   `json:"status"`
-	RawMaterials   []ScanContextRawMaterial `json:"raw_materials"`
+	WOID           int64   `json:"wo_id"`
+	WONumber       string  `json:"wo_number"`
+	Uniq           string  `json:"uniq"`
+	KanbanNumber   string  `json:"kanban_number"`
+	PartName       string  `json:"part_name"`
+	PartNumber     string  `json:"part_number"`
+	Model          string  `json:"model"`
+	UOM            string  `json:"uom"`
+	MachineID      string  `json:"machine_id"`
+	ProductionLine string  `json:"production_line"`
+	ProcessName    string  `json:"process_name"`
+	NextProcess    string  `json:"next_process"`
+	CurrentStep    int     `json:"current_step"`
+	TotalStep      int     `json:"total_step"`
+	CurrentQCStep  int64   `json:"current_qc_step"`
+	TotalQCStep    int     `json:"total_qc_step"`
+	DefaultQty     float64 `json:"default_qty"`
+	Status         string  `json:"status"`
+	// RawMaterials   []ScanContextRawMaterial `json:"raw_materials"`
 }
 
 type ScanContextRawMaterial struct {

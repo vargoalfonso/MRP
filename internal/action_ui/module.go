@@ -65,6 +65,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	// 🔍 Scan Context (QR → get WO + process info)
 	// GET /api/v1/action-ui/production/scan-context?uniq=UQ-123
 	production.GET("/scan-context", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.ScanContext))
+	production.GET("/scan-context-machine", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.ScanContextMachine))
 	// ▶️ Scan In (start production)
 	// POST /api/v1/action-ui/production/scan-in
 	production.POST("/scan-in", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.ScanIn))

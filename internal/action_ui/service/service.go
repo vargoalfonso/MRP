@@ -31,6 +31,7 @@ type IService interface {
 
 	// 🔹 Get context after scan QR (auto fill UI)
 	ScanContext(ctx context.Context, woNumber string) (*dto.ScanContextResponse, error)
+	ScanContextMachine(ctx context.Context, machineID string) (*models.MasterMachine, error)
 
 	// 🔹 Start production (scan in)
 	ScanIn(ctx context.Context, req dto.ScanInRequest) error
@@ -168,8 +169,22 @@ func (s *service) ScanContext(ctx context.Context, woNumber string) (*dto.ScanCo
 		KanbanNumber:   item.KanbanNumber,
 		UOM:            item.UOM,
 		Status:         item.Status,
-		RawMaterials:   rawMaterials,
+		// RawMaterials:   rawMaterials,
 	}, nil
+}
+
+func (s *service) ScanContextMachine(ctx context.Context, machineID string) (*models.MasterMachine, error) {
+	var machine models.MasterMachine
+
+	err := s.db.WithContext(ctx).
+		Model(&models.MasterMachine{}).
+		Where("machine_number = ?", machineID).
+		First(&machine).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &machine, nil
 }
 
 func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
