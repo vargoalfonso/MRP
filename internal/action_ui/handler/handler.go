@@ -109,6 +109,34 @@ func (h *HTTPHandler) ScanContext(ctx *app.Context) *app.CostumeResponse {
 	}
 }
 
+func (h *HTTPHandler) ScanContextMachine(ctx *app.Context) *app.CostumeResponse {
+	machine := ctx.Query("machine")
+	if machine == "" {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "machine is required",
+		}
+	}
+
+	result, err := h.svc.ScanContextMachine(ctx.Request.Context(), machine)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data:      result,
+	}
+}
+
 func (h *HTTPHandler) ScanIn(ctx *app.Context) *app.CostumeResponse {
 	var req dto.ScanInRequest
 
