@@ -188,24 +188,15 @@ func (r *repository) DeleteUniqBOM(ctx context.Context, item *models.UniqBillOfM
 
 func (r *repository) CreatePRLs(ctx context.Context, items []*models.PRL) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("LOCK TABLE public.prls IN EXCLUSIVE MODE").Error; err != nil {
-			return apperror.InternalWrap("lock prls table failed", err)
-		}
-
-		nextSequence, err := nextPRLSequence(tx)
-		if err != nil {
-			return err
-		}
-
-		year := time.Now().Year()
+		// Let DB trigger/sequence populate prl_id atomically. Application must not set PRLID.
 		for _, item := range items {
-			item.PRLID = fmt.Sprintf("PRL-%d-%03d", year, nextSequence)
-			nextSequence++
+			if strings.TrimSpace(item.PRLID) == "" {
+				item.PRLID = "PENDING"
+			}
 			if err := tx.Create(item).Error; err != nil {
 				return wrapPRLPersistError("create prl failed", err)
 			}
 		}
-
 		return nil
 	})
 }
