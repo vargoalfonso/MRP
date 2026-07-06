@@ -60,11 +60,15 @@ type IRepository interface {
 	GetMaterialSpecsByRevisionIDs(ctx context.Context, revisionIDs []int64) ([]models.ItemMaterialSpec, error)
 	GetBomLinesByBomIDs(ctx context.Context, bomItemIDs []int64) ([]models.BomLine, error)
 	GetLatestRoutingHeadersByItemIDs(ctx context.Context, itemIDs []int64) ([]models.RoutingHeader, error)
+	GetRoutingHeadersByRevisionIDs(ctx context.Context, revisionIDs []int64) ([]models.RoutingHeader, error)
 	GetRoutingOperationsByHeaderIDs(ctx context.Context, headerIDs []int64) ([]models.RoutingOperation, error)
 	GetToolingsByOperationIDs(ctx context.Context, operationIDs []int64) ([]models.RoutingOperationTooling, error)
 	GetSupplierNamesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
 	FindSupplierByCode(ctx context.Context, code string) (*models.Supplier, error)
 	ListAllSuppliers(ctx context.Context) ([]models.Supplier, error)
+	ListAllProcesses(ctx context.Context) ([]models.ProcessParameter, error)
+	ListAllMachines(ctx context.Context) ([]models.MasterMachine, error)
+	ListAllUoms(ctx context.Context) ([]models.UomParameter, error)
 	GetProcessNamesByIDs(ctx context.Context, ids []int64) (map[int64]string, error)
 	GetProcessSequencesByIDs(ctx context.Context, ids []int64) (map[int64]int, error)
 	GetMachineNamesByIDs(ctx context.Context, ids []int64) (map[int64]string, error)
@@ -93,6 +97,11 @@ type IRepository interface {
 	// Approval workflow master — looked up at approval time, not copied into bom_approvals
 	GetApprovalWorkflowByActionName(ctx context.Context, actionName string) (*awmodels.ApprovalWorkflow, error)
 	GetApprovalWorkflowByID(ctx context.Context, id int64) (*awmodels.ApprovalWorkflow, error)
+
+	// interface IRepository:
+	CreateImportHistory(ctx context.Context, h *models.BomImportHistory) error
+	ListImportHistory(ctx context.Context, limit int) ([]models.BomImportHistory, error)
+	GetImportHistoryErrorFile(ctx context.Context, id string) ([]byte, error)
 
 	// DB returns the underlying *gorm.DB so the service layer can open transactions.
 	DB() *gorm.DB
@@ -629,6 +638,27 @@ func (r *repository) GetBomLinesByBomIDs(ctx context.Context, bomItemIDs []int64
 	return lines, nil
 }
 
+func (r *repository) GetRoutingHeadersByRevisionIDs(ctx context.Context, revisionIDs []int64) ([]models.RoutingHeader, error) {
+	if len(revisionIDs) == 0 {
+		return nil, nil
+	}
+	// Ambil hanya header terbaru (id terbesar) per item_revision_id — setara
+	// dengan "ORDER BY id DESC LIMIT 1" versi lama, tapi sekali jalan.
+	sub := r.db.WithContext(ctx).
+		Model(&models.RoutingHeader{}).
+		Select("MAX(id) AS id").
+		Where("item_revision_id IN ?", revisionIDs).
+		Group("item_revision_id")
+
+	var headers []models.RoutingHeader
+	if err := r.db.WithContext(ctx).
+		Where("id IN (?)", sub).
+		Find(&headers).Error; err != nil {
+		return nil, apperror.InternalWrap("GetRoutingHeadersByRevisionIDs", err)
+	}
+	return headers, nil
+}
+
 func (r *repository) GetLatestRoutingHeadersByItemIDs(ctx context.Context, itemIDs []int64) ([]models.RoutingHeader, error) {
 	if len(itemIDs) == 0 {
 		return nil, nil
@@ -696,6 +726,39 @@ func (r *repository) FindSupplierByCode(ctx context.Context, code string) (*mode
 		return nil, apperror.InternalWrap("FindSupplierByCode", err)
 	}
 	return &s, nil
+}
+
+func (r *repository) ListAllProcesses(ctx context.Context) ([]models.ProcessParameter, error) {
+	var rows []models.ProcessParameter
+	if err := r.db.WithContext(ctx).
+		Select("id", "process_code", "process_name").
+		Order("process_code").
+		Find(&rows).Error; err != nil {
+		return nil, apperror.InternalWrap("ListAllProcesses", err)
+	}
+	return rows, nil
+}
+
+func (r *repository) ListAllMachines(ctx context.Context) ([]models.MasterMachine, error) {
+	var rows []models.MasterMachine
+	if err := r.db.WithContext(ctx).
+		Select("id", "machine_number", "machine_name").
+		Order("machine_number").
+		Find(&rows).Error; err != nil {
+		return nil, apperror.InternalWrap("ListAllMachines", err)
+	}
+	return rows, nil
+}
+
+func (r *repository) ListAllUoms(ctx context.Context) ([]models.UomParameter, error) {
+	var rows []models.UomParameter
+	if err := r.db.WithContext(ctx).
+		Select("id", "code", "name").
+		Order("code").
+		Find(&rows).Error; err != nil {
+		return nil, apperror.InternalWrap("ListAllUoms", err)
+	}
+	return rows, nil
 }
 
 func (r *repository) ListAllSuppliers(ctx context.Context) ([]models.Supplier, error) {
@@ -962,6 +1025,45 @@ func (r *repository) BulkActivateItemsByBomID(ctx context.Context, bomItemID int
 		   OR id IN (SELECT child_item_id FROM bom_lines WHERE bom_item_id = ?)
 	`, bomItemID, bomItemID).Error
 }
+
+func (r *repository) CreateImportHistory(ctx context.Context, h *models.BomImportHistory) error {
+	if err := r.db.WithContext(ctx).Create(h).Error; err != nil {
+		return apperror.InternalWrap("create bom import history", err)
+	}
+	return nil
+}
+
+func (r *repository) ListImportHistory(ctx context.Context, limit int) ([]models.BomImportHistory, error) {
+	var out []models.BomImportHistory
+	err := r.db.WithContext(ctx).
+		Table("bom_import_histories").
+		Select("bom_import_histories.id, bom_import_histories.file_name, bom_import_histories.file_size_kb, bom_import_histories.row_count, COALESCE(users.username, bom_import_histories.uploaded_by) AS uploaded_by, bom_import_histories.status, bom_import_histories.summary, " +
+			"bom_import_histories.imported_count, bom_import_histories.failed_count, bom_import_histories.preview_rows, bom_import_histories.request_id, bom_import_histories.created_at, bom_import_histories.updated_at, " +
+			"(bom_import_histories.error_file IS NOT NULL AND length(bom_import_histories.error_file) > 0) AS has_error_file").
+		Joins("LEFT JOIN users ON users.id::text = bom_import_histories.uploaded_by OR users.uuid::text = bom_import_histories.uploaded_by").
+		Order("bom_import_histories.created_at DESC").
+		Limit(limit).
+		Scan(&out).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("list bom import history", err)
+	}
+	return out, nil
+}
+
+func (r *repository) GetImportHistoryErrorFile(ctx context.Context, id string) ([]byte, error) {
+	var h models.BomImportHistory
+	err := r.db.WithContext(ctx).
+		Select("error_file").
+		First(&h, "id = ?", id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, apperror.NotFound("history tidak ditemukan")
+	}
+	if err != nil {
+		return nil, apperror.InternalWrap("get bom import history error file", err)
+	}
+	return h.ErrorFile, nil
+}
+
 
 // ---------------------------------------------------------------------------
 // Helpers

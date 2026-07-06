@@ -388,7 +388,15 @@ func (h *HTTPHandler) ImportBomExcel(ctx *app.Context) *app.CostumeResponse {
 	}
 	defer os.Remove(tmpPath)
 
-	result, err := h.svc.ImportFromExcel(ctx.Request.Context(), tmpPath)
+	// ambil user pengupload (best-effort)
+	uploadedBy := ""
+	if raw, ok := ctx.Get("claims"); ok {
+		if claims, ok := raw.(*authModels.Claims); ok && claims != nil {
+			uploadedBy = claims.UserID
+		}
+	}
+
+	result, err := h.svc.ImportFromExcel(ctx.Request.Context(), tmpPath, file.Filename, uploadedBy, ctx.APIReqID)
 	if err != nil {
 		return app.NewError(ctx, err)
 	}
@@ -527,4 +535,37 @@ func (h *HTTPHandler) ReplaceBom(ctx *app.Context) *app.CostumeResponse {
 		Message:   http.StatusText(http.StatusOK),
 		Data:      result,
 	}
+}
+
+// GetImportHistory  GET /api/v1/products/bom/import/history
+func (h *HTTPHandler) GetImportHistory(ctx *app.Context) *app.CostumeResponse {
+	result, err := h.svc.ListImportHistory(ctx.Request.Context(), 20)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      result,
+	}
+}
+
+// DownloadImportHistoryErrorRaw  GET /api/v1/products/bom/import/history/:id/errors
+func (h *HTTPHandler) DownloadImportHistoryErrorRaw(c *gin.Context) {
+	id := c.Param("id")
+	data, err := h.svc.DownloadImportHistoryError(c.Request.Context(), id)
+	if err != nil {
+		status := http.StatusInternalServerError
+		msg := "gagal download error file"
+		if appErr, ok := apperror.As(err); ok {
+			status = appErr.HTTPStatus
+			msg = appErr.Message
+		}
+		c.JSON(status, gin.H{"status": status, "message": msg})
+		return
+	}
+	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	c.Header("Content-Disposition", "attachment; filename=bom_import_errors.xlsx")
+	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
 }
