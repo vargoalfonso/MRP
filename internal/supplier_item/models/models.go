@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -43,6 +44,7 @@ type SupplierItem struct {
 	PcsPerKanban  *int64         `gorm:"column:pcs_per_kanban" json:"pcs_per_kanban,omitempty"`
 	CustomerCycle *string        `gorm:"column:customer_cycle;size:100" json:"customer_cycle,omitempty"`
 	Percentage    *float64       `gorm:"column:percentage;type:numeric(5,2)" json:"percentage,omitempty"`
+	PayloadJSON   datatypes.JSON `gorm:"column:payload_json;type:jsonb" json:"payload_json,omitempty"`
 	Status        string         `gorm:"size:20;not null;default:'active'" json:"status"`
 	CreatedAt     time.Time      `json:"created_at"`
 	UpdatedAt     time.Time      `json:"updated_at"`

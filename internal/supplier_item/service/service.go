@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,13 +12,14 @@ import (
 	supplierItemRepo "github.com/ganasa18/go-template/internal/supplier_item/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 )
 
 type SupplierItemService interface {
-	Create(ctx context.Context, req models.CreateSupplierItemRequest) (*models.SupplierItem, error)
+	Create(ctx context.Context, req models.CreateSupplierItemRequest, rawPayload []byte) (*models.SupplierItem, error)
 	GetByUUID(ctx context.Context, uuid string) (*models.SupplierItem, error)
 	List(ctx context.Context, query models.ListSupplierItemQuery) (*models.SupplierItemListResult, error)
-	Update(ctx context.Context, uuid string, req models.UpdateSupplierItemRequest) (*models.SupplierItem, error)
+	Update(ctx context.Context, uuid string, req models.UpdateSupplierItemRequest, rawPayload []byte) (*models.SupplierItem, error)
 	Delete(ctx context.Context, uuid string) error
 }
 
@@ -28,7 +31,7 @@ func New(repo supplierItemRepo.IRepository) SupplierItemService {
 	return &service{repo: repo}
 }
 
-func (s *service) Create(ctx context.Context, req models.CreateSupplierItemRequest) (*models.SupplierItem, error) {
+func (s *service) Create(ctx context.Context, req models.CreateSupplierItemRequest, rawPayload []byte) (*models.SupplierItem, error) {
 	supplier, err := s.repo.FindSupplierByUUID(ctx, req.SupplierUUID)
 	if err != nil {
 		return nil, err
@@ -62,6 +65,11 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierItemReque
 		return nil, err
 	}
 
+	payloadJSON, err := normalizePayloadJSON(rawPayload)
+	if err != nil {
+		return nil, err
+	}
+
 	item := &models.SupplierItem{
 		UUID:          uuid.NewString(),
 		SupplierUUID:  supplier.UUID,
@@ -76,6 +84,7 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierItemReque
 		PcsPerKanban:  pcsPerKanban,
 		CustomerCycle: models.NormalizeOptionalString(toOptionalString(req.CustomerCycle)),
 		Percentage:    percentage,
+		PayloadJSON:   payloadJSON,
 		Status:        normalizeStatus(req.Status),
 	}
 
@@ -134,7 +143,7 @@ func (s *service) List(ctx context.Context, query models.ListSupplierItemQuery) 
 	}, nil
 }
 
-func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupplierItemRequest) (*models.SupplierItem, error) {
+func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupplierItemRequest, rawPayload []byte) (*models.SupplierItem, error) {
 	item, err := s.GetByUUID(ctx, uuid)
 	if err != nil {
 		return nil, err
@@ -161,6 +170,11 @@ func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupp
 		return nil, err
 	}
 
+	payloadJSON, err := normalizePayloadJSON(rawPayload)
+	if err != nil {
+		return nil, err
+	}
+
 	item.SupplierUUID = supplier.UUID
 	item.SupplierName = supplier.SupplierName
 	item.SebangoCode = models.NormalizeOptionalString(toOptionalString(req.SebangoCode))
@@ -173,6 +187,7 @@ func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupp
 	item.PcsPerKanban = pcsPerKanban
 	item.CustomerCycle = models.NormalizeOptionalString(toOptionalString(req.CustomerCycle))
 	item.Percentage = percentage
+	item.PayloadJSON = payloadJSON
 	item.Status = normalizeStatus(req.Status)
 
 	if err := s.repo.Update(ctx, item); err != nil {
@@ -248,4 +263,18 @@ func parseOptionalFloat64(value string, fieldName string) (*float64, error) {
 		return nil, apperror.BadRequest(fmt.Sprintf("%s must be greater than or equal to 0", fieldName))
 	}
 	return &parsed, nil
+}
+
+func normalizePayloadJSON(rawPayload []byte) (datatypes.JSON, error) {
+	trimmed := bytes.TrimSpace(rawPayload)
+	if len(trimmed) == 0 {
+		return nil, nil
+	}
+
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, trimmed); err != nil {
+		return nil, apperror.InternalWrap("serialize supplier item payload failed", err)
+	}
+
+	return datatypes.JSON(compact.Bytes()), nil
 }
