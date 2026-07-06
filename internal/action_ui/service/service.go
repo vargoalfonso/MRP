@@ -31,6 +31,7 @@ type IService interface {
 
 	// 🔹 Get context after scan QR (auto fill UI)
 	ScanContext(ctx context.Context, woNumber string) (*dto.ScanContextResponse, error)
+	ScanContextMachine(ctx context.Context, machineID string) (*models.MasterMachine, error)
 
 	// 🔹 Start production (scan in)
 	ScanIn(ctx context.Context, req dto.ScanInRequest) error
@@ -168,8 +169,22 @@ func (s *service) ScanContext(ctx context.Context, woNumber string) (*dto.ScanCo
 		KanbanNumber:   item.KanbanNumber,
 		UOM:            item.UOM,
 		Status:         item.Status,
-		RawMaterials:   rawMaterials,
+		// RawMaterials:   rawMaterials,
 	}, nil
+}
+
+func (s *service) ScanContextMachine(ctx context.Context, machineID string) (*models.MasterMachine, error) {
+	var machine models.MasterMachine
+
+	err := s.db.WithContext(ctx).
+		Model(&models.MasterMachine{}).
+		Where("machine_number = ?", machineID).
+		First(&machine).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &machine, nil
 }
 
 func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
@@ -1074,19 +1089,46 @@ func (s *service) ListQCTask(ctx context.Context, req dto.ListQCTaskRequest) (ma
 	}, nil
 }
 
+type IssueListResponse struct {
+	UUID           string    `json:"uuid"`
+	WONumber       string    `json:"wo_number"`
+	ItemCode       string    `json:"item_uniq_code"`
+	PartName       string    `json:"part_name"`
+	PartNumber     string    `json:"part_number"`
+	Machine        string    `json:"machine"`
+	ProcessName    string    `json:"process_name"`
+	ProductionLine string    `json:"production_line"`
+	IssueType      string    `json:"issue_type"`
+	IssueDuration  int       `json:"issue_duration"`
+	QtyAffected    float64   `json:"qty_affected"`
+	ReportedBy     string    `json:"reported_by"`
+	ReportedAt     time.Time `json:"reported_at"`
+}
+
 func (s *service) IssueList(ctx context.Context) (map[string]interface{}, error) {
-
-	type IssueResult struct {
-		IssueType string `json:"issue_type"`
-	}
-
-	var results []IssueResult
+	var results []IssueListResponse
 
 	err := s.db.WithContext(ctx).
-		Table("production_issues").
-		Select("issue_type").
-		Group("issue_type").
-		Order("issue_type ASC").
+		Table("production_issues pi").
+		Select(`
+			pi.uuid,
+			wo.wo_number,
+			woi.item_uniq_code,
+			woi.part_name,
+   woi.part_number,
+			mm.machine_name AS machine,
+			pi.process_name,
+			pi.production_line,
+			pi.issue_type,
+			pi.issue_duration,
+			pi.qty_affected,
+			pi.reported_by,
+			pi.reported_at
+		`).
+		Joins("LEFT JOIN work_orders wo ON wo.id = pi.wo_id").
+		Joins("LEFT JOIN work_order_items woi ON woi.id = pi.wo_item_id").
+		Joins("LEFT JOIN master_machines mm ON mm.id = pi.machine_id").
+		Order("pi.reported_at DESC").
 		Scan(&results).Error
 
 	if err != nil {

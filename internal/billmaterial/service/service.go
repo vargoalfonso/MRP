@@ -4,6 +4,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -13,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"gorm.io/datatypes"
 
 	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
 	"github.com/ganasa18/go-template/internal/billmaterial/models"
@@ -66,8 +69,10 @@ type IService interface {
 
 	// Import BOM from Excel, download template, and download generated error file.
 	DownloadImportTemplate(ctx context.Context) ([]byte, error)
-	ImportFromExcel(ctx context.Context, filePath string) (bulkimport.BulkResult, error)
+	ImportFromExcel(ctx context.Context, filePath, fileName, uploadedBy, requestID string) (bulkimport.BulkResult, error)
 	DownloadImportErrors(ctx context.Context, token string) ([]byte, error)
+	ListImportHistory(ctx context.Context, limit int) ([]models.BomImportHistory, error)
+	DownloadImportHistoryError(ctx context.Context, id string) ([]byte, error)
 
 	//full snapshot fetch + atomic clone-edit-submit replace
 	GetBomFull(ctx context.Context, bomID int64) (*models.BomFullResponse, error)
@@ -241,7 +246,7 @@ func (s *service) buildChildTree(lines []models.BomLine, preload *bomPreload, pa
 		} else if typeMaterialFilter != "" {
 			continue
 		}
-		if level < 4 {
+		if level < 6 {
 			row.Children = s.buildChildTree(lines, preload, child.ID, level+1, typeMaterialFilter)
 		}
 		rows = append(rows, row)
@@ -426,7 +431,7 @@ func (s *service) createChildren(ctx context.Context, bomID, parentItemID int64,
 			return err
 		}
 
-		if len(c.Children) > 0 && c.Level < 4 {
+		if len(c.Children) > 0 && c.Level < 6 {
 			if err := s.createChildren(ctx, bomID, childID, c.Children); err != nil {
 				return err
 			}
@@ -1628,7 +1633,7 @@ func (s *service) buildDetailTree(lines []models.BomLine, preload *bomPreload, p
 				row.ProcessRoutes = routes
 			}
 		}
-		if level < 4 {
+		if level < 6 {
 			row.Children = s.buildDetailTree(lines, preload, child.ID, level+1)
 		}
 		rows = append(rows, row)
@@ -1769,15 +1774,13 @@ func (s *service) preloadBomData(ctx context.Context, bomItems []models.BomItem,
 		specMap[spec.ItemRevisionID] = spec
 	}
 
-	headers := make([]models.RoutingHeader, 0, len(revisionByID))
+	revisionIDs := make([]int64, 0, len(revisionByID))
 	for revisionID := range revisionByID {
-		header, err := s.repo.GetRoutingHeaderByRevisionID(ctx, revisionID)
-		if err != nil {
-			return nil, err
-		}
-		if header != nil {
-			headers = append(headers, *header)
-		}
+		revisionIDs = append(revisionIDs, revisionID)
+	}
+	headers, err := s.repo.GetRoutingHeadersByRevisionIDs(ctx, revisionIDs)
+	if err != nil {
+		return nil, err
 	}
 	headerIDs := make([]int64, 0, len(headers))
 	headerRevisionMap := make(map[int64]int64, len(headers))
@@ -2007,16 +2010,41 @@ var bomImportItemHeaders = func() []string {
 }()
 
 func (s *service) DownloadImportTemplate(ctx context.Context) ([]byte, error) {
+	md := &bulkimport.BomTemplateMasterData{}
+
 	suppliers, err := s.repo.ListAllSuppliers(ctx)
 	if err != nil {
 		return nil, apperror.InternalWrap("list suppliers for template", err)
 	}
-	refs := make([]bulkimport.SupplierRef, len(suppliers))
-	for i, sp := range suppliers {
-		refs[i] = bulkimport.SupplierRef{Code: sp.SupplierCode, Name: sp.SupplierName}
+	for _, sp := range suppliers {
+		md.Suppliers = append(md.Suppliers, bulkimport.RefRow{Code: sp.SupplierCode, Name: sp.SupplierName})
 	}
 
-	f, err := bulkimport.BuildBomTemplate(refs)
+	processes, err := s.repo.ListAllProcesses(ctx)
+	if err != nil {
+		return nil, apperror.InternalWrap("list processes for template", err)
+	}
+	for _, pr := range processes {
+		md.Processes = append(md.Processes, bulkimport.RefRow{Code: pr.ProcessCode, Name: pr.ProcessName})
+	}
+
+	machines, err := s.repo.ListAllMachines(ctx)
+	if err != nil {
+		return nil, apperror.InternalWrap("list machines for template", err)
+	}
+	for _, m := range machines {
+		md.Machines = append(md.Machines, bulkimport.RefRow{Code: m.MachineNumber, Name: m.MachineName})
+	}
+
+	uoms, err := s.repo.ListAllUoms(ctx)
+	if err != nil {
+		return nil, apperror.InternalWrap("list uoms for template", err)
+	}
+	for _, u := range uoms {
+		md.Uoms = append(md.Uoms, bulkimport.RefRow{Code: u.Code, Name: u.Name})
+	}
+
+	f, err := bulkimport.BuildBomTemplate(md)   // <-- sekarang menerima *BomTemplateMasterData
 	if err != nil {
 		return nil, apperror.InternalWrap("build bom template", err)
 	}
@@ -2046,7 +2074,7 @@ func (s *service) DownloadImportErrors(ctx context.Context, token string) ([]byt
 	return data, nil
 }
 
-func (s *service) ImportFromExcel(ctx context.Context, filePath string) (bulkimport.BulkResult, error) {
+func (s *service) ImportFromExcel(ctx context.Context, filePath, fileName, uploadedBy, requestID string) (bulkimport.BulkResult, error) {
 	f, err := excelize.OpenFile(filePath)
 	if err != nil {
 		return bulkimport.BulkResult{}, apperror.BadRequest("failed to open excel file")
@@ -2155,7 +2183,7 @@ func (s *service) ImportFromExcel(ctx context.Context, filePath string) (bulkimp
 		status = bulkimport.StatusPartial
 	}
 
-	result := bulkimport.BulkResult{
+		result := bulkimport.BulkResult{
 		Status:       status,
 		Total:        totalGroups,
 		SuccessCount: successCount,
@@ -2163,34 +2191,142 @@ func (s *service) ImportFromExcel(ctx context.Context, filePath string) (bulkimp
 		Errors:       mergeRowErrors(rowErrs),
 	}
 
-	if len(result.Errors) == 0 {
-		return result, nil
-	}
-
-	errFile, err := bulkimport.GenerateBomErrorExcel(result.Errors)
-	if err != nil {
-		return bulkimport.BulkResult{}, apperror.InternalWrap("generate error excel", err)
-	}
-	defer errFile.Close()
-
-	var b bytes.Buffer
-	if _, err := errFile.WriteTo(&b); err != nil {
-		return bulkimport.BulkResult{}, apperror.InternalWrap("write error excel", err)
-	}
-
-	if s.errorStore == nil {
-		store, err := bulkimport.NewFileStore("")
+	// Bangun file error (kalau ada) supaya bisa ikut disimpan di history.
+	var errorBytes []byte
+	if len(result.Errors) > 0 {
+		errFile, err := bulkimport.GenerateBomErrorExcel(result.Errors)
 		if err != nil {
-			return bulkimport.BulkResult{}, apperror.InternalWrap("init error store", err)
+			return bulkimport.BulkResult{}, apperror.InternalWrap("generate error excel", err)
 		}
-		s.errorStore = store
+		defer errFile.Close()
+
+		var b bytes.Buffer
+		if _, err := errFile.WriteTo(&b); err != nil {
+			return bulkimport.BulkResult{}, apperror.InternalWrap("write error excel", err)
+		}
+		errorBytes = b.Bytes()
+
+		// In-memory token store dipertahankan (opsional, backward-compat).
+		if s.errorStore == nil {
+			store, err := bulkimport.NewFileStore("")
+			if err != nil {
+				return bulkimport.BulkResult{}, apperror.InternalWrap("init error store", err)
+			}
+			s.errorStore = store
+		}
+		token, err := s.errorStore.Save(errorBytes)
+		if err != nil {
+			return bulkimport.BulkResult{}, apperror.InternalWrap("save error excel", err)
+		}
+		result.ErrorToken = token
 	}
-	token, err := s.errorStore.Save(b.Bytes())
-	if err != nil {
-		return bulkimport.BulkResult{}, apperror.InternalWrap("save error excel", err)
+
+	// --- Simpan history ke DB (untuk SEMUA upload: sukses / sebagian / gagal) ---
+	histStatus := string(result.Status)
+	if histStatus == string(bulkimport.StatusFailed) {
+		histStatus = "error" // samakan dengan istilah frontend: success|partial|error
 	}
-	result.ErrorToken = token
+	var sizeKb int
+	if fi, statErr := os.Stat(filePath); statErr == nil {
+		sizeKb = int(fi.Size() / 1024)
+	}
+	history := &models.BomImportHistory{
+		FileName:      fileName,
+		FileSizeKb:    sizeKb,
+		RowCount:      result.Total,
+		UploadedBy:    uploadedBy,
+		Status:        histStatus,
+		Summary:       fmt.Sprintf("%d berhasil, %d gagal dari %d BOM", result.SuccessCount, result.FailedCount, result.Total),
+		ImportedCount: result.SuccessCount,
+		FailedCount:   result.FailedCount,
+		RequestID:     requestID,
+		ErrorFile:     errorBytes, // nil kalau tidak ada error
+		PreviewRows:   buildImportPreviewSnapshot(itemRows, rowErrs),
+	}
+	if err := s.repo.CreateImportHistory(ctx, history); err != nil {
+	// Jangan gagalkan import hanya karena history gagal disimpan.
+	fmt.Printf("gagal simpan bom import history: %v\n", err)
+}
+
 	return result, nil
+}
+
+func (s *service) ListImportHistory(ctx context.Context, limit int) ([]models.BomImportHistory, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	return s.repo.ListImportHistory(ctx, limit)
+}
+
+func (s *service) DownloadImportHistoryError(ctx context.Context, id string) ([]byte, error) {
+	data, err := s.repo.GetImportHistoryErrorFile(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, apperror.NotFound("file error tidak ditemukan")
+	}
+	return data, nil
+}
+
+func buildImportPreviewSnapshot(
+	itemRows []models.BomImportItemRow,
+	rowErrs []bulkimport.RowError,
+) datatypes.JSON {
+	errByRow := make(map[int]string)
+	for _, e := range rowErrs {
+		if e.Sheet != "Items" {
+			continue
+		}
+		if _, exists := errByRow[e.Row]; !exists {
+			errByRow[e.Row] = e.Message
+		}
+	}
+
+	type previewRow struct {
+		Row            string  `json:"row"`
+		Error          string  `json:"error"`
+		BomGroup       string  `json:"Bom Group"`
+		RowType        string  `json:"Row Type"`
+		UniqCode       string  `json:"Uniq Code"`
+		ParentUniqCode string  `json:"Parent Uniq Code"`
+		PartName       string  `json:"Part Name"`
+		PartNumber     string  `json:"Part Number"`
+		Model          string  `json:"Model"`
+		Uom            string  `json:"Uom"`
+		Level          int16   `json:"Level"`
+		QtyPerUniq     float64 `json:"Qty Per Uniq"`
+		Status         string  `json:"Status"`
+	}
+
+	out := make([]previewRow, 0, len(itemRows))
+	for _, r := range itemRows {
+		label := r.UniqCode
+		if label == "" {
+			label = r.BomGroup
+		}
+		out = append(out, previewRow{
+			Row:            label,
+			Error:          errByRow[r.SheetRow],
+			BomGroup:       r.BomGroup,
+			RowType:        r.RowType,
+			UniqCode:       r.UniqCode,
+			ParentUniqCode: r.ParentUniqCode,
+			PartName:       r.PartName,
+			PartNumber:     r.PartNumber,
+			Model:          r.Model,
+			Uom:            r.Uom,
+			Level:          r.Level,
+			QtyPerUniq:     r.QtyPerUniq,
+			Status:         r.Status,
+		})
+	}
+
+	b, err := json.Marshal(out)
+	if err != nil {
+		return nil
+	}
+	return datatypes.JSON(b)
 }
 
 func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models.BomImportItemRow, []bulkimport.RowError, map[string]struct{}, error) {
@@ -2805,7 +2941,7 @@ func (s *service) buildFullChildTree(lines []models.BomLine, preload *bomPreload
 				row.ProcessRoutes = routes
 			}
 		}
-		if level < 4 {
+		if level < 6 {
 			row.Children = s.buildFullChildTree(lines, preload, child.UniqCode, child.ID, level+1)
 		}
 		rows = append(rows, row)
@@ -3093,7 +3229,7 @@ func (s *service) replaceChildren(
 		}
 
 		// Recurse
-		if len(c.Children) > 0 && c.Level < 4 {
+		if len(c.Children) > 0 && c.Level < 6 {
 			ru, up, err := s.replaceChildren(ctx, bomID, c.UniqCode, childItem.ID, c.Children, uploadedMap)
 			if err != nil {
 				return reused, uploaded, err

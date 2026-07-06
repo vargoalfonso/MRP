@@ -3,6 +3,7 @@
 .env.docker
 .env.local
 .env.*.local
+.air.*
 
 # Keep the example safe for git
 .env.example

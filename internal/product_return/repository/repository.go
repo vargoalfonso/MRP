@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/ganasa18/go-template/internal/product_return/models"
 	"gorm.io/gorm"
@@ -9,7 +10,7 @@ import (
 
 type IProductReturnRepository interface {
 	Create(ctx context.Context, req models.CreateProductReturnRequest) (*models.ProductReturn, error)
-	FindAll(ctx context.Context, page, limit int) ([]models.ProductReturn, int64, error)
+	FindAll(ctx context.Context, page, limit int) ([]ProductReturn, int64, error)
 	FindByID(ctx context.Context, id int64) (*models.ProductReturn, error)
 	Update(ctx context.Context, id int64, req models.UpdateProductReturnRequest) (*models.ProductReturn, error)
 	Delete(ctx context.Context, id int64) error
@@ -40,9 +41,26 @@ func (r *repository) Create(ctx context.Context, req models.CreateProductReturnR
 	return &data, nil
 }
 
-func (r *repository) FindAll(ctx context.Context, page, limit int) ([]models.ProductReturn, int64, error) {
-	var data []models.ProductReturn
-	var total int64
+type ProductReturn struct {
+	ID             uint      `gorm:"column:id" json:"id"`
+	Uniq           string    `gorm:"column:uniq" json:"uniq"`
+	QuantityScrap  int       `gorm:"column:quantity_scrap" json:"quantity_scrap"`
+	QuantityRework int       `gorm:"column:quantity_rework" json:"quantity_rework"`
+	Status         string    `gorm:"column:status" json:"status"`
+	CreatedAt      time.Time `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt      time.Time `gorm:"column:updated_at" json:"updated_at"`
+
+	// Hasil JOIN
+	PackingNumber string `gorm:"column:packing_number" json:"packing_number"`
+	PartName      string `gorm:"column:part_name" json:"part_name"`
+	PartNumber    string `gorm:"column:part_number" json:"part_number"`
+}
+
+func (r *repository) FindAll(ctx context.Context, page, limit int) ([]ProductReturn, int64, error) {
+	var (
+		data  []ProductReturn
+		total int64
+	)
 
 	if page <= 0 {
 		page = 1
@@ -59,20 +77,16 @@ func (r *repository) FindAll(ctx context.Context, page, limit int) ([]models.Pro
 	// =====================================
 	// COUNT TOTAL
 	// =====================================
-	err := db.
-		Table("product_returns pr").
-		Joins("LEFT JOIN delivery_note_items kp ON kp.item_uniq_code = pr.uniq").
-		Joins("LEFT JOIN items i ON i.uniq_code = pr.uniq").
-		Count(&total).Error
-
-	if err != nil {
+	if err := db.
+		Table("product_returns").
+		Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
 	// =====================================
 	// GET DATA
 	// =====================================
-	err = db.
+	if err := db.
 		Table("product_returns pr").
 		Select(`
 			pr.*,
@@ -80,14 +94,29 @@ func (r *repository) FindAll(ctx context.Context, page, limit int) ([]models.Pro
 			i.part_name,
 			i.part_number
 		`).
-		Joins("LEFT JOIN delivery_note_items kp ON kp.item_uniq_code = pr.uniq").
-		Joins("LEFT JOIN items i ON i.uniq_code = pr.uniq").
+		Joins(`
+			LEFT JOIN (
+				SELECT DISTINCT ON (item_uniq_code)
+					item_uniq_code,
+					packing_number
+				FROM delivery_note_items
+				ORDER BY item_uniq_code, id DESC
+			) kp ON kp.item_uniq_code = pr.uniq
+		`).
+		Joins(`
+			LEFT JOIN (
+				SELECT DISTINCT ON (uniq_code)
+					uniq_code,
+					part_name,
+					part_number
+				FROM items
+				ORDER BY uniq_code, id DESC
+			) i ON i.uniq_code = pr.uniq
+		`).
 		Order("pr.id DESC").
 		Limit(limit).
 		Offset(offset).
-		Scan(&data).Error
-
-	if err != nil {
+		Scan(&data).Error; err != nil {
 		return nil, 0, err
 	}
 
