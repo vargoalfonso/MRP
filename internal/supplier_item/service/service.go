@@ -34,12 +34,15 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierItemReque
 		return nil, err
 	}
 
-	exists, err := s.repo.ExistsBySupplierAndUniq(ctx, req.SupplierUUID, req.UniqCode)
-	if err != nil {
-		return nil, err
-	}
-	if exists {
-		return nil, apperror.BadRequest(fmt.Sprintf("uniq code '%s' sudah terdaftar untuk supplier ini", strings.ToUpper(strings.TrimSpace(req.UniqCode))))
+	// check uniq code only when provided
+	if strings.TrimSpace(req.UniqCode) != "" {
+		exists, err := s.repo.ExistsBySupplierAndUniq(ctx, req.SupplierUUID, req.UniqCode)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			return nil, apperror.BadRequest(fmt.Sprintf("uniq code '%s' sudah terdaftar untuk supplier ini", strings.ToUpper(strings.TrimSpace(req.UniqCode))))
+		}
 	}
 
 	quantity, err := parseRequiredInt64(req.Quantity, "quantity")
@@ -63,8 +66,8 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierItemReque
 		UUID:          uuid.NewString(),
 		SupplierUUID:  supplier.UUID,
 		SupplierName:  supplier.SupplierName,
-		SebangoCode:   strings.ToUpper(models.Trimmed(req.SebangoCode)),
-		UniqCode:      strings.ToUpper(models.Trimmed(req.UniqCode)),
+		SebangoCode:   models.NormalizeOptionalString(toOptionalString(req.SebangoCode)),
+		UniqCode:      models.NormalizeOptionalString(toOptionalString(req.UniqCode)),
 		Type:          normalizeType(req.Type),
 		Description:   models.NormalizeOptionalString(toOptionalString(req.Description)),
 		Quantity:      quantity,
@@ -160,8 +163,8 @@ func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupp
 
 	item.SupplierUUID = supplier.UUID
 	item.SupplierName = supplier.SupplierName
-	item.SebangoCode = strings.ToUpper(models.Trimmed(req.SebangoCode))
-	item.UniqCode = strings.ToUpper(models.Trimmed(req.UniqCode))
+	item.SebangoCode = models.NormalizeOptionalString(toOptionalString(req.SebangoCode))
+	item.UniqCode = models.NormalizeOptionalString(toOptionalString(req.UniqCode))
 	item.Type = normalizeType(req.Type)
 	item.Description = models.NormalizeOptionalString(toOptionalString(req.Description))
 	item.Quantity = quantity

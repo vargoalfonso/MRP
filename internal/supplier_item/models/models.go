@@ -33,8 +33,8 @@ type SupplierItem struct {
 	UUID          string         `gorm:"uniqueIndex;not null" json:"id"`
 	SupplierUUID  string         `gorm:"index;not null" json:"supplier_uuid"`
 	SupplierName  string         `gorm:"not null" json:"supplier_name"`
-	SebangoCode   string         `gorm:"size:100;not null" json:"sebango_code"`
-	UniqCode      string         `gorm:"size:100;not null" json:"uniq_code"`
+	SebangoCode   *string        `gorm:"type:text" json:"sebango_code,omitempty"`
+	UniqCode      *string        `gorm:"type:text" json:"uniq_code,omitempty"`
 	Type          string         `gorm:"size:32;not null" json:"type"`
 	Description   *string        `gorm:"type:text" json:"description,omitempty"`
 	Quantity      int64          `gorm:"not null;default:0" json:"quantity"`
@@ -55,8 +55,8 @@ func (SupplierItem) TableName() string {
 
 type CreateSupplierItemRequest struct {
 	SupplierUUID  string `json:"supplier_uuid" validate:"required,uuid4"`
-	SebangoCode   string `json:"sebango_code" validate:"required,max=100"`
-	UniqCode      string `json:"uniq_code" validate:"required,max=100"`
+	SebangoCode   string `json:"sebango_code" validate:"omitempty"`
+	UniqCode      string `json:"uniq_code" validate:"omitempty"`
 	Type          string `json:"type" validate:"required,oneof=raw_material indirect subcon"`
 	Description   string `json:"description" validate:"omitempty,max=2000"`
 	Quantity      string `json:"quantity" validate:"omitempty,max=50"`
@@ -70,8 +70,8 @@ type CreateSupplierItemRequest struct {
 
 type UpdateSupplierItemRequest struct {
 	SupplierUUID  string `json:"supplier_uuid" validate:"required,uuid4"`
-	SebangoCode   string `json:"sebango_code" validate:"required,max=100"`
-	UniqCode      string `json:"uniq_code" validate:"required,max=100"`
+	SebangoCode   string `json:"sebango_code" validate:"omitempty"`
+	UniqCode      string `json:"uniq_code" validate:"omitempty"`
 	Type          string `json:"type" validate:"required,oneof=raw_material indirect subcon"`
 	Description   string `json:"description" validate:"omitempty,max=2000"`
 	Quantity      string `json:"quantity" validate:"omitempty,max=50"`
