@@ -137,6 +137,74 @@ func (h *HTTPHandler) ScanContextMachine(ctx *app.Context) *app.CostumeResponse 
 	}
 }
 
+// GET /api/v1/action-ui/production/wo-list?search=
+func (h *HTTPHandler) WOList(ctx *app.Context) *app.CostumeResponse {
+	result, err := h.svc.WOList(ctx.Request.Context(), ctx.Query("search"))
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data:      result,
+	}
+}
+
+// GET /api/v1/action-ui/production/wo-detail?wo=WO-204501
+func (h *HTTPHandler) WODetail(ctx *app.Context) *app.CostumeResponse {
+	wo := ctx.Query("wo")
+	if wo == "" {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "wo is required",
+		}
+	}
+	result, err := h.svc.WODetail(ctx.Request.Context(), wo)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data:      result,
+	}
+}
+
+// GET /api/v1/action-ui/production/raw-material?code=RM-160637
+func (h *HTTPHandler) RawMaterialLookup(ctx *app.Context) *app.CostumeResponse {
+	code := ctx.Query("code")
+	if code == "" {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "code is required",
+		}
+	}
+	result, err := h.svc.RawMaterialLookup(ctx.Request.Context(), code)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data:      result,
+	}
+}
+
 func (h *HTTPHandler) ScanIn(ctx *app.Context) *app.CostumeResponse {
 	var req dto.ScanInRequest
 
@@ -267,6 +335,61 @@ func (h *HTTPHandler) ListQCTask(ctx *app.Context) *app.CostumeResponse {
 func (h *HTTPHandler) IssueList(ctx *app.Context) *app.CostumeResponse {
 
 	result, err := h.svc.IssueList(ctx.Request.Context())
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data:      result,
+	}
+}
+func (h *HTTPHandler) ScanMachine(ctx *app.Context) *app.CostumeResponse {
+	var req dto.ScanMachineRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+
+	result, err := h.svc.ScanMachine(ctx.Request.Context(), req)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data:      result,
+	}
+}
+
+func (h *HTTPHandler) ScanOutContext(ctx *app.Context) *app.CostumeResponse {
+	wo := ctx.Query("wo")
+	if wo == "" {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "wo is required",
+		}
+	}
+
+	result, err := h.svc.ScanOutContext(ctx.Request.Context(), wo)
 	if err != nil {
 		return &app.CostumeResponse{
 			RequestID: ctx.APIReqID,

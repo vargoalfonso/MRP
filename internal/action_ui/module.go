@@ -66,6 +66,14 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	// GET /api/v1/action-ui/production/scan-context?uniq=UQ-123
 	production.GET("/scan-context", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.ScanContext))
 	production.GET("/scan-context-machine", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.ScanContextMachine))
+	production.POST("/scan-machine", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.ScanMachine))
+	production.GET("/scan-out-context", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.ScanOutContext))
+	
+	// NEW: list WO (dropdown), detail WO (semua uniq), lookup RM (scan RM)
+	production.GET("/wo-list", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.WOList))
+	production.GET("/wo-detail", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.WODetail))
+	production.GET("/raw-material", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.RawMaterialLookup))
+
 	// ▶️ Scan In (start production)
 	// POST /api/v1/action-ui/production/scan-in
 	production.POST("/scan-in", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.ScanIn))
@@ -89,3 +97,4 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	qcGroup.POST("/approve", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.QCApprove))
 	qcGroup.POST("/reject", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.QCReject))
 }
+

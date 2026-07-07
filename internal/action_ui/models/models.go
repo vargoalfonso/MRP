@@ -170,20 +170,22 @@ type ProcessFlow struct {
 }
 
 type RawMaterialLog struct {
-	ID         int64
-	UUID       string
-	WOID       int64
-	WOItemID   int64
-	UniqCode   string
-	RMUUID     string
-	PartNumber string
-	PartName   string
-	UOM        string
-	QtyUsed    float64
-	ScannedBy  string
-	ScannedAt  time.Time
-	CreatedAt  time.Time
+	ID         int64     `gorm:"primaryKey;autoIncrement;column:id"`
+	UUID       string    `gorm:"column:uuid"`
+	WOID       int64     `gorm:"column:wo_id"`
+	WOItemID   int64     `gorm:"column:wo_item_id"`
+	UniqCode   string    `gorm:"column:uniq_code"`
+	RMUUID     string    `gorm:"column:rm_uuid"`
+	PartNumber string    `gorm:"column:part_number"`
+	PartName   string    `gorm:"column:part_name"`
+	UOM        string    `gorm:"column:uom"`
+	QtyUsed    float64   `gorm:"column:qty_used"`
+	ScannedBy  string    `gorm:"column:scanned_by"`
+	ScannedAt  time.Time `gorm:"column:scanned_at"`
+	CreatedAt  time.Time `gorm:"column:created_at"`
 }
+
+func (RawMaterialLog) TableName() string { return "raw_material_logs" }
 
 type MasterMachine struct {
 	ID              int `gorm:"primaryKey;autoIncrement"`
@@ -335,3 +337,26 @@ type InventoryMovementLog struct {
 func (InventoryMovementLog) TableName() string {
 	return "inventory_movement_logs"
 }
+
+// =====================================
+// RAW MATERIAL MASTER (tabel: raw_materials)
+// =====================================
+type RawMaterial struct {
+	ID                int64      `gorm:"column:id;primaryKey"`
+	UUID              string     `gorm:"column:uuid"`
+	UniqCode          string     `gorm:"column:uniq_code"`
+	PartNumber        string     `gorm:"column:part_number"`
+	PartName          string     `gorm:"column:part_name"`
+	ItemID            *int64     `gorm:"column:item_id"`
+	RawMaterialType   string     `gorm:"column:raw_material_type"` // sheet_plate | wire | ssp | others
+	RMSource          string     `gorm:"column:rm_source"`
+	WarehouseLocation string     `gorm:"column:warehouse_location"`
+	UOM               string     `gorm:"column:uom"`
+	StockQty          float64    `gorm:"column:stock_qty"`
+	StockWeightKg     *float64   `gorm:"column:stock_weight_kg"`
+	Status            string     `gorm:"column:status"`
+	UpdatedAt         time.Time  `gorm:"column:updated_at"`
+	DeletedAt         *time.Time `gorm:"column:deleted_at"`
+}
+
+func (RawMaterial) TableName() string { return "raw_materials" }
