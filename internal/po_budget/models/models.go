@@ -1,7 +1,11 @@
 // Package models defines domain structs for the PO Budget module.
 package models
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/datatypes"
+)
 
 // ---------------------------------------------------------------------------
 // DB Tables
@@ -71,8 +75,9 @@ type POBudgetEntry struct {
 	PrlRef   *string `gorm:"size:32;index"` // prls.prl_id
 	PrlRowID *int64  `gorm:"index"`         // prls.id
 
-	BudgetQty     *float64 `gorm:"type:numeric(15,4)"` // PRL item qty ceiling (snapshot)
-	BudgetSubtype *string  `gorm:"size:32"`            // adhoc | regular | nil
+	BudgetQty     *float64       `gorm:"type:numeric(15,4)"` // PRL item qty ceiling (snapshot)
+	BudgetSubtype *string        `gorm:"size:32"`            // adhoc | regular | nil
+	DetailJSON    datatypes.JSON `gorm:"column:detail_jsonb;type:jsonb;not null;default:'{}'::jsonb" json:"detail_jsonb,omitempty"`
 
 	// Audit
 	CreatedBy *string   `gorm:"size:255"`
@@ -144,25 +149,39 @@ func (PrlForecastItem) TableName() string { return "prl_forecast_items" }
 // PRLRow maps to the existing "prls" table (data asli).
 // One row represents one UNIQ item within a PRL document (prl_id).
 type PRLRow struct {
-	ID             int64      `gorm:"primaryKey;autoIncrement"`
-	UUID           string     `gorm:"type:uuid"`
-	PrlID          string     `gorm:"size:32;index"` // varchar(32)
-	CustomerUUID   *string    `gorm:"type:uuid"`
-	CustomerCode   *string    `gorm:"size:32"`
-	CustomerName   *string    `gorm:"size:255"`
-	UniqBomUUID    *string    `gorm:"type:uuid"`
-	UniqCode       *string    `gorm:"size:100"`
-	ProductModel   *string    `gorm:"size:255"`
-	PartName       *string    `gorm:"size:255"`
-	PartNumber     *string    `gorm:"size:150"`
-	ForecastPeriod *string    `gorm:"size:7"` // MM-YYYY
-	Quantity       float64    `gorm:"type:numeric(15,4)"`
-	Status         *string    `gorm:"size:20"`
-	ApprovedAt     *time.Time `gorm:"type:timestamptz"`
-	RejectedAt     *time.Time `gorm:"type:timestamptz"`
-	CreatedAt      time.Time  `gorm:"type:timestamptz"`
-	UpdatedAt      time.Time  `gorm:"type:timestamptz"`
-	DeletedAt      *time.Time `gorm:"type:timestamp"`
+	ID             int64          `gorm:"primaryKey;autoIncrement"`
+	UUID           string         `gorm:"type:uuid"`
+	PrlID          string         `gorm:"size:32;index"` // varchar(32)
+	CustomerUUID   *string        `gorm:"type:uuid"`
+	CustomerCode   *string        `gorm:"size:32"`
+	CustomerName   *string        `gorm:"size:255"`
+	UniqBomUUID    *string        `gorm:"type:uuid"`
+	UniqCode       *string        `gorm:"size:100"`
+	ProductModel   *string        `gorm:"size:255"`
+	PartName       *string        `gorm:"size:255"`
+	PartNumber     *string        `gorm:"size:150"`
+	ForecastPeriod *string        `gorm:"size:7"` // MM-YYYY
+	Quantity       float64        `gorm:"type:numeric(15,4)"`
+	Status         *string        `gorm:"size:20"`
+	ChildJSON      datatypes.JSON `gorm:"column:child_jsonb;type:jsonb;not null;default:'[]'::jsonb" json:"child_jsonb,omitempty"`
+	ApprovedAt     *time.Time     `gorm:"type:timestamptz"`
+	RejectedAt     *time.Time     `gorm:"type:timestamptz"`
+	CreatedAt      time.Time      `gorm:"type:timestamptz"`
+	UpdatedAt      time.Time      `gorm:"type:timestamptz"`
+	DeletedAt      *time.Time     `gorm:"type:timestamp"`
 }
 
 func (PRLRow) TableName() string { return "prls" }
+
+// CurrentBomChildRow is the latest BOM child snapshot used to enrich PRL child
+// references into autocomplete-ready child details for raw-material / indirect.
+type CurrentBomChildRow struct {
+	ParentUniqCode string                       `json:"parent_uniq_code"`
+	UniqCode       string                       `json:"uniq_code"`
+	PartName       *string                      `json:"part_name"`
+	PartNumber     *string                      `json:"part_number"`
+	Model          *string                      `json:"model"`
+	QtyPerUniq     float64                      `json:"qty_per_uniq"`
+	Uom            *string                      `json:"uom"`
+	MaterialSpec   PrlChildMaterialSpecResponse `json:"material_spec"`
+}

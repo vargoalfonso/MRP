@@ -152,6 +152,7 @@ func (s *svc) CreateEntry(ctx context.Context, req models.CreateEntryRequest, cr
 		Po1Pct:          po1Pct,
 		Po2Pct:          po2Pct,
 		Prl:             req.Prl,
+		DetailJSON:      req.DetailJSON,
 		Status:          "Pending",
 		CreatedBy:       &createdBy,
 	}
@@ -787,6 +788,7 @@ func toResponse(e models.POBudgetEntry) models.EntryResponse {
 		BudgetSubtype:   e.BudgetSubtype,
 		PrlRef:          e.PrlRef,
 		PrlRowID:        e.PrlRowID,
+		DetailJSON:      e.DetailJSON,
 		ApprovedBy:      e.ApprovedBy,
 		ApprovedAt:      e.ApprovedAt,
 		SubmittedBy:     e.CreatedBy,
@@ -979,7 +981,7 @@ func (s *svc) GetPRLWithAllocation(ctx context.Context, prlID string, budgetType
 	resp.Items = make([]models.PrlForecastItemResponse, len(items))
 	for i, it := range items {
 		allocated := allocMap[it.ID]
-		resp.Items[i] = models.PrlForecastItemResponse{
+		itemResp := models.PrlForecastItemResponse{
 			ID:           it.ID,
 			UniqCode:     ptrVal(it.UniqCode),
 			ProductModel: it.ProductModel,
@@ -991,6 +993,26 @@ func (s *svc) GetPRLWithAllocation(ctx context.Context, prlID string, budgetType
 			RemainingQty: it.Quantity - allocated,
 			Uom:          nil,
 		}
+
+		if shouldAttachPRLChildren(budgetType) {
+			childUniqCodes, parseErr := extractPRLChildUniqCodes(it.ChildJSON)
+			if parseErr != nil {
+				return nil, apperror.InternalWrap("parse prl child_jsonb failed", parseErr)
+			}
+			if len(childUniqCodes) > 0 {
+				candidates, childErr := s.repo.ListCurrentBomChildrenByParentUniq(ctx, ptrVal(it.UniqCode), childUniqCodes)
+				if childErr != nil {
+					return nil, apperror.InternalWrap("load latest bom children failed", childErr)
+				}
+				children, buildErr := buildPRLAutocompleteChildren(it.ChildJSON, candidates, itemResp.RemainingQty)
+				if buildErr != nil {
+					return nil, apperror.InternalWrap("build prl autocomplete children failed", buildErr)
+				}
+				itemResp.Children = children
+			}
+		}
+
+		resp.Items[i] = itemResp
 	}
 	return &resp, nil
 }
@@ -1059,15 +1081,21 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 			uniqCode = item.UniqCode
 		}
 		productModel := r.ProductModel
-		if productModel == nil {
+		if shouldAttachPRLChildren(budgetType) && item.ProductModel != nil {
+			productModel = item.ProductModel
+		} else if productModel == nil {
 			productModel = item.ProductModel
 		}
 		partName := r.PartName
-		if partName == nil {
+		if shouldAttachPRLChildren(budgetType) && item.PartName != nil {
+			partName = item.PartName
+		} else if partName == nil {
 			partName = item.PartName
 		}
 		partNumber := r.PartNumber
-		if partNumber == nil {
+		if shouldAttachPRLChildren(budgetType) && item.PartNumber != nil {
+			partNumber = item.PartNumber
+		} else if partNumber == nil {
 			partNumber = item.PartNumber
 		}
 
@@ -1096,6 +1124,10 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 		for _, sup := range item.Suppliers {
 			cb := createdBy
 			prlRowID := item.PrlItemID
+			detailJSON, detailErr := buildBulkEntryDetailJSON(budgetType, r, item, sup)
+			if detailErr != nil {
+				return nil, apperror.InternalWrap("build bulk detail_jsonb failed", detailErr)
+			}
 
 			entries = append(entries, models.POBudgetEntry{
 				BudgetType:      budgetType,
@@ -1121,6 +1153,7 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 				PrlRef:          &prlRef,
 				PrlRowID:        &prlRowID,
 				BudgetSubtype:   &subtype,
+				DetailJSON:      detailJSON,
 				Status:          "Pending",
 				CreatedBy:       &cb,
 			})
