@@ -3,7 +3,6 @@ package service
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -474,22 +473,24 @@ func (s *service) DeletePRL(ctx context.Context, uuid string) error {
 		return err
 	}
 
-	approveInstance, err := s.repo.GetByActionAndReference(ctx, "prl", item.ID)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
+	status := strings.ToLower(models.Trimmed(item.Status))
+	if status != models.PRLStatusPending && status != models.PRLStatusRejected {
+		return apperror.BadRequest("hanya PRL dengan status pending atau rejected yang dapat dihapus")
 	}
 
-	if approveInstance != nil {
-		if approveInstance.Status == "approved" {
-			return errors.New("PRL sudah di-approve, tidak dapat dihapus")
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).
+			Where("action_name = ? AND reference_table = ? AND reference_id = ?", "prl", "prls", item.ID).
+			Delete(&awmodels.ApprovalInstance{}).Error; err != nil {
+			return apperror.InternalWrap("delete prl approval instance failed", err)
 		}
 
-		if err := s.repo.DeleteApprove(ctx, approveInstance.ID); err != nil {
-			return err
+		if err := tx.WithContext(ctx).Delete(&models.PRL{}, item.ID).Error; err != nil {
+			return apperror.InternalWrap("delete prl failed", err)
 		}
-	}
 
-	return s.repo.DeletePRL(ctx, item)
+		return nil
+	})
 }
 
 func (s *service) ApprovePRLs(ctx context.Context, req models.BulkStatusActionRequest, userID string, userRoles []string) (*models.BulkStatusActionResponse, error) {
