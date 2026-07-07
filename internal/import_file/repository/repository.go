@@ -100,10 +100,11 @@ func (r *importRepository) GetMaxPRLNumber(ctx context.Context, year string) (in
 	err := r.db.WithContext(ctx).
 		Raw(`
 			SELECT COALESCE(MAX(
-				CAST(SPLIT_PART(prl_id, '-', 3) AS BIGINT)
+				CAST(SPLIT_PART(prl_id, '-', 4) AS BIGINT)
 			), 0)
 			FROM prls
 			WHERE prl_id LIKE ?
+			AND SPLIT_PART(prl_id, '-', 4) ~ '^[0-9]+$'
 		`, "PRL-"+year+"-%").
 		Scan(&max).Error
 
