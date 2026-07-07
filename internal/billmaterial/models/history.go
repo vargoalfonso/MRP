@@ -1,9 +1,9 @@
 package models
 
 import (
-	"time"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"time"
 )
 
 type BomImportHistory struct {
@@ -17,12 +17,12 @@ type BomImportHistory struct {
 	ImportedCount int            `                                 json:"imported_count"`
 	FailedCount   int            `                                 json:"failed_count"`
 	RequestID     string         `gorm:"type:varchar(64)"          json:"request_id"`
-	ErrorFile     []byte         `gorm:"type:bytea"                json:"-"` // xlsx byte, tidak ikut di list
+	ErrorFile     []byte         `gorm:"type:bytea"                json:"-"`              // xlsx byte, tidak ikut di list
 	HasErrorFile  bool           `gorm:"->;column:has_error_file"  json:"has_error_file"` // read-only, hasil hitung SQL
 	CreatedAt     time.Time      `                                 json:"created_at"`
 	UpdatedAt     time.Time      `                                 json:"updated_at"`
 	DeletedAt     gorm.DeletedAt `gorm:"index"                     json:"-"`
-	PreviewRows datatypes.JSON `gorm:"column:preview_rows;type:jsonb" json:"preview_rows,omitempty"`
+	PreviewRows   datatypes.JSON `gorm:"column:preview_rows;type:jsonb" json:"preview_rows,omitempty"`
 }
 
 func (BomImportHistory) TableName() string { return "bom_import_histories" }

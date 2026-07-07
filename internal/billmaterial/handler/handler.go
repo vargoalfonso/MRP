@@ -46,16 +46,16 @@ func (h *HTTPHandler) ListBom(ctx *app.Context) *app.CostumeResponse {
 	p := pagination.BomPagination(ctx)
 
 	resp, err := h.svc.ListBom(ctx.Request.Context(), models.ListBomQuery{
-		UniqCode:       p.UniqCode,
-		Status:         p.Status,
-		Search:         p.Search,
+		UniqCode:            p.UniqCode,
+		Status:              p.Status,
+		Search:              p.Search,
 		SupplierID:          p.SupplierID,
 		TypeMaterial:        p.TypeMaterial,
 		ExcludeSupplierUUID: p.ExcludeSupplierUUID,
 		Page:                p.Page,
-		Limit:          p.Limit,
-		OrderBy:        p.OrderBy,
-		OrderDirection: p.OrderDirection,
+		Limit:               p.Limit,
+		OrderBy:             p.OrderBy,
+		OrderDirection:      p.OrderDirection,
 	})
 	if err != nil {
 		return app.NewError(ctx, err)

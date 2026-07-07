@@ -454,5 +454,5 @@ type ApproveInstance struct {
 }
 
 func (ApproveInstance) TableName() string {
-	return "approve_instances"
+	return "approval_instances"
 }

@@ -108,16 +108,16 @@ type IRepository interface {
 }
 
 type ListFilter struct {
-	UniqCode       string
-	Status         string
-	Search         string // ILIKE on uniq_code OR part_name
-	SupplierID     string // UUID — filter by material spec supplier
+	UniqCode            string
+	Status              string
+	Search              string // ILIKE on uniq_code OR part_name
+	SupplierID          string // UUID — filter by material spec supplier
 	TypeMaterial        string // raw | indirect | subcon — filter by item_material_specs.type_material
 	ExcludeSupplierUUID string // exclude bom items whose uniq_code already exists in supplier_item for this supplier
 	Page                int
-	Limit          int
-	OrderBy        string
-	OrderDirection string
+	Limit               int
+	OrderBy             string
+	OrderDirection      string
 }
 
 // ---------------------------------------------------------------------------
@@ -1063,7 +1063,6 @@ func (r *repository) GetImportHistoryErrorFile(ctx context.Context, id string) (
 	}
 	return h.ErrorFile, nil
 }
-
 
 // ---------------------------------------------------------------------------
 // Helpers
