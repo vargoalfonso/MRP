@@ -473,10 +473,6 @@ func (s *service) DeletePRL(ctx context.Context, uuid string) error {
 	if err != nil {
 		return err
 	}
-	// Only allow delete when PRL is still pending
-	if item.Status == models.PRLStatusApproved {
-		return apperror.BadRequest("PRL sudah di-approve, tidak dapat dihapus")
-	}
 
 	approveInstance, err := s.repo.GetByActionAndReference(ctx, "prl", item.ID)
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
