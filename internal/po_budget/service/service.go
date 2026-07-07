@@ -1022,7 +1022,11 @@ func (s *svc) GetPRLWithAllocation(ctx context.Context, prlID string, budgetType
 // ---------------------------------------------------------------------------
 
 // BulkCreateFromPRL validates that no supplier allocation exceeds the PRL item
-// quantity ceiling, then creates one po_budget_entry row per supplier per UNIQ.
+// quantity ceiling, then creates one po_budget_entry row per PRL (grouping all
+// UNIQ items + supplier allocations for that PRL into a single row's
+// detail_jsonb.children[]). Selecting multiple PRLs in one request still
+// yields multiple rows — one per distinct PRL — but a single PRL with several
+// BOM children/suppliers now collapses into exactly one row.
 //
 // Ceiling rule (per item):
 //
@@ -1072,92 +1076,156 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 
 	subtype := req.BudgetSubtype
 
+	// Group items by their underlying PRL (a single BulkFromPRLRequest can, in
+	// principle, mix items from several PRLs when the FE lets a user pick
+	// multiple PRLs). Each PRL group collapses into exactly one
+	// po_budget_entries row, with every UNIQ item + supplier allocation for
+	// that PRL merged into detail_jsonb.children[].
+	type prlGroup struct {
+		prlRef string
+		row    models.PRLRow
+		items  []models.BulkItemInput
+	}
+	groupOrder := make([]string, 0, len(req.Items))
+	groups := make(map[string]*prlGroup, len(req.Items))
+
 	for _, item := range req.Items {
 		r := rowMap[item.PrlItemID]
-		prlRef := r.PrlID
-		budgetQty := r.Quantity
-		uniqCode := ptrVal(r.UniqCode)
-		if uniqCode == "" {
-			uniqCode = item.UniqCode
-		}
-		productModel := r.ProductModel
-		if shouldAttachPRLChildren(budgetType) && item.ProductModel != nil {
-			productModel = item.ProductModel
-		} else if productModel == nil {
-			productModel = item.ProductModel
-		}
-		partName := r.PartName
-		if shouldAttachPRLChildren(budgetType) && item.PartName != nil {
-			partName = item.PartName
-		} else if partName == nil {
-			partName = item.PartName
-		}
-		partNumber := r.PartNumber
-		if shouldAttachPRLChildren(budgetType) && item.PartNumber != nil {
-			partNumber = item.PartNumber
-		} else if partNumber == nil {
-			partNumber = item.PartNumber
-		}
 
-		// Resolve PO split per item (falls back to po_split_settings)
-		po1Pct, po2Pct, err := s.resolveSplit(ctx, budgetType, item.Po1Pct, item.Po2Pct)
-		if err != nil {
-			return nil, err
-		}
-
-		// Validate: sum of new supplier quantities for this item
+		// Validate: sum of new supplier quantities for this item against its
+		// own PRL-row ceiling (unchanged from before — validation stays
+		// per-item even though rows are now grouped per-PRL).
 		var newTotal float64
 		for _, sup := range item.Suppliers {
 			newTotal += sup.Quantity
 		}
 
 		existingAllocated := allocMap[item.PrlItemID]
-		if existingAllocated+newTotal > budgetQty {
+		if existingAllocated+newTotal > r.Quantity {
+			uniqCode := ptrVal(r.UniqCode)
+			if uniqCode == "" {
+				uniqCode = item.UniqCode
+			}
 			result.Errors = append(result.Errors,
 				fmt.Sprintf("uniq %s: total allocated (%.2f existing + %.2f new = %.2f) exceeds PRL budget (%.2f)",
-					uniqCode, existingAllocated, newTotal, existingAllocated+newTotal, budgetQty),
+					uniqCode, existingAllocated, newTotal, existingAllocated+newTotal, r.Quantity),
 			)
 			continue
 		}
 
-		// Create one entry per supplier
-		for _, sup := range item.Suppliers {
-			cb := createdBy
-			prlRowID := item.PrlItemID
-			detailJSON, detailErr := buildBulkEntryDetailJSON(budgetType, r, item, sup)
-			if detailErr != nil {
-				return nil, apperror.InternalWrap("build bulk detail_jsonb failed", detailErr)
-			}
-
-			entries = append(entries, models.POBudgetEntry{
-				BudgetType:      budgetType,
-				CustomerID:      nil,
-				CustomerName:    r.CustomerName,
-				UniqCode:        uniqCode,
-				ProductModel:    productModel,
-				MaterialType:    nil,
-				PartName:        partName,
-				PartNumber:      partNumber,
-				Quantity:        sup.Quantity,
-				Uom:             item.Uom,
-				WeightKg:        item.WeightKg,
-				SupplierID:      sup.SupplierID,
-				SupplierName:    strPtr(sup.SupplierName),
-				Period:          req.Period,
-				PeriodDate:      periodDate,
-				SalesPlan:       item.SalesPlan,
-				PurchaseRequest: sup.Quantity, // PR = supplier's allocated qty
-				Po1Pct:          po1Pct,
-				Po2Pct:          po2Pct,
-				Prl:             budgetQty,
-				PrlRef:          &prlRef,
-				PrlRowID:        &prlRowID,
-				BudgetSubtype:   &subtype,
-				DetailJSON:      detailJSON,
-				Status:          "Pending",
-				CreatedBy:       &cb,
-			})
+		g, ok := groups[r.PrlID]
+		if !ok {
+			g = &prlGroup{prlRef: r.PrlID, row: r}
+			groups[r.PrlID] = g
+			groupOrder = append(groupOrder, r.PrlID)
 		}
+		g.items = append(g.items, item)
+	}
+
+	for _, prlRef := range groupOrder {
+		g := groups[prlRef]
+		if len(g.items) == 0 {
+			continue
+		}
+
+		head := g.items[0]
+		r := g.row
+		budgetQty := r.Quantity
+		uniqCode := ptrVal(r.UniqCode)
+		if uniqCode == "" {
+			uniqCode = head.UniqCode
+		}
+		productModel := r.ProductModel
+		if shouldAttachPRLChildren(budgetType) && head.ProductModel != nil {
+			productModel = head.ProductModel
+		} else if productModel == nil {
+			productModel = head.ProductModel
+		}
+		partName := r.PartName
+		if shouldAttachPRLChildren(budgetType) && head.PartName != nil {
+			partName = head.PartName
+		} else if partName == nil {
+			partName = head.PartName
+		}
+		partNumber := r.PartNumber
+		if shouldAttachPRLChildren(budgetType) && head.PartNumber != nil {
+			partNumber = head.PartNumber
+		} else if partNumber == nil {
+			partNumber = head.PartNumber
+		}
+
+		// Resolve PO split once per PRL group (falls back to po_split_settings).
+		po1Pct, po2Pct, err := s.resolveSplit(ctx, budgetType, head.Po1Pct, head.Po2Pct)
+		if err != nil {
+			return nil, err
+		}
+
+		var totalQty, totalSalesPlan float64
+		var uniqSupplierID *int64
+		var uniqSupplierName string
+		supplierMixed := false
+		firstSupplierSeen := false
+
+		for _, item := range g.items {
+			totalSalesPlan += item.SalesPlan
+			for _, sup := range item.Suppliers {
+				totalQty += sup.Quantity
+				if !firstSupplierSeen {
+					uniqSupplierID = sup.SupplierID
+					uniqSupplierName = sup.SupplierName
+					firstSupplierSeen = true
+				} else if !supplierMixed {
+					sameID := (sup.SupplierID == nil && uniqSupplierID == nil) ||
+						(sup.SupplierID != nil && uniqSupplierID != nil && *sup.SupplierID == *uniqSupplierID)
+					if !sameID || sup.SupplierName != uniqSupplierName {
+						supplierMixed = true
+					}
+				}
+			}
+		}
+
+		supplierID := uniqSupplierID
+		supplierName := uniqSupplierName
+		if supplierMixed {
+			supplierID = nil
+			supplierName = "Multiple"
+		}
+
+		cb := createdBy
+		prlRowID := head.PrlItemID
+		detailJSON, detailErr := buildBulkEntryDetailJSON(budgetType, r, g.items)
+		if detailErr != nil {
+			return nil, apperror.InternalWrap("build bulk detail_jsonb failed", detailErr)
+		}
+
+		entries = append(entries, models.POBudgetEntry{
+			BudgetType:      budgetType,
+			CustomerID:      nil,
+			CustomerName:    r.CustomerName,
+			UniqCode:        uniqCode,
+			ProductModel:    productModel,
+			MaterialType:    nil,
+			PartName:        partName,
+			PartNumber:      partNumber,
+			Quantity:        totalQty,
+			Uom:             head.Uom,
+			WeightKg:        head.WeightKg,
+			SupplierID:      supplierID,
+			SupplierName:    strPtr(supplierName),
+			Period:          req.Period,
+			PeriodDate:      periodDate,
+			SalesPlan:       totalSalesPlan,
+			PurchaseRequest: totalQty, // PR = total allocated qty across all children/suppliers
+			Po1Pct:          po1Pct,
+			Po2Pct:          po2Pct,
+			Prl:             budgetQty,
+			PrlRef:          &g.prlRef,
+			PrlRowID:        &prlRowID,
+			BudgetSubtype:   &subtype,
+			DetailJSON:      detailJSON,
+			Status:          "Pending",
+			CreatedBy:       &cb,
+		})
 	}
 
 	if len(entries) > 0 {

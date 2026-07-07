@@ -95,7 +95,7 @@ func buildPRLAutocompleteChildren(raw []byte, candidates []models.CurrentBomChil
 			spec.MaterialGrade = strPtr(materialGrade)
 		}
 
-		childQty := parentQty
+		childQty := parentQty / float64(len(refs))
 		if childQty < 0 {
 			childQty = 0
 		}
