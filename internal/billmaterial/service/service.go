@@ -128,9 +128,9 @@ func (s *service) ListBom(ctx context.Context, q models.ListBomQuery) (*models.L
 	}
 
 	bomItems, total, err := s.repo.ListBomItems(ctx, repository.ListFilter{
-		UniqCode:       q.UniqCode,
-		Status:         q.Status,
-		Search:         q.Search,
+		UniqCode:            q.UniqCode,
+		Status:              q.Status,
+		Search:              q.Search,
 		SupplierID:          q.SupplierID,
 		TypeMaterial:        q.TypeMaterial,
 		ExcludeSupplierUUID: q.ExcludeSupplierUUID,
@@ -2044,7 +2044,7 @@ func (s *service) DownloadImportTemplate(ctx context.Context) ([]byte, error) {
 		md.Uoms = append(md.Uoms, bulkimport.RefRow{Code: u.Code, Name: u.Name})
 	}
 
-	f, err := bulkimport.BuildBomTemplate(md)   // <-- sekarang menerima *BomTemplateMasterData
+	f, err := bulkimport.BuildBomTemplate(md) // <-- sekarang menerima *BomTemplateMasterData
 	if err != nil {
 		return nil, apperror.InternalWrap("build bom template", err)
 	}
@@ -2183,7 +2183,7 @@ func (s *service) ImportFromExcel(ctx context.Context, filePath, fileName, uploa
 		status = bulkimport.StatusPartial
 	}
 
-		result := bulkimport.BulkResult{
+	result := bulkimport.BulkResult{
 		Status:       status,
 		Total:        totalGroups,
 		SuccessCount: successCount,
@@ -2244,9 +2244,9 @@ func (s *service) ImportFromExcel(ctx context.Context, filePath, fileName, uploa
 		PreviewRows:   buildImportPreviewSnapshot(itemRows, rowErrs),
 	}
 	if err := s.repo.CreateImportHistory(ctx, history); err != nil {
-	// Jangan gagalkan import hanya karena history gagal disimpan.
-	fmt.Printf("gagal simpan bom import history: %v\n", err)
-}
+		// Jangan gagalkan import hanya karena history gagal disimpan.
+		fmt.Printf("gagal simpan bom import history: %v\n", err)
+	}
 
 	return result, nil
 }
@@ -2361,10 +2361,10 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 			Uom:            strings.TrimSpace(getImportValue(raw, headerIndex, "uom")),
 			Status:         strings.TrimSpace(getImportValue(raw, headerIndex, "status")),
 			Description:    strings.TrimSpace(getImportValue(raw, headerIndex, "description")),
-			MaterialGrade: strings.TrimSpace(getImportValue(raw, headerIndex, "material_grade")),
-			Grade:         strings.TrimSpace(getImportValue(raw, headerIndex, "grade")),
-			Form:          strings.TrimSpace(getImportValue(raw, headerIndex, "form")),
-			SupplierCode:  strings.TrimSpace(getImportValue(raw, headerIndex, "supplier_code")),
+			MaterialGrade:  strings.TrimSpace(getImportValue(raw, headerIndex, "material_grade")),
+			Grade:          strings.TrimSpace(getImportValue(raw, headerIndex, "grade")),
+			Form:           strings.TrimSpace(getImportValue(raw, headerIndex, "form")),
+			SupplierCode:   strings.TrimSpace(getImportValue(raw, headerIndex, "supplier_code")),
 			QtyPerUniq:     1,
 		}
 

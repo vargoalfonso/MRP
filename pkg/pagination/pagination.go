@@ -39,14 +39,14 @@ type PaginationInput struct {
 
 // BomPaginationInput extends PaginationInput with BOM-specific filters.
 type BomPaginationInput struct {
-	Limit          int           `json:"limit"`
-	Page           int           `json:"page"`
-	Search         string        `json:"search"` // searches uniq_code & part_name
-	Filter         []FilterInput `json:"filter"`
-	OrderBy        string        `json:"order_by"`
-	OrderDirection string        `json:"order_direction"`
-	UniqCode       string        `json:"uniq_code"`
-	Status         string        `json:"status"`        // Active | Inactive | Obsolete
+	Limit               int           `json:"limit"`
+	Page                int           `json:"page"`
+	Search              string        `json:"search"` // searches uniq_code & part_name
+	Filter              []FilterInput `json:"filter"`
+	OrderBy             string        `json:"order_by"`
+	OrderDirection      string        `json:"order_direction"`
+	UniqCode            string        `json:"uniq_code"`
+	Status              string        `json:"status"`                // Active | Inactive | Obsolete
 	SupplierID          string        `json:"supplier_id"`           // UUID — filter by material spec supplier
 	TypeMaterial        string        `json:"type_material"`         // raw | indirect | subcon
 	ExcludeSupplierUUID string        `json:"exclude_supplier_uuid"` // exclude uniq_codes already added for this supplier
@@ -169,14 +169,14 @@ func BomPagination(c *app.Context) BomPaginationInput {
 	}
 
 	return BomPaginationInput{
-		Limit:          base.Limit,
-		Page:           base.Page,
-		Search:         base.Search,
-		Filter:         base.Filter,
-		OrderBy:        base.OrderBy,
-		OrderDirection: base.OrderDirection,
-		UniqCode:       uniqCode,
-		Status:         status,
+		Limit:               base.Limit,
+		Page:                base.Page,
+		Search:              base.Search,
+		Filter:              base.Filter,
+		OrderBy:             base.OrderBy,
+		OrderDirection:      base.OrderDirection,
+		UniqCode:            uniqCode,
+		Status:              status,
 		SupplierID:          c.Query("supplier_id"),
 		TypeMaterial:        c.Query("type_material"),
 		ExcludeSupplierUUID: c.Query("exclude_supplier_uuid"),

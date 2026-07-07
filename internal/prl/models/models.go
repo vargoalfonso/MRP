@@ -447,12 +447,12 @@ type ApproveInstance struct {
 	CurrentLevel       int       `gorm:"column:current_level"`
 	MaxLevel           int       `gorm:"column:max_level"`
 	Status             string    `gorm:"column:status"`
-	SubmittedBy        uint      `gorm:"column:submitted_by"`
+	SubmittedBy        string    `gorm:"column:submitted_by"`
 	ApprovalProgress   string    `gorm:"column:approval_progress"`
 	CreatedAt          time.Time `gorm:"column:created_at"`
 	UpdatedAt          time.Time `gorm:"column:updated_at"`
 }
 
 func (ApproveInstance) TableName() string {
-	return "approve_instances"
+	return "approval_instances"
 }
