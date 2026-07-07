@@ -75,6 +75,7 @@ type IRepository interface {
 	GetPRLDocByPrlID(ctx context.Context, prlID string) (*models.PRLRow, error)
 	GetPRLRowsByPrlID(ctx context.Context, prlID string) ([]models.PRLRow, error)
 	GetPRLRowsByIDs(ctx context.Context, ids []int64) ([]models.PRLRow, error)
+	ListCurrentBomChildrenByParentUniq(ctx context.Context, parentUniqCode string, childUniqCodes []string) ([]models.CurrentBomChildRow, error)
 
 	// SumAllocatedQty returns how much of prl_row_id's quantity is already in po_budget_entries
 	// for the given budget_type. Used to enforce the ceiling constraint.
@@ -552,6 +553,102 @@ func (r *repo) GetPRLRowsByIDs(ctx context.Context, ids []int64) ([]models.PRLRo
 		return nil, err
 	}
 	return rows, nil
+}
+
+func (r *repo) ListCurrentBomChildrenByParentUniq(ctx context.Context, parentUniqCode string, childUniqCodes []string) ([]models.CurrentBomChildRow, error) {
+	parentUniqCode = strings.TrimSpace(parentUniqCode)
+	if parentUniqCode == "" || len(childUniqCodes) == 0 {
+		return []models.CurrentBomChildRow{}, nil
+	}
+
+	type childRow struct {
+		ParentUniqCode string
+		UniqCode       string
+		PartName       *string
+		PartNumber     *string
+		Model          *string
+		QtyPerUniq     float64
+		Uom            *string
+		MaterialGrade  *string
+		Grade          *string
+		TypeMaterial   *string
+		Form           *string
+		WidthMm        *float64
+		DiameterMm     *float64
+		ThicknessMm    *float64
+		LengthMm       *float64
+		WeightKg       *float64
+		SupplierName   *string
+		CycleTimeSec   *float64
+		SetupTimeMin   *float64
+		CustomerCycle  *string
+	}
+
+	var rows []childRow
+	err := r.db.WithContext(ctx).
+		Table("bom_item AS b").
+		Select(`
+			p.uniq_code AS parent_uniq_code,
+			c.uniq_code,
+			c.part_name,
+			c.part_number,
+			c.model,
+			bl.qty_per_uniq,
+			NULLIF(TRIM(COALESCE(c.uom, '')), '') AS uom,
+			ims.material_grade,
+			ims.grade,
+			ims.type_material,
+			ims.form,
+			ims.width_mm,
+			ims.diameter_mm,
+			ims.thickness_mm,
+			ims.length_mm,
+			ims.weight_kg,
+			ims.supplier_name,
+			ims.cycle_time_sec,
+			ims.setup_time_min,
+			ims.customer_cycle
+		`).
+		Joins("JOIN items p ON p.id = b.item_id").
+		Joins("JOIN bom_lines bl ON bl.bom_item_id = b.id").
+		Joins("JOIN items c ON c.id = bl.child_item_id").
+		Joins("LEFT JOIN item_revisions ir ON ir.id = bl.child_item_revision_id").
+		Joins("LEFT JOIN item_material_specs ims ON ims.item_revision_id = ir.id").
+		Where("b.is_current = ? AND p.uniq_code = ? AND c.uniq_code IN ?", true, parentUniqCode, childUniqCodes).
+		Order("bl.level ASC, bl.id ASC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]models.CurrentBomChildRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, models.CurrentBomChildRow{
+			ParentUniqCode: row.ParentUniqCode,
+			UniqCode:       row.UniqCode,
+			PartName:       row.PartName,
+			PartNumber:     row.PartNumber,
+			Model:          row.Model,
+			QtyPerUniq:     row.QtyPerUniq,
+			Uom:            row.Uom,
+			MaterialSpec: models.PrlChildMaterialSpecResponse{
+				MaterialGrade: row.MaterialGrade,
+				Grade:         row.Grade,
+				TypeMaterial:  row.TypeMaterial,
+				Form:          row.Form,
+				WidthMm:       row.WidthMm,
+				DiameterMm:    row.DiameterMm,
+				ThicknessMm:   row.ThicknessMm,
+				LengthMm:      row.LengthMm,
+				WeightKg:      row.WeightKg,
+				SupplierName:  row.SupplierName,
+				CycleTimeSec:  row.CycleTimeSec,
+				SetupTimeMin:  row.SetupTimeMin,
+				CustomerCycle: row.CustomerCycle,
+			},
+		})
+	}
+	return out, nil
 }
 
 // SumAllocatedQty returns how much quantity is already allocated (in po_budget_entries)

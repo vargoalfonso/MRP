@@ -1,5 +1,7 @@
 package models
 
+import "gorm.io/datatypes"
+
 // ---------------------------------------------------------------------------
 // List / filter queries
 // ---------------------------------------------------------------------------
@@ -44,9 +46,10 @@ type CreateEntryRequest struct {
 	SalesPlan       float64  `json:"sales_plan"       validate:"gte=0"`
 	PurchaseRequest float64  `json:"purchase_request" validate:"gte=0"`
 	// Po1Pct / Po2Pct optional — if omitted they are fetched from po_split_settings
-	Po1Pct *float64 `json:"po1_pct"`
-	Po2Pct *float64 `json:"po2_pct"`
-	Prl    float64  `json:"prl"`
+	Po1Pct     *float64       `json:"po1_pct"`
+	Po2Pct     *float64       `json:"po2_pct"`
+	Prl        float64        `json:"prl"`
+	DetailJSON datatypes.JSON `json:"detail_jsonb"`
 }
 
 type UpdateEntryRequest struct {
@@ -128,19 +131,23 @@ type BulkFromPRLRequest struct {
 // BulkItemInput is one UNIQ row from Step 2, with one or more supplier allocations.
 // The sum of all Suppliers[].Quantity MUST NOT exceed the PRL item quantity ceiling.
 type BulkItemInput struct {
-	PrlItemID           int64               `json:"prl_item_id"   validate:"required"`
-	UniqCode            string              `json:"uniq_code"     validate:"required"`
-	ProductModel        *string             `json:"product_model"`
-	MaterialType        *string             `json:"material_type"`
-	PartName            *string             `json:"part_name"`
-	PartNumber          *string             `json:"part_number"`
-	WeightKg            *float64            `json:"weight_kg"`
-	Uom                 *string             `json:"uom"`
-	ExistingRawMaterial *string             `json:"existing_raw_material"`
-	SalesPlan           float64             `json:"sales_plan"`
-	Po1Pct              *float64            `json:"po1_pct"` // optional; falls back to po_split_settings
-	Po2Pct              *float64            `json:"po2_pct"`
-	Suppliers           []BulkSupplierInput `json:"suppliers"     validate:"required,min=1,dive"`
+	PrlItemID           int64                  `json:"prl_item_id"   validate:"required"`
+	UniqCode            string                 `json:"uniq_code"     validate:"required"`
+	ChildUniqCode       *string                `json:"child_uniq_code"`
+	ProductModel        *string                `json:"product_model"`
+	Model               *string                `json:"model"`
+	MaterialType        *string                `json:"material_type"`
+	PartName            *string                `json:"part_name"`
+	PartNumber          *string                `json:"part_number"`
+	QtyPerUniq          *float64               `json:"qty_per_uniq"`
+	WeightKg            *float64               `json:"weight_kg"`
+	Uom                 *string                `json:"uom"`
+	ExistingRawMaterial *string                `json:"existing_raw_material"`
+	MaterialSpec        map[string]interface{} `json:"material_spec"`
+	SalesPlan           float64                `json:"sales_plan"`
+	Po1Pct              *float64               `json:"po1_pct"` // optional; falls back to po_split_settings
+	Po2Pct              *float64               `json:"po2_pct"`
+	Suppliers           []BulkSupplierInput    `json:"suppliers"     validate:"required,min=1,dive"`
 }
 
 // BulkSupplierInput is one supplier allocation for a UNIQ item.
