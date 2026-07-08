@@ -97,6 +97,17 @@ type QCSubmitRequest struct {
 	Status string `json:"status"`
 }
 
+type QCFinishRequest struct {
+	QCTaskID int64 `json:"qc_task_id" binding:"required"`
+
+	WOID     int64 `json:"wo_id" binding:"required"`
+	WOItemID int64 `json:"wo_item_id" binding:"required"`
+
+	TotalProductionQty float64 `json:"total_production_qty"`
+	TotalScrapInBox    float64 `json:"total_scrap_in_box"`
+	NGDefectQty        float64 `json:"ng_defect_qty"`
+}
+
 type FinishedGoodsResponse struct {
 	UniqCode   string  `json:"uniq_code"`
 	PartNumber string  `json:"part_number"`
@@ -188,10 +199,39 @@ type WODetailUniq struct {
 	MachineScanned bool                  `json:"machine_scanned"`
 	ProcessFlow    []WODetailProcessStep `json:"process_flow"`
 
-	SavedQty     float64                     `json:"saved_qty"`
+		SavedQty     float64                     `json:"saved_qty"`
 	DandoriTime  string                      `json:"dandori_time"`
 	SetupQCTime  string                      `json:"setup_qc_time"`
 	RawMaterials []ScanOutContextRawMaterial `json:"raw_materials"`
+
+	BomMaterials []BomMaterial `json:"bom_materials"`
+}
+
+type BomMaterial struct {
+	Uniq       string  `json:"uniq"`
+	PartName   string  `json:"part_name"`
+	PartNumber string  `json:"part_number"`
+	Level      int     `json:"level"` // 0 = parent (WO uniq), 1 = child, 2 = grandchild, dst.
+	QtyPerUniq float64 `json:"qty_per_uniq"`
+	UOM        string  `json:"uom"`
+
+	MaterialGrade string   `json:"material_grade"`
+	Grade         string   `json:"grade"`
+	TypeMaterial  string   `json:"type_material"`
+	Form          string   `json:"form"`
+	WidthMm       *float64 `json:"width_mm"`
+	DiameterMm    *float64 `json:"diameter_mm"`
+	ThicknessMm   *float64 `json:"thickness_mm"`
+	LengthMm      *float64 `json:"length_mm"`
+	WeightKg      *float64 `json:"weight_kg"`
+	SupplierName  string   `json:"supplier_name"`
+
+	RMUUID          string  `json:"rm_uuid"`
+	RawMaterialType string  `json:"raw_material_type"`
+	TypeLabel       string  `json:"type_label"`
+	InInventory     bool    `json:"in_inventory"`
+	AvailableStock  float64 `json:"available_stock"`
+	StockWeightKg   float64 `json:"stock_weight_kg"`
 }
 
 type RawMaterialLookupResponse struct {
@@ -248,6 +288,10 @@ type ScanMachineResponse struct {
 type ScanOutContextRawMaterial struct {
 	RMUUID         string  `json:"rm_uuid"`
 	PackingListRM  string  `json:"packing_list_rm"`
+	MaterialCode   string  `json:"material_code"` 
+	Form           string  `json:"form"`         
+	QtyPerUniq     float64 `json:"qty_per_uniq"` 
+	SpecWeightKg   float64 `json:"spec_weight_kg"` 
 	TypeLabel      string  `json:"type_label"`
 	IsWIP          bool    `json:"is_wip"`
 	UOM            string  `json:"uom"`
@@ -262,6 +306,7 @@ type ScanOutContextItem struct {
 	MachineScanned bool                        `json:"machine_scanned"`
 	ScanInCount    int                         `json:"scan_in_count"`
 	ScanOutCount   int                         `json:"scan_out_count"`
+	TotalOutput    float64                     `json:"total_output"`
 	RawMaterials   []ScanOutContextRawMaterial `json:"raw_materials"`
 }
 
