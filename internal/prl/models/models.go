@@ -9,6 +9,7 @@ import (
 	"time"
 
 	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -46,7 +47,8 @@ type ItemLookup struct {
 type PRL struct {
 	ID             int64          `gorm:"primaryKey;autoIncrement" json:"row_id"`
 	UUID           string         `gorm:"uniqueIndex;not null" json:"id"`
-	PRLID          string         `gorm:"uniqueIndex;not null" json:"prl_id"`
+	PRLID          string         `gorm:"not null" json:"prl_id"`
+	PRLGroupUUID   *string        `gorm:"index" json:"prl_group_uuid,omitempty"`
 	CustomerUUID   string         `gorm:"index;not null" json:"customer_uuid"`
 	CustomerCode   string         `gorm:"not null" json:"customer_code"`
 	CustomerName   string         `gorm:"not null" json:"customer_name"`
@@ -65,6 +67,17 @@ type PRL struct {
 	UpdatedAt      time.Time      `json:"updated_at"`
 	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
 	Note           string         `gorm:"type:text" json:"note,omitempty"`
+	ChildJSONB     datatypes.JSON `gorm:"column:child_jsonb;type:jsonb;not null;default:'[]'::jsonb" json:"child_jsonb,omitempty"`
+}
+
+type PRLGroup struct {
+	ID        int64          `gorm:"primaryKey;autoIncrement" json:"-"`
+	UUID      string         `gorm:"uniqueIndex;not null" json:"id"`
+	PRLID     string         `gorm:"uniqueIndex;not null" json:"prl_id"`
+	Remarks   *string        `gorm:"type:text" json:"remarks,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 type CreateUniqBOMRequest struct {
@@ -340,6 +353,11 @@ type PRLHistoryDetailResponse struct {
 type PRLDetailResponse struct {
 	PRL      PRL                 `json:"prl"`
 	Approval *PRLApprovalSummary `json:"approval,omitempty"`
+}
+
+type ChildInfo struct {
+	UniqCode      string `json:"uniq_code"`
+	MaterialGrade string `json:"material_grade"`
 }
 
 type PRLApprovalSummary struct {

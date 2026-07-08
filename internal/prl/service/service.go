@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -21,6 +22,7 @@ import (
 	"github.com/ganasa18/go-template/pkg/concurrency"
 	"github.com/google/uuid"
 	"github.com/xuri/excelize/v2"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -176,12 +178,29 @@ func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest, su
 		Status:         models.PRLStatusPending,
 		Remarks:        normalizeOptionalString(req.Remarks),
 		Note:           uuid.NewString(),
+		ChildJSONB:     datatypes.JSON([]byte("[]")),
 	}
 
 	if err := s.repo.CreatePRLs(ctx, []*models.PRL{item}); err != nil {
 		return nil, err
 	}
-	log.Println("PRL ID:", item.ID)
+	// reload from DB so fields populated by DB trigger/defaults (prl_id) are present
+	reloaded, rerr := s.repo.FindPRLByID(ctx, item.ID)
+	if rerr == nil {
+		item = reloaded
+	}
+	log.Println("PRL ID:", item.PRLID)
+
+	// populate child_jsonb from BOM for the uniq_code
+	children, cerr := s.repo.FindBomChildrenByUniqCode(ctx, item.UniqCode)
+	if cerr == nil && len(children) > 0 {
+		b, _ := json.Marshal(children)
+		item.ChildJSONB = datatypes.JSON(b)
+		if uErr := s.repo.UpdatePRL(ctx, item); uErr != nil {
+			return nil, uErr
+		}
+	}
+
 	if err := s.createApprovalInstance(ctx, item.ID, submittedBy); err != nil {
 		return nil, err
 	}
@@ -215,6 +234,26 @@ func (s *service) BulkCreatePRLs(ctx context.Context, req models.BulkCreatePRLRe
 
 	if err := s.repo.CreatePRLs(ctx, items); err != nil {
 		return nil, err
+	}
+	// reload created items to pick up DB-populated fields (prl_id)
+	for i, it := range items {
+		if re, rerr := s.repo.FindPRLByID(ctx, it.ID); rerr == nil {
+			items[i] = re
+		}
+	}
+	// Populate ChildJSONB for created items from BOM children
+	for _, item := range items {
+		children, cErr := s.repo.FindBomChildrenByUniqCode(ctx, item.UniqCode)
+		if cErr != nil {
+			return nil, cErr
+		}
+		if len(children) > 0 {
+			b, _ := json.Marshal(children)
+			item.ChildJSONB = datatypes.JSON(b)
+			if uErr := s.repo.UpdatePRL(ctx, item); uErr != nil {
+				return nil, uErr
+			}
+		}
 	}
 	for _, item := range items {
 		if err := s.createApprovalInstance(ctx, item.ID, submittedBy); err != nil {
@@ -663,6 +702,7 @@ func (s *service) buildPRLFromEntry(ctx context.Context, entry models.CreatePRLE
 		Quantity:       entry.Quantity,
 		Status:         models.PRLStatusPending,
 		Remarks:        normalizeOptionalString(entry.Remarks),
+		ChildJSONB:     datatypes.JSON([]byte(fmt.Sprintf("[{\"uniq_code\": \"%s\", \"product_model\": \"%s\", \"part_name\": \"%s\", \"part_number\": \"%s\"}]", bom.UniqCode, bom.ProductModel, bom.PartName, bom.PartNumber))),
 	}, nil
 }
 
