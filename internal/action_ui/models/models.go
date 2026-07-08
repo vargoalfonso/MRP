@@ -312,26 +312,23 @@ func (WIPLog) TableName() string {
 type InventoryMovementLog struct {
 	ID int64 `gorm:"primaryKey"`
 
-	MovementCategory string `gorm:"column:movement_category"` // finished_goods / scrap / raw_material / wip
+	MovementCategory string `gorm:"column:movement_category"` // raw_material / indirect_raw_material / subcon / finished_goods
 	MovementType     string `gorm:"column:movement_type"`     // incoming / outgoing / adjustment / transfer
 
 	UniqCode string `gorm:"column:uniq_code"`
 
 	EntityID *int64 `gorm:"column:entity_id"`
 
-	QtyBefore float64 `gorm:"column:qty_before"`
-	QtyChange float64 `gorm:"column:qty_change"`
-	QtyAfter  float64 `gorm:"column:qty_after"`
+	QtyChange    float64  `gorm:"column:qty_change"`
+	WeightChange *float64 `gorm:"column:weight_change"`
 
-	ReferenceNo *string `gorm:"column:reference_no"` // WO Number / DO Number / SO Number
-	SourceFlag  *string `gorm:"column:source_flag"`  // QC_FINAL / DELIVERY / ADJUSTMENT
-
-	Remarks *string `gorm:"column:remarks"`
+	SourceFlag  *string `gorm:"column:source_flag"`  // QC_FINAL / DELIVERY / ADJUSTMENT / wo_scan
+	DNNumber    *string `gorm:"column:dn_number"`
+	ReferenceID *string `gorm:"column:reference_id"` // WO Number / DO Number / SO Number
+	Notes       *string `gorm:"column:notes"`
 
 	LoggedBy *string   `gorm:"column:logged_by"`
 	LoggedAt time.Time `gorm:"column:logged_at"`
-
-	CreatedAt time.Time `gorm:"column:created_at"`
 }
 
 func (InventoryMovementLog) TableName() string {

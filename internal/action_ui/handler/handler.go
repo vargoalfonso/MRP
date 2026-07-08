@@ -301,6 +301,35 @@ func (h *HTTPHandler) qcSubmitWithStatus(ctx *app.Context, status string) *app.C
 	}
 }
 
+func (h *HTTPHandler) QCFinish(ctx *app.Context) *app.CostumeResponse {
+	var req dto.QCFinishRequest
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+
+	userCtx := userPkg.MustExtractUserContext(ctx)
+
+	if err := h.svc.QCFinish(ctx.Request.Context(), req, userCtx.UserID); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusCreated,
+		Message:   "QC Finish Success",
+	}
+}
+
 func (h *HTTPHandler) ListQCTask(ctx *app.Context) *app.CostumeResponse {
 	var req dto.ListQCTaskRequest
 
