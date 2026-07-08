@@ -12,6 +12,7 @@ import (
 	"github.com/ganasa18/go-template/internal/action_ui/dto"
 	"github.com/ganasa18/go-template/internal/action_ui/models"
 	"github.com/ganasa18/go-template/internal/action_ui/repository"
+	scrapModels "github.com/ganasa18/go-template/internal/scrap_stock/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
@@ -36,11 +37,11 @@ type IService interface {
 	// 🔹 Start production (scan in)
 	ScanIn(ctx context.Context, req dto.ScanInRequest) error
 
-	// 🔹 Finish process (scan out)
 	ScanOut(ctx context.Context, req dto.ScanOutRequest) error
 
-	// 🔹 QC submit (round 1,2,3)
 	QCSubmit(ctx context.Context, req dto.QCSubmitRequest, performedBy string) error
+
+	QCFinish(ctx context.Context, req dto.QCFinishRequest, performedBy string) error
 
 	ListQCTask(ctx context.Context, req dto.ListQCTaskRequest) (map[string]interface{}, error)
 
@@ -470,13 +471,29 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	// =====================================
 	// VALIDASI BASIC
 	// =====================================
-	if item.ScanInCount <= item.ScanOutCount {
+	var scanInLogCount, scanOutLogCount int64
+
+	if err := s.db.WithContext(ctx).
+		Model(&models.ProductionScanLog{}).
+		Where("wo_item_id = ? AND process_name = ? AND scan_type = ?",
+			item.ID, currentProcess, "SCAN_IN").
+		Count(&scanInLogCount).Error; err != nil {
+		return err
+	}
+
+	if err := s.db.WithContext(ctx).
+		Model(&models.ProductionScanLog{}).
+		Where("wo_item_id = ? AND process_name = ? AND scan_type = ?",
+			item.ID, currentProcess, "SCAN_OUT").
+		Count(&scanOutLogCount).Error; err != nil {
+		return err
+	}
+
+	if scanInLogCount <= scanOutLogCount {
 		return errors.New("please scan in first")
 	}
 
-	if item.LastScannedProcess != currentProcess {
-		return errors.New("invalid process sequence")
-	}
+	_ = currentProcess
 
 	// =====================================
 	// VALIDASI QC ROUND 2 HARUS PASSED
@@ -504,8 +521,8 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	// =====================================
 	// CEK SUDAH PERNAH SCAN OUT BELUM
 	// =====================================
-	if item.Status == "WAITING_FINAL_QC" {
-		return errors.New("already scan out, waiting final qc")
+	if item.Status == "FINISHED" {
+		return errors.New("already scan out, production finished")
 	}
 
 	// =====================================
@@ -570,12 +587,10 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	// UPDATE ITEM
 	// =====================================
 	item.ScanOutCount++
-	item.TotalGoodQty += req.QtyOutput
+	item.TotalGoodQty = qtyOut
 	item.LastScannedProcess = currentProcess
 
-	// BELUM PINDAH PROCESS
-	// MASIH MENUNGGU QC FINAL (ROUND 3)
-	item.Status = "WAITING_FINAL_QC"
+	item.Status = "FINISHED"
 
 	return s.repoProduction.UpdateWOItem(ctx, item)
 }
@@ -938,11 +953,244 @@ func (s *service) afterFinalQC(ctx context.Context, tx *gorm.DB, item *models.Wo
 	return tx.Save(item).Error
 }
 
+func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, performedBy string) error {
+	if req.QCTaskID == 0 {
+		return apperror.BadRequest("qc_task_id is required")
+	}
+	if req.WOID == 0 || req.WOItemID == 0 {
+		return apperror.BadRequest("wo_id and wo_item_id are required")
+	}
+
+	performedBy = strings.TrimSpace(performedBy)
+	if performedBy == "" {
+		performedBy = "system"
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+
+		// ===== GET QC TASK (production_qc, belum done) =====
+		var task models.QCTask
+		if err := tx.
+			Where(`
+				id = ?
+				AND wo_id = ?
+				AND wo_item_id = ?
+				AND task_type = 'production_qc'
+				AND LOWER(status) <> 'done'
+			`, req.QCTaskID, req.WOID, req.WOItemID).
+			First(&task).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return apperror.NotFound("qc task tidak ditemukan / sudah selesai")
+			}
+			return err
+		}
+
+		// ===== GET ITEM + WO =====
+		var item models.WorkOrderItem
+		if err := tx.Where("id = ? AND wo_id = ?", req.WOItemID, req.WOID).
+			First(&item).Error; err != nil {
+			return err
+		}
+		var wo models.WorkOrder
+		if err := tx.Where("id = ?", req.WOID).First(&wo).Error; err != nil {
+			return err
+		}
+
+		// ===== 1. FINISHED GOODS dari Total Production Quantity =====
+		if req.TotalProductionQty > 0 {
+			var fg models.FinishedGoods
+			err := tx.Where("uniq_code = ?", item.ItemUniqCode).First(&fg).Error
+
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				fg = models.FinishedGoods{
+					UUID:       uuid.New().String(),
+					UniqCode:   item.ItemUniqCode,
+					ItemID:     item.ID,
+					PartNumber: item.PartNumber,
+					PartName:   item.PartName,
+					Model:      item.Model,
+					WONumber:   wo.WONumber,
+					StockQty:   req.TotalProductionQty,
+					UOM:        item.UOM,
+					Status:     "AVAILABLE",
+					CreatedAt:  now,
+					UpdatedAt:  now,
+				}
+				if err := tx.Create(&fg).Error; err != nil {
+					return err
+				}
+				if err := s.createInventoryMovementLog(tx, "finished_goods", "incoming",
+					item.ItemUniqCode, &fg.ID, 0, req.TotalProductionQty, req.TotalProductionQty,
+					&wo.WONumber, stringPtr("QC_FINISH"),
+					stringPtr("Create FG from QC Finish"), stringPtr(performedBy)); err != nil {
+					return err
+				}
+			} else if err == nil {
+				beforeQty := fg.StockQty
+				afterQty := beforeQty + req.TotalProductionQty
+				fg.StockQty = afterQty
+				fg.UpdatedAt = now
+				if err := tx.Save(&fg).Error; err != nil {
+					return err
+				}
+				if err := s.createInventoryMovementLog(tx, "finished_goods", "incoming",
+					item.ItemUniqCode, &fg.ID, beforeQty, req.TotalProductionQty, afterQty,
+					&wo.WONumber, stringPtr("QC_FINISH"),
+					stringPtr("Add FG stock from QC Finish"), stringPtr(performedBy)); err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
+		}
+
+		// ===== 2. INCOMING SCRAP dari Total Scrap in Scrap Box =====
+		if req.TotalScrapInBox > 0 {
+			scrapID, err := s.insertIncomingScrap(tx, item, wo.WONumber, req.TotalScrapInBox, performedBy, now)
+			if err != nil {
+				return err
+			}
+			if err := s.createInventoryMovementLog(tx, "scrap", "incoming",
+				item.ItemUniqCode, &scrapID, 0, req.TotalScrapInBox, req.TotalScrapInBox,
+				&wo.WONumber, stringPtr("QC_FINISH"),
+				stringPtr("Incoming scrap from QC Finish"), stringPtr(performedBy)); err != nil {
+				return err
+			}
+		}
+
+		// ===== 3. WORK ORDER Re-Work dari NG Defect =====
+		if req.NGDefectQty > 0 {
+			if err := s.createReworkWorkOrder(tx, item, wo, req.NGDefectQty, performedBy, now); err != nil {
+				return err
+			}
+		}
+
+		if err := tx.Model(&task).Updates(map[string]interface{}{
+			"status":         "done",
+			"good_quantity":  int(req.TotalProductionQty),
+			"ng_quantity":    int(req.NGDefectQty),
+			"scrap_quantity": int(req.TotalScrapInBox),
+			"updated_at":     now,
+		}).Error; err != nil {
+			return err
+		}
+
+		return nil
+})
+}
+
+func (s *service) insertIncomingScrap(tx *gorm.DB, item models.WorkOrderItem, woNumber string, qty float64, performedBy string, now time.Time) (int64, error) {
+	sc := scrapModels.ScrapStock{
+		UUID:         uuid.New(),
+		UniqCode:     item.ItemUniqCode,
+		PartNumber:   stringPtr(item.PartNumber),
+		PartName:     stringPtr(item.PartName),
+		Model:        stringPtr(item.Model),
+		WONumber:     stringPtr(woNumber),
+		ScrapType:    scrapModels.ScrapTypeProcess, // process_scrap
+		Quantity:     qty,
+		UOM:          stringPtr(item.UOM),
+		DateReceived: &now,
+		Validator:    stringPtr(performedBy),
+		Status:       scrapModels.StockStatusActive,
+		CreatedBy:    stringPtr(performedBy),
+		UpdatedBy:    stringPtr(performedBy),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	if err := tx.Create(&sc).Error; err != nil {
+		return 0, err
+	}
+	return sc.ID, nil
+}
+
+func (s *service) createReworkWorkOrder(tx *gorm.DB, item models.WorkOrderItem, srcWO models.WorkOrder, qty float64, performedBy string, now time.Time) error {
+	prefix := fmt.Sprintf("WO-%d", now.Year())
+	woNumber, err := s.nextWONumber(tx, prefix)
+	if err != nil {
+		return err
+	}
+
+	woUUID := uuid.New().String()
+	woRow := map[string]interface{}{
+		"uuid":            woUUID,
+		"wo_number":       woNumber,
+		"wo_type":         "Rework", // enum work_orders: New | Assembly | Rework | Addendum
+		"wo_kind":         "standard",
+		"reference_wo":    srcWO.WONumber,
+		"status":          "Draft",
+		"approval_status": "Pending",
+		"created_date":    now,
+		"operator_name":   performedBy,
+		"model":           item.Model,
+		"notes": fmt.Sprintf("Auto Re-Work dari QC Finish WO %s (UNIQ %s), NG %.4f",
+			srcWO.WONumber, item.ItemUniqCode, qty),
+		"created_at": now,
+		"updated_at": now,
+	}
+	if err := tx.Table("work_orders").Create(woRow).Error; err != nil {
+		return err
+	}
+
+	// Ambil id WO yang baru dibuat (map insert tidak mengembalikan PK).
+	var woIDs []int64
+	if err := tx.Table("work_orders").
+		Where("uuid = ?", woUUID).
+		Limit(1).
+		Pluck("id", &woIDs).Error; err != nil {
+		return err
+	}
+	if len(woIDs) == 0 {
+		return apperror.InternalWrap("failed to resolve new rework wo id", errors.New("wo id not found"))
+	}
+	newWOID := woIDs[0]
+
+	itemRow := map[string]interface{}{
+		"uuid":           uuid.New().String(),
+		"wo_id":          newWOID,
+		"item_uniq_code": item.ItemUniqCode,
+		"part_name":      item.PartName,
+		"part_number":    item.PartNumber,
+		"uom":            item.UOM,
+		"quantity":       qty,
+		"process_name":   item.ProcessName,
+		"kanban_number":  fmt.Sprintf("RW-%s-%s", woNumber, item.ItemUniqCode),
+		"status":         "Pending",
+		"created_at":     now,
+		"updated_at":     now,
+	}
+	return tx.Table("work_order_items").Create(itemRow).Error
+}
+
+func (s *service) nextWONumber(tx *gorm.DB, prefix string) (string, error) {
+	var nums []string
+	if err := tx.Table("work_orders").
+		Where("wo_number LIKE ?", prefix+"-%").
+		Order("wo_number DESC").
+		Limit(1).
+		Pluck("wo_number", &nums).Error; err != nil {
+		return "", err
+	}
+	if len(nums) == 0 || nums[0] == "" {
+		return fmt.Sprintf("%s-%06d", prefix, 1), nil
+	}
+	parts := strings.Split(nums[0], "-")
+	seq, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil || seq < 0 {
+		return fmt.Sprintf("%s-%06d", prefix, 1), nil
+	}
+	return fmt.Sprintf("%s-%06d", prefix, seq+1), nil
+}
+
 func stringPtr(v string) *string {
 	return &v
 }
 
 func (s *service) createInventoryMovementLog(tx *gorm.DB, category string, movementType string, uniqCode string, entityID *int64, beforeQty float64, changeQty float64, afterQty float64, refNo *string, source *string, remarks *string, user *string) error {
+
+	_ = beforeQty
+	_ = afterQty
 
 	row := models.InventoryMovementLog{
 		MovementCategory: category,
@@ -950,17 +1198,14 @@ func (s *service) createInventoryMovementLog(tx *gorm.DB, category string, movem
 		UniqCode:         uniqCode,
 		EntityID:         entityID,
 
-		QtyBefore: beforeQty,
 		QtyChange: changeQty,
-		QtyAfter:  afterQty,
 
-		ReferenceNo: refNo,
+		ReferenceID: refNo,
 		SourceFlag:  source,
-		Remarks:     remarks,
+		Notes:       remarks,
 
-		LoggedBy:  user,
-		LoggedAt:  time.Now(),
-		CreatedAt: time.Now(),
+		LoggedBy: user,
+		LoggedAt: time.Now(),
 	}
 
 	return tx.Create(&row).Error
@@ -1285,6 +1530,11 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 		return nil, e
 	}
 
+	bomList, e := s.buildBomMaterials(ctx, item.ItemUniqCode)
+	if e != nil {
+		return nil, e
+	}
+
 	uniqs = append(uniqs, dto.WODetailUniq{
 			WOItemID:       item.ID,
 			Uniq:           item.ItemUniqCode,
@@ -1309,6 +1559,7 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 			DandoriTime:    dandori,
 			SetupQCTime:    setupQC,
 			RawMaterials:   rmList,
+			BomMaterials:   bomList,
 		})
 	}
 
@@ -1426,9 +1677,15 @@ func sumScanOutRM(rms []dto.ScanOutRawMaterial) float64 {
 }
 
 func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrderItem, rms []dto.ScanOutRawMaterial, scannedBy, woNumber string, now time.Time) error {
+	if err := s.repoProduction.DeleteRawMaterialLogsByWOItemID(ctx, item.ID); err != nil {
+		return err
+	}
+
 	for _, rm := range rms {
-		if rm.QtyUsed <= 0 {
-			continue
+		// kode tampilan RM: utamakan packing_list_rm, fallback uniq_code
+		code := rm.PackingListRM
+		if code == "" {
+			code = rm.UniqCode
 		}
 
 		var master models.RawMaterial
@@ -1438,20 +1695,26 @@ func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrder
 				master, found = m, true
 			}
 		}
-		if !found && rm.UniqCode != "" {
-			if m, err := s.repoProduction.FindRawMaterialByCode(ctx, rm.UniqCode); err == nil {
+		if !found && code != "" {
+			if m, err := s.repoProduction.FindRawMaterialByCode(ctx, code); err == nil {
 				master, found = m, true
 			}
 		}
 
-		// 1) catat pemakaian RM
+		partNumber := master.PartNumber
+		if partNumber == "" {
+			partNumber = code
+		}
+
+		// 1) catat pemakaian RM — SEMUA RM dicatat (termasuk qty 0) supaya
+		//    tetap tampil di done-view sesuai yang benar-benar discan-out.
 		if err := s.repoProduction.InsertRawMaterial(ctx, models.RawMaterialLog{
 			UUID:       uuid.New().String(),
 			WOID:       item.WOID,
 			WOItemID:   item.ID,
-			UniqCode:   rm.UniqCode,
-			RMUUID:     master.UUID,
-			PartNumber: master.PartNumber,
+			UniqCode:   code,
+			RMUUID:     rm.RMUUID,
+			PartNumber: partNumber,
 			PartName:   master.PartName,
 			UOM:        master.UOM,
 			QtyUsed:    rm.QtyUsed,
@@ -1462,13 +1725,13 @@ func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrder
 			return err
 		}
 
-		if !found {
-			continue // RM tidak dikenal → cukup dicatat, stok tak diubah
+		// Stok hanya dikurangi kalau qty > 0 dan RM dikenal di master.
+		if rm.QtyUsed <= 0 || !found {
+			continue
 		}
 
 		// 2) kurangi stok RM
-		before, after, err := s.repoProduction.DecreaseRawMaterialStock(ctx, master.ID, rm.QtyUsed)
-		if err != nil {
+		if _, _, err := s.repoProduction.DecreaseRawMaterialStock(ctx, master.ID, rm.QtyUsed); err != nil {
 			return err
 		}
 
@@ -1482,14 +1745,11 @@ func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrder
 			MovementType:     "outgoing",
 			UniqCode:         master.UniqCode,
 			EntityID:         &entityID,
-			QtyBefore:        before,
 			QtyChange:        -rm.QtyUsed,
-			QtyAfter:         after,
-			ReferenceNo:      &ref,
+			ReferenceID:      &ref,
 			SourceFlag:       &src,
 			LoggedBy:         &by,
 			LoggedAt:         now,
-			CreatedAt:        now,
 		}); err != nil {
 			return err
 		}
@@ -1622,6 +1882,41 @@ func rmTypeLabel(t string) string {
 	}
 }
 
+func rawMaterialLogKey(l models.RawMaterialLog) string {
+	if l.RMUUID != "" {
+		return "uuid:" + l.RMUUID
+	}
+	if l.UniqCode != "" {
+		return "code:" + l.UniqCode
+	}
+	return "part:" + l.PartNumber
+}
+
+func dedupRawMaterialLogs(logs []models.RawMaterialLog) []models.RawMaterialLog {
+	idxByKey := make(map[string]int) // key -> index di out
+	out := make([]models.RawMaterialLog, 0, len(logs))
+	for _, l := range logs {
+		key := rawMaterialLogKey(l)
+		pos, ok := idxByKey[key]
+		if !ok {
+			idxByKey[key] = len(out)
+			out = append(out, l)
+			continue
+		}
+		cur := out[pos]
+		better := false
+		if l.QtyUsed > 0 && cur.QtyUsed <= 0 {
+			better = true // yang lama qty 0, yang baru qty > 0
+		} else if (l.QtyUsed > 0) == (cur.QtyUsed > 0) && l.ID >= cur.ID {
+			better = true // sama-sama >0 (atau sama-sama 0) → ambil yang terbaru
+		}
+		if better {
+			out[pos] = l
+		}
+	}
+	return out
+}
+
 func (s *service) ScanOutContext(
 	ctx context.Context, woNumber string,
 ) (*dto.ScanOutContextResponse, error) {
@@ -1645,6 +1940,7 @@ func (s *service) ScanOutContext(
 		if err != nil {
 			return nil, err
 		}
+		logs = dedupRawMaterialLogs(logs)
 
 		uuids := make([]string, 0, len(logs))
 		codes := make([]string, 0, len(logs))
@@ -1673,6 +1969,7 @@ func (s *service) ScanOutContext(
 			}
 		}
 
+		bomMap := s.bomByUniq(ctx, item.ItemUniqCode)
 		rms := make([]dto.ScanOutContextRawMaterial, 0, len(logs))
 		for _, l := range logs {
 			meta, ok := metaByUUID[l.RMUUID]
@@ -1683,6 +1980,16 @@ func (s *service) ScanOutContext(
 			packing := l.UniqCode
 			if packing == "" {
 				packing = l.PartNumber
+			}
+			bm := bomMap[l.UniqCode]
+			materialCode := bm.MaterialGrade
+			if materialCode == "" {
+				materialCode = packing
+			}
+			form := bm.Form
+			specWeight := 0.0
+			if bm.WeightKg != nil {
+				specWeight = *bm.WeightKg
 			}
 			uom := l.UOM
 			typeLabel := "OTHER"
@@ -1699,6 +2006,10 @@ func (s *service) ScanOutContext(
 			rms = append(rms, dto.ScanOutContextRawMaterial{
 				RMUUID:         l.RMUUID,
 				PackingListRM:  packing,
+				MaterialCode:   materialCode,
+				Form:           form,
+				QtyPerUniq:     bm.QtyPerUniq,
+				SpecWeightKg:   specWeight,
 				TypeLabel:      typeLabel,
 				IsWIP:          strings.EqualFold(typeLabel, "WIP"),
 				UOM:            uom,
@@ -1708,17 +2019,106 @@ func (s *service) ScanOutContext(
 			})
 		}
 
-		resp.Items = append(resp.Items, dto.ScanOutContextItem{
-			WOItemID:       item.ID,
-			Uniq:           item.ItemUniqCode,
-			MachineScanned: item.MachineID != 0,
-			ScanInCount:    item.ScanInCount,
-			ScanOutCount:   item.ScanOutCount,
-			RawMaterials:   rms,
-		})
+			resp.Items = append(resp.Items, dto.ScanOutContextItem{
+				WOItemID:       item.ID,
+				Uniq:           item.ItemUniqCode,
+				MachineScanned: item.MachineID != 0,
+				ScanInCount:    item.ScanInCount,
+				ScanOutCount:   item.ScanOutCount,
+				TotalOutput:    item.TotalGoodQty,
+				RawMaterials:   rms,
+			})
 	}
 
 	return resp, nil
+}
+
+func (s *service) buildBomMaterials(ctx context.Context, rootUniq string) ([]dto.BomMaterial, error) {
+	if strings.TrimSpace(rootUniq) == "" {
+		return []dto.BomMaterial{}, nil
+	}
+
+	rows, err := s.repoProduction.FindBomMaterialsByRootUniq(ctx, rootUniq)
+	if err != nil {
+		return nil, err
+	}
+
+	derefStr := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return strings.TrimSpace(*p)
+	}
+	derefFloat := func(p *float64) float64 {
+		if p == nil {
+			return 0
+		}
+		return *p
+	}
+
+	out := make([]dto.BomMaterial, 0, len(rows))
+	for _, row := range rows {
+		// UOM: pakai UOM dari master RM bila ada, lalu UOM di bom_lines, terakhir UOM item.
+		uom := deref(row.RMUom)
+		if uom == "" {
+			uom = deref(row.LineUom)
+		}
+		if uom == "" {
+			uom = strings.TrimSpace(row.ItemUom)
+		}
+
+		inInventory := row.RMUUID != nil && strings.TrimSpace(*row.RMUUID) != ""
+		rawType := deref(row.RawMaterialType)
+		typeLabel := ""
+		if inInventory {
+			typeLabel = rawMaterialTypeLabel(rawType)
+		}
+
+		out = append(out, dto.BomMaterial{
+			Uniq:            row.UniqCode,
+			PartName:        row.PartName,
+			PartNumber:      derefStr(row.PartNumber),
+			Level:           row.Level,
+			QtyPerUniq:      derefFloat(row.QtyPerUniq),
+			UOM:             uom,
+			MaterialGrade:   derefStr(row.MaterialGrade),
+			Grade:           derefStr(row.Grade),
+			TypeMaterial:    derefStr(row.TypeMaterial),
+			Form:            derefStr(row.Form),
+			WidthMm:         row.WidthMm,
+			DiameterMm:      row.DiameterMm,
+			ThicknessMm:     row.ThicknessMm,
+			LengthMm:        row.LengthMm,
+			WeightKg:        row.WeightKg,
+			SupplierName:    derefStr(row.SupplierName),
+			RMUUID:          deref(row.RMUUID),
+			RawMaterialType: rawType,
+			TypeLabel:       typeLabel,
+			InInventory:     inInventory,
+			AvailableStock:  derefFloat(row.StockQty),
+			StockWeightKg:   derefFloat(row.StockWeightKg),
+		})
+	}
+	return out, nil
+}
+
+func (s *service) bomByUniq(ctx context.Context, rootUniq string) map[string]dto.BomMaterial {
+	m := map[string]dto.BomMaterial{}
+	bom, err := s.buildBomMaterials(ctx, rootUniq)
+	if err != nil {
+		return m
+	}
+	for _, b := range bom {
+		m[b.Uniq] = b
+	}
+	return m
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return strings.TrimSpace(*p)
 }
 
 func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrderItem) ([]dto.ScanOutContextRawMaterial, error) {
@@ -1726,6 +2126,7 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 	if err != nil {
 		return nil, err
 	}
+	logs = dedupRawMaterialLogs(logs)
 
 	uuids := make([]string, 0, len(logs))
 	codes := make([]string, 0, len(logs))
@@ -1754,6 +2155,7 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 		}
 	}
 
+	bomMap := s.bomByUniq(ctx, item.ItemUniqCode)
 	rms := make([]dto.ScanOutContextRawMaterial, 0, len(logs))
 	for _, l := range logs {
 		meta, ok := metaByUUID[l.RMUUID]
@@ -1764,6 +2166,16 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 		packing := l.UniqCode
 		if packing == "" {
 			packing = l.PartNumber
+		}
+		bm := bomMap[l.UniqCode]
+		materialCode := bm.MaterialGrade
+		if materialCode == "" {
+			materialCode = packing
+		}
+		form := bm.Form
+		specWeight := 0.0
+		if bm.WeightKg != nil {
+			specWeight = *bm.WeightKg
 		}
 		uom := l.UOM
 		typeLabel := "OTHER"
@@ -1776,10 +2188,13 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 			avail = meta.StockQty
 			weight = meta.StockWeightKg
 		}
-
 		rms = append(rms, dto.ScanOutContextRawMaterial{
 			RMUUID:         l.RMUUID,
 			PackingListRM:  packing,
+			MaterialCode:   materialCode,
+			Form:           form,
+			QtyPerUniq:     bm.QtyPerUniq,
+			SpecWeightKg:   specWeight,
 			TypeLabel:      typeLabel,
 			IsWIP:          strings.EqualFold(typeLabel, "WIP"),
 			UOM:            uom,
