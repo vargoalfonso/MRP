@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/datatypes"
+)
 
 // ---------------------------------------------------------------------------
 // Single entry response
@@ -39,27 +43,28 @@ type EntryResponse struct {
 
 	// UI-friendly aliases for "Calculation Results" cards.
 	// These are quantities/amounts in the same unit as purchase_request & prl.
-	Po1Amount       float64    `json:"po1_amount"`
-	Po2Amount       float64    `json:"po2_amount"`
-	TotalPOAmount   float64    `json:"total_po_amount"`
-	ApoPrlAmount    float64    `json:"apo_prl_amount"`
-	ApoPrlState     string     `json:"apo_prl_state"` // over|under|match
-	Prl             float64    `json:"prl"`
-	DeltaApoPrl     float64    `json:"delta_apo_prl"` // total_po - prl
-	Status          string     `json:"status"`
-	BudgetSubtype   *string    `json:"budget_subtype,omitempty"` // adhoc | regular | null
-	PrlRef          *string    `json:"prl_ref,omitempty"`        // prls.prl_id
-	PrlRowID        *int64     `json:"prl_row_id,omitempty"`     // prls.id
-	ApprovedBy      *string    `json:"approved_by"`
-	ApprovedAt      *time.Time `json:"approved_at"`
-	ApprovedByName  *string    `json:"approved_by_name,omitempty"`
-	SubmittedBy     *string    `json:"submitted_by,omitempty"`
-	SubmittedAt     time.Time  `json:"submitted_at"`
-	SubmittedByName *string    `json:"submitted_by_name,omitempty"`
-	CreatedBy       *string    `json:"created_by"`
-	CreatedByName   *string    `json:"created_by_name,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	Po1Amount       float64        `json:"po1_amount"`
+	Po2Amount       float64        `json:"po2_amount"`
+	TotalPOAmount   float64        `json:"total_po_amount"`
+	ApoPrlAmount    float64        `json:"apo_prl_amount"`
+	ApoPrlState     string         `json:"apo_prl_state"` // over|under|match
+	Prl             float64        `json:"prl"`
+	DeltaApoPrl     float64        `json:"delta_apo_prl"` // total_po - prl
+	Status          string         `json:"status"`
+	BudgetSubtype   *string        `json:"budget_subtype,omitempty"` // adhoc | regular | null
+	PrlRef          *string        `json:"prl_ref,omitempty"`        // prls.prl_id
+	PrlRowID        *int64         `json:"prl_row_id,omitempty"`     // prls.id
+	DetailJSON      datatypes.JSON `json:"detail_jsonb,omitempty"`
+	ApprovedBy      *string        `json:"approved_by"`
+	ApprovedAt      *time.Time     `json:"approved_at"`
+	ApprovedByName  *string        `json:"approved_by_name,omitempty"`
+	SubmittedBy     *string        `json:"submitted_by,omitempty"`
+	SubmittedAt     time.Time      `json:"submitted_at"`
+	SubmittedByName *string        `json:"submitted_by_name,omitempty"`
+	CreatedBy       *string        `json:"created_by"`
+	CreatedByName   *string        `json:"created_by_name,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
 // ---------------------------------------------------------------------------
@@ -269,17 +274,57 @@ type PrlForecastResponse struct {
 // PrlForecastItemResponse includes current allocation so UI can show
 // "Budget: X | Allocated: Y" in the Add Supplier modal.
 type PrlForecastItemResponse struct {
-	ID                  int64    `json:"id"`
-	UniqCode            string   `json:"uniq_code"`
-	ProductModel        *string  `json:"product_model,omitempty"`
-	PartName            *string  `json:"part_name"`
-	PartNumber          *string  `json:"part_number"`
-	WeightKg            *float64 `json:"weight_kg"`
-	Quantity            float64  `json:"quantity"`      // budget ceiling
-	AllocatedQty        float64  `json:"allocated_qty"` // sum already in po_budget_entries
-	RemainingQty        float64  `json:"remaining_qty"` // quantity - allocated_qty
-	ExistingRawMaterial *string  `json:"existing_raw_material"`
-	Uom                 *string  `json:"uom"`
+	ID                  int64                      `json:"id"`
+	UniqCode            string                     `json:"uniq_code"`
+	ProductModel        *string                    `json:"product_model,omitempty"`
+	PartName            *string                    `json:"part_name"`
+	PartNumber          *string                    `json:"part_number"`
+	WeightKg            *float64                   `json:"weight_kg"`
+	Quantity            float64                    `json:"quantity"`      // budget ceiling
+	AllocatedQty        float64                    `json:"allocated_qty"` // sum already in po_budget_entries
+	RemainingQty        float64                    `json:"remaining_qty"` // quantity - allocated_qty
+	ExistingRawMaterial *string                    `json:"existing_raw_material"`
+	Uom                 *string                    `json:"uom"`
+	Children            []PrlForecastChildResponse `json:"children,omitempty"`
+}
+
+// PrlChildMaterialSpecResponse mirrors the BOM material_spec fields needed by
+// raw-material / indirect autocomplete when a PRL parent is selected.
+type PrlChildMaterialSpecResponse struct {
+	MaterialGrade *string  `json:"material_grade,omitempty"`
+	Grade         *string  `json:"grade,omitempty"`
+	TypeMaterial  *string  `json:"type_material,omitempty"`
+	Form          *string  `json:"form,omitempty"`
+	WidthMm       *float64 `json:"width_mm,omitempty"`
+	DiameterMm    *float64 `json:"diameter_mm,omitempty"`
+	ThicknessMm   *float64 `json:"thickness_mm,omitempty"`
+	LengthMm      *float64 `json:"length_mm,omitempty"`
+	WeightKg      *float64 `json:"weight_kg,omitempty"`
+	SupplierName  *string  `json:"supplier_name,omitempty"`
+	CycleTimeSec  *float64 `json:"cycle_time_sec,omitempty"`
+	SetupTimeMin  *float64 `json:"setup_time_min,omitempty"`
+	CustomerCycle *string  `json:"customer_cycle,omitempty"`
+}
+
+type PrlForecastChildSupplierResponse struct {
+	SupplierID   *int64  `json:"supplier_id,omitempty"`
+	SupplierName string  `json:"supplier_name"`
+	Quantity     float64 `json:"quantity"`
+}
+
+type PrlForecastChildResponse struct {
+	Uniq                string                             `json:"uniq"`
+	UniqCode            string                             `json:"uniq_code"`
+	PartName            *string                            `json:"part_name"`
+	PartNumber          *string                            `json:"part_number"`
+	Model               *string                            `json:"model,omitempty"`
+	QtyPerUniq          float64                            `json:"qty_per_uniq"`
+	WeightKg            *float64                           `json:"weight_kg"`
+	Quantity            float64                            `json:"quantity"`
+	ExistingRawMaterial *string                            `json:"existing_raw_material"`
+	Uom                 *string                            `json:"uom"`
+	MaterialSpec        *PrlChildMaterialSpecResponse      `json:"material_spec,omitempty"`
+	Suppliers           []PrlForecastChildSupplierResponse `json:"suppliers,omitempty"`
 }
 
 type ListPrlResponse struct {

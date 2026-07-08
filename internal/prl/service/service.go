@@ -175,6 +175,7 @@ func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest, su
 		Quantity:       req.Quantity,
 		Status:         models.PRLStatusPending,
 		Remarks:        normalizeOptionalString(req.Remarks),
+		Note:           uuid.NewString(),
 	}
 
 	if err := s.repo.CreatePRLs(ctx, []*models.PRL{item}); err != nil {

@@ -64,6 +64,7 @@ type PRL struct {
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
 	DeletedAt      gorm.DeletedAt `gorm:"index" json:"-"`
+	Note           string         `gorm:"type:text" json:"note,omitempty"`
 }
 
 type CreateUniqBOMRequest struct {
