@@ -11,21 +11,21 @@ type DeliveryNote struct {
 	DNNumber string `json:"dn_number" gorm:"type:varchar(50)"` //request
 	// CustomerID      int64     `json:"customer_id"`                                         //request
 	// ContactPerson   string    `json:"contact_person"`                                      //request
-	Period          string    `json:"period"`                                              //request
-	PONumber        string    `json:"po_number"`                                           //request diambil dari po_number check po ini ada atau tidak, kalau tidak ada maka error
-	Type            string    `json:"type"`                                                //request
-	Status          string    `json:"status"`                                              //draft, incoming, completed. default draft. nanti kalau semua item sudah diterima maka status jadi completed
-	SupplierID      int64     `json:"supplier_id"`                                         //request diambil dari supplier_id di purchase order
-	Supplier        Supplier  `json:"supplier" gorm:"foreignKey:SupplierID;references:ID"` //relasi ke supplier untuk mendapatkan nama supplier
-	TotalPOQty      int64     `json:"total_po_qty"`                                        //request diambil dari total qty di purchase order items bedasarkan po_id
-	TotalPOIncoming int64     `json:"total_po_incoming"`                                   //request diambil dari total qty yang sudah diterima di delivery note items bedasarkan po_id
-	TotalDNCreated  int64     `json:"total_dn_created"`                                    //request total data dari purchaase order items dari po_id yang sudah dibuat dn nya (bedasarkan po_number)
-	TotalDNIncoming int64     `json:"total_dn_incoming"`                                   //request total data dari purchaase order items dari po_id yang sudah diterima barangnya (bedasarkan po_number)
-	CreatedBy       string    `json:"created_by"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-
-	Items []DeliveryNoteItem `json:"items" gorm:"foreignKey:DNID;references:ID"`
+	Period          string             `json:"period"`                                              //request
+	PONumber        string             `json:"po_number"`                                           //request diambil dari po_number check po ini ada atau tidak, kalau tidak ada maka error
+	Type            string             `json:"type"`                                                //request
+	Status          string             `json:"status"`                                              //draft, incoming, completed. default draft. nanti kalau semua item sudah diterima maka status jadi completed
+	SupplierID      int64              `json:"supplier_id"`                                         //request diambil dari supplier_id di purchase order
+	Supplier        Supplier           `json:"supplier" gorm:"foreignKey:SupplierID;references:ID"` //relasi ke supplier untuk mendapatkan nama supplier
+	TotalPOQty      int64              `json:"total_po_qty"`                                        //request diambil dari total qty di purchase order items bedasarkan po_id
+	TotalPOIncoming int64              `json:"total_po_incoming"`                                   //request diambil dari total qty yang sudah diterima di delivery note items bedasarkan po_id
+	TotalDNCreated  int64              `json:"total_dn_created"`                                    //request total data dari purchaase order items dari po_id yang sudah dibuat dn nya (bedasarkan po_number)
+	TotalDNIncoming int64              `json:"total_dn_incoming"`                                   //request total data dari purchaase order items dari po_id yang sudah diterima barangnya (bedasarkan po_number)
+	CreatedBy       string             `json:"created_by"`
+	CreatedAt       time.Time          `json:"created_at"`
+	UpdatedAt       time.Time          `json:"updated_at"`
+	MaterialGrade   string             `json:"material_grade" gorm:"column:material_grade"`
+	Items           []DeliveryNoteItem `json:"items" gorm:"foreignKey:DNID;references:ID"`
 }
 
 type Supplier struct {

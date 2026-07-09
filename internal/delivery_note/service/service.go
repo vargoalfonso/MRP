@@ -288,12 +288,30 @@ func (s *deliveryNoteService) GetAll(ctx context.Context, page, limit int) ([]mo
 
 	// ambil data
 	err := s.db.WithContext(ctx).
+		Model(&models.DeliveryNote{}).
+		Select(`
+		delivery_notes.*,
+		COALESCE(
+			(
+				SELECT ims.material_grade
+				FROM delivery_note_items dni
+				JOIN items i
+					ON i.uniq_code = dni.item_uniq_code
+				LEFT JOIN item_material_specs ims
+					ON ims.item_revision_id = i.id
+				WHERE dni.dn_id = delivery_notes.id
+				ORDER BY dni.id
+				LIMIT 1
+			),
+			''
+		) AS material_grade
+	`).
 		Preload("Supplier").
 		Preload("Items").
 		Preload("Items.Kanban").
 		Limit(limit).
 		Offset(offset).
-		Order("id DESC").
+		Order("delivery_notes.id DESC").
 		Find(&data).Error
 
 	if err != nil {
@@ -316,9 +334,28 @@ func (s *deliveryNoteService) GetByID(ctx context.Context, id int64) (*models.De
 	var data models.DeliveryNote
 
 	err := s.db.WithContext(ctx).
+		Model(&models.DeliveryNote{}).
+		Select(`
+		delivery_notes.*,
+		COALESCE(
+			(
+				SELECT ims.material_grade
+				FROM delivery_note_items dni
+				JOIN items i
+					ON i.uniq_code = dni.item_uniq_code
+				LEFT JOIN item_material_specs ims
+					ON ims.item_revision_id = i.id
+				WHERE dni.dn_id = delivery_notes.id
+				ORDER BY dni.id
+				LIMIT 1
+			),
+			''
+		) AS material_grade
+	`).
 		Preload("Supplier").
 		Preload("Items").
 		Preload("Items.Kanban").
+		Order("delivery_notes.id DESC").
 		First(&data, id).Error
 
 	if err != nil {
@@ -565,11 +602,12 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.PreviewD
 		return nil, fmt.Errorf("failed get PO: %w", err)
 	}
 
-	// 🔥 2. supplier
 	supplier, err := s.repo.GetSupplierByID(ctx, po.SupplierID)
 	if err != nil {
-		return nil, fmt.Errorf("failed get supplier: %w", err)
+		supplier = &models.Supplier{}
 	}
+
+	supplier.SupplierName = ""
 
 	// 🔥 3. items
 	poItems, err := s.repo.GetPOItemsByPOID(ctx, po.PoID)
@@ -597,6 +635,15 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.PreviewD
 	count, err := s.repo.CountDNByPrefix(ctx, prefix)
 	if err != nil {
 		return nil, fmt.Errorf("failed count DN: %w", err)
+	}
+
+	materialGrade := ""
+
+	if len(poItems) > 0 {
+		materialGrade, err = s.repo.GetMaterialGradeByItemUniqCode(ctx, poItems[0].ItemUniqCode)
+		if err != nil {
+			materialGrade = ""
+		}
 	}
 
 	next := count + 1
@@ -631,6 +678,7 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.PreviewD
 		TotalPO:       int64(totalQty),
 		TotalIncoming: int64(totalIncoming),
 		TotalDNCreatd: int64(len(items)),
+		MaterialGrade: materialGrade,
 		Items:         items,
 	}, nil
 }
