@@ -81,19 +81,25 @@ type POHeaderDetail struct {
 
 // POItemDetail is one line item in the PO detail.
 type POItemDetail struct {
-	ID           int64    `json:"id"`
-	LineNo       int      `json:"line_no"`
-	UniqCode     string   `json:"uniq_code"`
-	PartNumber   *string  `json:"part_number,omitempty"`
-	PartName     *string  `json:"part_name,omitempty"`
-	Model        *string  `json:"model,omitempty"`
-	Qty          float64  `json:"qty"`
-	Uom          *string  `json:"uom,omitempty"`
-	PcsPerKanban *int     `json:"pcs_per_kanban,omitempty"`
-	WeightKg     *float64 `json:"weight_kg,omitempty"`
-	Budget       float64  `json:"budget"`
-	UnitPrice    *float64 `json:"unit_price,omitempty"`
-	Amount       *float64 `json:"amount,omitempty"`
+	ID       int64  `json:"id"`
+	LineNo   int    `json:"line_no"`
+	UniqCode string `json:"uniq_code"`
+	// ChildUniqCode / MaterialGrade / MaterialSpec are set for lines that were
+	// split out of a budget entry's detail_jsonb child. Model is intentionally
+	// omitted — child rows carry material_spec instead.
+	ChildUniqCode *string                `json:"child_uniq_code,omitempty"`
+	MaterialGrade *string                `json:"material_grade,omitempty"`
+	MaterialSpec  map[string]interface{} `json:"material_spec,omitempty"`
+	PartNumber    *string                `json:"part_number,omitempty"`
+	PartName      *string                `json:"part_name,omitempty"`
+	Model         *string                `json:"model,omitempty"`
+	Qty           float64                `json:"qty"`
+	Uom           *string                `json:"uom,omitempty"`
+	PcsPerKanban  *int                   `json:"pcs_per_kanban,omitempty"`
+	WeightKg      *float64               `json:"weight_kg,omitempty"`
+	Budget        float64                `json:"budget"`
+	UnitPrice     *float64               `json:"unit_price,omitempty"`
+	Amount        *float64               `json:"amount,omitempty"`
 }
 
 // POLogEntry is one history log entry.

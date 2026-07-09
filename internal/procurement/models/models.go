@@ -1,7 +1,11 @@
 // Package models defines domain structs for the Procurement module.
 package models
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/datatypes"
+)
 
 // ---------------------------------------------------------------------------
 // DB-mapped structs (GORM)
@@ -27,10 +31,14 @@ type PurchaseOrder struct {
 	TotalAmount      *float64   `gorm:"column:total_amount;type:numeric(18,2)"`
 	ExternalSystem   *string    `gorm:"column:external_system;size:64"`
 	ExternalPoNumber *string    `gorm:"column:external_po_number;size:128"`
-	CreatedBy        *string    `gorm:"column:created_by;size:255"`
-	UpdatedBy        *string    `gorm:"column:updated_by;size:255"`
-	CreatedAt        time.Time  `gorm:"column:created_at;not null;default:now()"`
-	UpdatedAt        time.Time  `gorm:"column:updated_at;not null;default:now()"`
+	// DetailJSON snapshots the split children (per this stage) pulled from the
+	// budget entry's detail_jsonb, so the PO carries the parent→child breakdown
+	// that produced its line items.
+	DetailJSON datatypes.JSON `gorm:"column:detail_jsonb;type:jsonb;default:'{}'::jsonb"`
+	CreatedBy  *string        `gorm:"column:created_by;size:255"`
+	UpdatedBy  *string        `gorm:"column:updated_by;size:255"`
+	CreatedAt  time.Time      `gorm:"column:created_at;not null;default:now()"`
+	UpdatedAt  time.Time      `gorm:"column:updated_at;not null;default:now()"`
 }
 
 func (PurchaseOrder) TableName() string { return "purchase_orders" }
@@ -54,7 +62,11 @@ type PurchaseOrderItem struct {
 	Amount          *float64 `gorm:"column:amount;type:numeric(18,2);->"`
 	PcsPerKanban    *int     `gorm:"column:pcs_per_kanban"`
 	PoBudgetEntryID *int64   `gorm:"column:po_budget_entry_id"` // trace line → budget entry
-	Status          string   `gorm:"column:status;size:32;default:open"`
+	// Child material snapshot — only set when the line came from a detail_jsonb child.
+	ChildUniqCode *string        `gorm:"column:child_uniq_code;size:64"`
+	MaterialGrade *string        `gorm:"column:material_grade;size:100"`
+	MaterialSpec  datatypes.JSON `gorm:"column:material_spec;type:jsonb"`
+	Status        string         `gorm:"column:status;size:32;default:open"`
 	// SalesPlan is transient (not persisted) — carried from budget entry for response building.
 	SalesPlan float64   `gorm:"-" json:"-"`
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now()"`
@@ -150,6 +162,9 @@ type POBudgetEntry struct {
 	PcsPerKanban    *int     `gorm:"column:pcs_per_kanban"`
 	KanbanNumber    *string  `gorm:"column:kanban_number"`
 	Status          string   `gorm:"column:status"`
+	// DetailJSON holds the parent→children breakdown (with per-child suppliers,
+	// quantities, and material_spec). Read-only here — written by the po_budget module.
+	DetailJSON datatypes.JSON `gorm:"column:detail_jsonb"`
 }
 
 func (POBudgetEntry) TableName() string { return "po_budget_entries" }
