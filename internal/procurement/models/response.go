@@ -88,7 +88,7 @@ type POItemDetail struct {
 	// split out of a budget entry's detail_jsonb child. Model is intentionally
 	// omitted — child rows carry material_spec instead.
 	ChildUniqCode *string                `json:"child_uniq_code,omitempty"`
-	MaterialGrade *string                `json:"material_grade,omitempty"`
+	MaterialGrade string                 `json:"material_grade,omitempty"`
 	MaterialSpec  map[string]interface{} `json:"material_spec,omitempty"`
 	PartNumber    *string                `json:"part_number,omitempty"`
 	PartName      *string                `json:"part_name,omitempty"`

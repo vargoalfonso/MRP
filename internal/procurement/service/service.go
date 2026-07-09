@@ -143,6 +143,11 @@ func (s *svc) GetPODetail(ctx context.Context, poID int64) (*models.PODetailResp
 		return nil, err
 	}
 
+	materialGrade, err := s.repo.GetPOMaterialGrade(ctx, poID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Resolve supplier name
 	var supplierName *string
 	if po.SupplierID != nil && *po.SupplierID > 0 {
@@ -184,7 +189,7 @@ func (s *svc) GetPODetail(ctx context.Context, poID int64) (*models.PODetailResp
 			LineNo:        it.LineNo,
 			UniqCode:      it.ItemUniqCode,
 			ChildUniqCode: it.ChildUniqCode,
-			MaterialGrade: it.MaterialGrade,
+			MaterialGrade: materialGrade,
 			MaterialSpec:  jsonToMap(it.MaterialSpec),
 			PartNumber:    it.PartNumber,
 			PartName:      it.PartName,
@@ -508,6 +513,11 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 				Username: &createdBy,
 			})
 
+			materialGrade, err := s.repo.GetPOMaterialGrade(ctx, po.PoID)
+			if err != nil {
+				return nil, err
+			}
+
 			budgetRef := buildBudgetRef(req.PoType, req.Period, po.PoBudgetEntryID)
 			var totalQty float64
 			itemDetails := make([]models.POItemDetail, 0, len(poItems))
@@ -518,7 +528,7 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 					LineNo:        it.LineNo,
 					UniqCode:      it.ItemUniqCode,
 					ChildUniqCode: it.ChildUniqCode,
-					MaterialGrade: it.MaterialGrade,
+					MaterialGrade: materialGrade,
 					MaterialSpec:  jsonToMap(it.MaterialSpec),
 					PartNumber:    it.PartNumber,
 					PartName:      it.PartName,
