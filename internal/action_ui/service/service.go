@@ -39,6 +39,8 @@ type IService interface {
 
 	ScanOut(ctx context.Context, req dto.ScanOutRequest) error
 
+	CompleteProduction(ctx context.Context, woID int64) error
+
 	QCSubmit(ctx context.Context, req dto.QCSubmitRequest, performedBy string) error
 
 	QCFinish(ctx context.Context, req dto.QCFinishRequest, performedBy string) error
@@ -590,9 +592,30 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	item.TotalGoodQty = qtyOut
 	item.LastScannedProcess = currentProcess
 
-	item.Status = "FINISHED"
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return s.advanceProcessAfterScanOut(ctx, tx, &item, qtyOut, req.ScannedBy)
+	})
+}
 
-	return s.repoProduction.UpdateWOItem(ctx, item)
+// CompleteProduction menandai seluruh Work Order selesai.
+// Semua UNIQ (work_order_items) wajib sudah FINISHED/DONE lebih dulu.
+func (s *service) CompleteProduction(ctx context.Context, woID int64) error {
+	items, err := s.repoProduction.FindWOItemsByWOID(ctx, woID)
+	if err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		return errors.New("work order tidak memiliki item")
+	}
+
+	for _, it := range items {
+		st := strings.ToUpper(it.Status)
+		if st != "FINISHED" && st != "DONE" {
+			return errors.New("tidak bisa menyelesaikan WO: masih ada uniq yang belum selesai (uniq " + it.ItemUniqCode + " berstatus " + it.Status + ")")
+		}
+	}
+
+	return s.repoProduction.UpdateWOStatus(ctx, woID, "Completed")
 }
 
 func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, performedBy string) error {
@@ -736,10 +759,6 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 		// ROUND 3 FINAL QC
 		// =====================================
 		if req.QCRound == 3 {
-			if item.Status != "WAITING_FINAL_QC" {
-				return apperror.BadRequest("final qc requires scan out first")
-			}
-			// task done
 			if err := tx.Model(&task).Updates(map[string]interface{}{
 				"status":         "done",
 				"good_quantity":  int(req.QtyPass),
@@ -749,23 +768,18 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 			}).Error; err != nil {
 				return err
 			}
-
-			// pindah process berikutnya / finish
-			if err := s.afterFinalQC(ctx, tx, &item, req, performedBy); err != nil {
-				return err
-			}
-		}
+}
 
 		return nil
 	})
 }
 
-func (s *service) afterFinalQC(ctx context.Context, tx *gorm.DB, item *models.WorkOrderItem, req dto.QCSubmitRequest, performedBy string) error {
+func (s *service) advanceProcessAfterScanOut(ctx context.Context, tx *gorm.DB, item *models.WorkOrderItem, qtyPass float64, performedBy string) error {
 
 	flow := resolveProcessFlow(*item)
 
 	var wo models.WorkOrder
-	if err := tx.Where("id = ?", req.WOID).
+	if err := tx.Where("id = ?", item.WOID).
 		First(&wo).Error; err != nil {
 		return err
 	}
@@ -794,7 +808,7 @@ func (s *service) afterFinalQC(ctx context.Context, tx *gorm.DB, item *models.Wo
 		Order("id desc").
 		First(&currentWIP).Error; err == nil {
 
-		currentWIP.QtyOut += int(req.QtyPass)
+		currentWIP.QtyOut += int(qtyPass)
 		currentWIP.QtyRemaining =
 			currentWIP.QtyIn - currentWIP.QtyOut
 
@@ -807,8 +821,8 @@ func (s *service) afterFinalQC(ctx context.Context, tx *gorm.DB, item *models.Wo
 
 		_ = tx.Create(&models.WIPLog{
 			WipItemID: currentWIP.ID,
-			Action:    "QC_FINAL_DONE",
-			Qty:       int(req.QtyPass),
+			Action:    "SCAN_OUT_DONE",
+			Qty:       int(qtyPass),
 			CreatedAt: now,
 		}).Error
 	}
@@ -834,11 +848,10 @@ func (s *service) afterFinalQC(ctx context.Context, tx *gorm.DB, item *models.Wo
 
 			UOM: item.UOM,
 
-			Stock: int(req.QtyPass),
-
-			QtyIn:        int(req.QtyPass),
+			Stock: int(qtyPass),
+			QtyIn:        int(qtyPass),
 			QtyOut:       0,
-			QtyRemaining: int(req.QtyPass),
+			QtyRemaining: int(qtyPass),
 
 			Status: "queue",
 
@@ -853,7 +866,7 @@ func (s *service) afterFinalQC(ctx context.Context, tx *gorm.DB, item *models.Wo
 		_ = tx.Create(&models.WIPLog{
 			WipItemID: nextWIP.ID,
 			Action:    "TRANSFER_IN",
-			Qty:       int(req.QtyPass),
+			Qty:       int(qtyPass),
 			CreatedAt: now,
 		}).Error
 
@@ -886,7 +899,7 @@ func (s *service) afterFinalQC(ctx context.Context, tx *gorm.DB, item *models.Wo
 			PartName:   item.PartName,
 			Model:      item.Model,
 			WONumber:   wo.WONumber,
-			StockQty:   req.QtyPass,
+			StockQty:   qtyPass,
 			UOM:        item.UOM,
 			Status:     "AVAILABLE",
 			CreatedAt:  now,
@@ -904,10 +917,10 @@ func (s *service) afterFinalQC(ctx context.Context, tx *gorm.DB, item *models.Wo
 			item.ItemUniqCode,
 			&fg.ID,
 			0,
-			req.QtyPass,
-			req.QtyPass,
+			qtyPass,
+			qtyPass,
 			&wo.WONumber,
-			stringPtr("QC_FINAL"),
+			stringPtr("SCAN_OUT"),
 			stringPtr("Create FG from final production process"),
 			stringPtr(performedBy),
 		); err != nil {
@@ -917,7 +930,7 @@ func (s *service) afterFinalQC(ctx context.Context, tx *gorm.DB, item *models.Wo
 	} else if err == nil {
 
 		beforeQty := fg.StockQty
-		afterQty := beforeQty + req.QtyPass
+		afterQty := beforeQty + qtyPass
 
 		fg.StockQty = afterQty
 		fg.UpdatedAt = now
@@ -933,10 +946,10 @@ func (s *service) afterFinalQC(ctx context.Context, tx *gorm.DB, item *models.Wo
 			item.ItemUniqCode,
 			&fg.ID,
 			beforeQty,
-			req.QtyPass,
+			qtyPass,
 			afterQty,
 			&wo.WONumber,
-			stringPtr("QC_FINAL"),
+			stringPtr("SCAN_OUT"),
 			stringPtr("Add stock from final production process"),
 			stringPtr(performedBy),
 		); err != nil {
@@ -1240,13 +1253,23 @@ func resolveProcessFlow(item models.WorkOrderItem) []models.ProcessFlow {
 	return flow
 }
 
-func buildProcessSteps(flow []models.ProcessFlow, currentSeq int) []dto.WODetailProcessStep {
+func isUniqFinished(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "FINISHED", "DONE", "COMPLETED":
+		return true
+	}
+	return false
+}
+
+func buildProcessSteps(flow []models.ProcessFlow, currentSeq int, finished bool) []dto.WODetailProcessStep {
 	total := len(flow)
 	currentIndex := getCurrentIndex(currentSeq, total)
 	steps := make([]dto.WODetailProcessStep, 0, total)
 	for i, f := range flow {
 		status := "pending"
-		if i < currentIndex {
+		if finished {
+			status = "done"
+		} else if i < currentIndex {
 			status = "done"
 		} else if i == currentIndex {
 			status = "current"
@@ -1498,13 +1521,18 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 	uniqs := make([]dto.WODetailUniq, 0, len(items))
 	var totalQty float64
 
-	for i, item := range items {
+	for _, item := range items {
 		totalQty += item.Quantity
 
-		// proses uniq berikutnya (untuk "Berikutnya")
+		flow := resolveProcessFlow(item)
+		totalStep := len(flow)
+		currentIndex := getCurrentIndex(item.CurrentStepSeq, totalStep)
+		currentProcess := flow[currentIndex].ProcessName
+
+		// proses berikutnya DI DALAM UNIQ ini (bukan uniq berikutnya)
 		nextProcess := ""
-		if i+1 < len(items) {
-			nextProcess = items[i+1].ProcessName
+		if currentIndex+1 < totalStep {
+			nextProcess = flow[currentIndex+1].ProcessName
 		}
 
 		machineNumber := ""
@@ -1547,14 +1575,14 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 			MachineID:      strconv.Itoa(item.MachineID),
 			MachineNumber:  machineNumber,
 			ProductionLine: productionLine,
-			ProcessName:    item.ProcessName, // <-- KUNCI: proses uniq ini
-			NextProcess:    nextProcess,      // <-- proses uniq berikutnya
-			CurrentStep:    i + 1,            // <-- posisi uniq (1/3, 2/3, ...)
-			TotalStep:      len(items),       // <-- total uniq
+			ProcessName:    currentProcess,
+			NextProcess:    nextProcess,     
+			CurrentStep:    currentIndex + 1,           
+			TotalStep:      totalStep,   
 			ScanInCount:    item.ScanInCount,
 			ScanOutCount:   item.ScanOutCount,
 			MachineScanned: item.MachineID != 0,
-			ProcessFlow:    buildWOProcessSteps(items, i),
+			ProcessFlow:    buildProcessSteps(flow, item.CurrentStepSeq, isUniqFinished(item.Status)),
 			SavedQty:       savedQty,
 			DandoriTime:    dandori,
 			SetupQCTime:    setupQC,
@@ -1795,13 +1823,15 @@ func (s *service) ScanMachine(ctx context.Context, req dto.ScanMachineRequest) (
 	}
 
 	item := items[currentIdx]
-	expectedProcess := item.ProcessName
-	totalStep := len(items)
+	flow := resolveProcessFlow(item)
+	totalStep := len(flow)
+	currentIndex := getCurrentIndex(item.CurrentStepSeq, totalStep)
+	expectedProcess := flow[currentIndex].ProcessName
 	nextProcess := ""
-	if currentIdx+1 < totalStep {
-		nextProcess = items[currentIdx+1].ProcessName
+	if currentIndex+1 < totalStep {
+		nextProcess = flow[currentIndex+1].ProcessName
 	}
-	steps := buildWOProcessSteps(items, currentIdx)
+	steps := buildProcessSteps(flow, item.CurrentStepSeq, isUniqFinished(item.Status))
 
 	// Cari mesin yang di-scan
 	machine, err := s.repoProduction.FindMachineByNumber(ctx, strings.TrimSpace(req.Machine))
@@ -2019,15 +2049,22 @@ func (s *service) ScanOutContext(
 			})
 		}
 
-			resp.Items = append(resp.Items, dto.ScanOutContextItem{
-				WOItemID:       item.ID,
-				Uniq:           item.ItemUniqCode,
-				MachineScanned: item.MachineID != 0,
-				ScanInCount:    item.ScanInCount,
-				ScanOutCount:   item.ScanOutCount,
-				TotalOutput:    item.TotalGoodQty,
-				RawMaterials:   rms,
-			})
+		soFlow := resolveProcessFlow(item)
+		soTotalStep := len(soFlow)
+		soCurrentIndex := getCurrentIndex(item.CurrentStepSeq, soTotalStep)
+
+		resp.Items = append(resp.Items, dto.ScanOutContextItem{
+			WOItemID:       item.ID,
+			Uniq:           item.ItemUniqCode,
+			MachineScanned: item.MachineID != 0,
+			Status:         item.Status,
+			CurrentStep:    soCurrentIndex + 1,
+			TotalStep:      soTotalStep,
+			ScanInCount:    item.ScanInCount,
+			ScanOutCount:   item.ScanOutCount,
+			TotalOutput:    item.TotalGoodQty,
+			RawMaterials:   rms,
+		})
 	}
 
 	return resp, nil
