@@ -88,7 +88,9 @@ func (r *repo) ListTasks(ctx context.Context, f ListFilter) ([]TaskListRow, int6
 		idn.po_number,
 		s.supplier_name,
 		idi.item_uniq_code,
-		idi.qty_received::numeric AS qty_received,
+		GREATEST(idi.qty_received::numeric - COALESCE((
+			SELECT SUM(ql.qty_checked) FROM qc_logs ql WHERE ql.dn_item_id = idi.id
+		), 0), 0) AS qty_received,
 		idi.uom
 	`).
 		Order("t.created_at DESC").
@@ -175,11 +177,15 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 			return apperror.Conflict("qc task already rejected")
 		}
 
-		if numberOfDefects > dnItem.QtyReceived {
+		roundQty, err := pendingIncomingQtyTx(tx, dnItem.ID, dnItem.QtyReceived)
+		if err != nil {
+			return err
+		}
+		if numberOfDefects > roundQty {
 			return apperror.UnprocessableEntity("number_of_defects must be <= qty_received")
 		}
 
-		approvedQty := dnItem.QtyReceived - numberOfDefects
+		approvedQty := roundQty - numberOfDefects
 		ngQty := numberOfDefects
 
 		// Update task fields
@@ -239,7 +245,7 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 		}
 
 		qtyScrap := sumDefectScrap(defects)
-		qcLogID, err := insertIncomingQCLog(tx, task, dnItem, checkedAt, performedBy, approvedQty, numberOfDefects, qtyScrap, "APPROVED", defects)
+		qcLogID, err := insertIncomingQCLog(tx, task, dnItem, checkedAt, performedBy, roundQty, approvedQty, numberOfDefects, qtyScrap, "APPROVED", defects)
 		if err != nil {
 			return err
 		}
@@ -289,7 +295,11 @@ func (r *repo) RejectIncoming(ctx context.Context, taskID int64, numberOfDefects
 			return apperror.NotFound("incoming_dn_item tidak ditemukan")
 		}
 
-		if numberOfDefects > dnItem.QtyReceived {
+				roundQty, err := pendingIncomingQtyTx(tx, dnItem.ID, dnItem.QtyReceived)
+		if err != nil {
+			return err
+		}
+		if numberOfDefects > roundQty {
 			return apperror.UnprocessableEntity("number_of_defects must be <= qty_received")
 		}
 
@@ -338,12 +348,27 @@ func (r *repo) RejectIncoming(ctx context.Context, taskID int64, numberOfDefects
 			return fmt.Errorf("create product_return: %w", err)
 		}
 
-		qcLogID, err := insertIncomingQCLog(tx, task, dnItem, checkedAt, performedBy, 0, numberOfDefects, qtyScrap, "REJECTED", defects)
+		qcLogID, err := insertIncomingQCLog(tx, task, dnItem, checkedAt, performedBy, roundQty, 0, numberOfDefects, qtyScrap, "REJECTED", defects)
 		if err != nil {
 			return err
 		}
 		return insertIncomingQCDefects(tx, task, dnItem, qcLogID, performedBy, defects)
 	})
+}
+
+func pendingIncomingQtyTx(tx *gorm.DB, dnItemID int64, totalReceived int) (int, error) {
+	var alreadyChecked float64
+	if err := tx.Table("qc_logs").
+		Where("dn_item_id = ?", dnItemID).
+		Select("COALESCE(SUM(qty_checked), 0)").
+		Scan(&alreadyChecked).Error; err != nil {
+		return 0, fmt.Errorf("sum qc_logs qty_checked: %w", err)
+	}
+	pending := totalReceived - int(alreadyChecked)
+	if pending < 0 {
+		pending = 0
+	}
+	return pending, nil
 }
 
 func validateDefectInputs(defects []qcModels.DefectInput, totalDefect, totalScrapCap float64) error {
@@ -381,14 +406,14 @@ func sumDefectDefect(defects []qcModels.DefectInput) float64 {
 	return total
 }
 
-func insertIncomingQCLog(tx *gorm.DB, task qcModels.QCTask, dnItem procModels.IncomingDNItem, checkedAt time.Time, performedBy string, approvedQty, defectQty int, qtyScrap float64, status string, defects []qcModels.DefectInput) (int64, error) {
+func insertIncomingQCLog(tx *gorm.DB, task qcModels.QCTask, dnItem procModels.IncomingDNItem, checkedAt time.Time, performedBy string, qtyChecked, approvedQty, defectQty int, qtyScrap float64, status string, defects []qcModels.DefectInput) (int64, error) {
 	row := map[string]interface{}{
 		"uuid":          uuid.New().String(),
 		"qc_task_id":    task.ID,
 		"dn_item_id":    dnItem.ID,
 		"uniq_code":     dnItem.ItemUniqCode,
 		"qc_round":      1,
-		"qty_checked":   dnItem.QtyReceived,
+		"qty_checked":   qtyChecked,
 		"qty_pass":      approvedQty,
 		"qty_defect":    defectQty,
 		"qty_scrap":     qtyScrap,
