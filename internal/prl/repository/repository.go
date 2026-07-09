@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	customerModels "github.com/ganasa18/go-template/internal/customer/models"
 	"github.com/ganasa18/go-template/internal/prl/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
@@ -35,7 +37,8 @@ func wrapPRLPersistError(msg string, err error) error {
 			return apperror.BadRequest("a field is longer than the DB column allows")
 		}
 	}
-	return apperror.InternalWrap(msg, err)
+	// Temporarily include underlying DB error text in the wrapped message to aid debugging.
+	return apperror.InternalWrap(msg+": "+err.Error(), err)
 }
 
 type IRepository interface {
@@ -43,6 +46,7 @@ type IRepository interface {
 	FindUniqBOMByUUID(ctx context.Context, uuid string) (*models.UniqBillOfMaterial, error)
 	FindUniqBOMByUniqCode(ctx context.Context, uniqCode string) (*models.UniqBillOfMaterial, error)
 	FindItemByUniqCode(ctx context.Context, uniqCode string) (*models.ItemLookup, error)
+	FindBomChildrenByUniqCode(ctx context.Context, uniqCode string) ([]models.ChildInfo, error)
 	ListUniqBOMs(ctx context.Context, filters models.UniqBOMListFilters) ([]models.UniqBillOfMaterial, int64, error)
 	UpdateUniqBOM(ctx context.Context, item *models.UniqBillOfMaterial) error
 	DeleteUniqBOM(ctx context.Context, item *models.UniqBillOfMaterial) error
@@ -188,7 +192,33 @@ func (r *repository) DeleteUniqBOM(ctx context.Context, item *models.UniqBillOfM
 
 func (r *repository) CreatePRLs(ctx context.Context, items []*models.PRL) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Let DB trigger/sequence populate prl_id atomically. Application must not set PRLID.
+		// If we're inserting multiple PRLs in one request, create a PRLGroup
+		// and assign its PRLID to all child PRL rows so they share one PRL ID.
+		if len(items) > 1 {
+			group := &models.PRLGroup{Remarks: nil}
+			// ensure UUID is set so DB default is not bypassed with empty string
+			group.UUID = uuid.NewString()
+			if err := tx.Create(group).Error; err != nil {
+				// return DB error text in message temporarily to aid debugging
+				return apperror.InternalWrap("create prl group failed: "+err.Error(), err)
+			}
+			// reload to ensure prl_id set by trigger
+			if err := tx.Where("id = ?", group.ID).First(group).Error; err != nil {
+				return apperror.InternalWrap("reload prl group failed", err)
+			}
+			for _, item := range items {
+				item.PRLID = group.PRLID
+				item.PRLGroupUUID = &group.UUID
+				fmt.Printf("creating PRL item: uuid=%s prl_id=%s uniq_code=%s qty=%d\n", item.UUID, item.PRLID, item.UniqCode, item.Quantity)
+				if err := tx.Create(item).Error; err != nil {
+					fmt.Printf("create prl db error: %v\n", err)
+					return wrapPRLPersistError("create prl failed", err)
+				}
+			}
+			return nil
+		}
+
+		// Single insert path: let DB trigger populate prl_id as before
 		for _, item := range items {
 			if strings.TrimSpace(item.PRLID) == "" {
 				item.PRLID = "PENDING"
@@ -199,6 +229,51 @@ func (r *repository) CreatePRLs(ctx context.Context, items []*models.PRL) error 
 		}
 		return nil
 	})
+}
+
+func (r *repository) FindBomChildrenByUniqCode(ctx context.Context, uniqCode string) ([]models.ChildInfo, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return nil, apperror.BadRequest("uniq_code is required")
+	}
+
+	var children []models.ChildInfo
+	// Select distinct child uniq_code first, preferring the first material_grade per uniq_code,
+	// then aggregate. This avoids duplicate child lines in BOM being returned multiple times.
+	query := `
+SELECT uniq_code, material_grade FROM (
+	SELECT DISTINCT ON (child.uniq_code) child.uniq_code,
+				 COALESCE(latest_ms.material_grade, '') AS material_grade
+	FROM items parent
+	JOIN bom_lines bl ON bl.parent_item_id = parent.id
+	JOIN items child ON child.id = bl.child_item_id
+	LEFT JOIN LATERAL (
+		-- prefer a Released revision's material spec, fall back to the latest revision's spec if none released
+		SELECT material_grade FROM (
+			SELECT ims.material_grade, 1 AS priority, ir.created_at, ir.id
+			FROM item_revisions ir
+			JOIN item_material_specs ims ON ims.item_revision_id = ir.id
+			WHERE ir.item_id = child.id AND ir.status = 'Released'
+			UNION ALL
+			SELECT ims.material_grade, 2 AS priority, ir.created_at, ir.id
+			FROM item_revisions ir
+			JOIN item_material_specs ims ON ims.item_revision_id = ir.id
+			WHERE ir.item_id = child.id
+			ORDER BY priority, created_at DESC, id DESC
+			LIMIT 1
+		) t
+	) latest_ms ON TRUE
+	WHERE parent.uniq_code ILIKE ? AND parent.deleted_at IS NULL
+	ORDER BY child.uniq_code, child.id
+) s
+ORDER BY uniq_code ASC;
+
+`
+
+	if err := r.db.WithContext(ctx).Raw(query, uniqCode).Scan(&children).Error; err != nil {
+		return nil, apperror.InternalWrap("find bom children failed", err)
+	}
+	return children, nil
 }
 
 func (r *repository) FindPRLByUUID(ctx context.Context, uuid string) (*models.PRL, error) {

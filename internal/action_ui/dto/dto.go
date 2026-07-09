@@ -44,7 +44,7 @@ type RawMaterialInput struct {
 
 type ScanInRequest struct {
 	WOID                 int64   `json:"wo_id" binding:"required"`
-	WOItemID 			 int64   `json:"wo_item_id"`
+	WOItemID             int64   `json:"wo_item_id"`
 	Uniq                 string  `json:"uniq" binding:"required"`
 	MachineID            string  `json:"machine_id"`      // optional
 	ProductionLine       string  `json:"production_line"` // optional
@@ -179,25 +179,25 @@ type WODetailResponse struct {
 }
 
 type WODetailUniq struct {
-	WOItemID       int64   `json:"wo_item_id"`
-	Uniq           string  `json:"uniq"`
-	PartName       string  `json:"part_name"`
-	PartNumber     string  `json:"part_number"`
-	KanbanNumber   string  `json:"kanban_number"`
-	UOM            string  `json:"uom"`
-	Qty            float64 `json:"qty"`
-	Status         string  `json:"status"`
-	MachineID      string  `json:"machine_id"`
-	MachineNumber  string  `json:"machine_number"`
-	ProductionLine string  `json:"production_line"`
-	ProcessName string     `json:"process_name"`
-	NextProcess string     `json:"next_process"`
-	CurrentStep int        `json:"current_step"`
-	TotalStep   int        `json:"total_step"`
-	ScanInCount    int       `json:"scan_in_count"`
-	ScanOutCount   int       `json:"scan_out_count"`
-	MachineScanned bool      `json:"machine_scanned"`
-	ProcessFlow []WODetailProcessStep `json:"process_flow"`
+	WOItemID       int64                 `json:"wo_item_id"`
+	Uniq           string                `json:"uniq"`
+	PartName       string                `json:"part_name"`
+	PartNumber     string                `json:"part_number"`
+	KanbanNumber   string                `json:"kanban_number"`
+	UOM            string                `json:"uom"`
+	Qty            float64               `json:"qty"`
+	Status         string                `json:"status"`
+	MachineID      string                `json:"machine_id"`
+	MachineNumber  string                `json:"machine_number"`
+	ProductionLine string                `json:"production_line"`
+	ProcessName    string                `json:"process_name"`
+	NextProcess    string                `json:"next_process"`
+	CurrentStep    int                   `json:"current_step"`
+	TotalStep      int                   `json:"total_step"`
+	ScanInCount    int                   `json:"scan_in_count"`
+	ScanOutCount   int                   `json:"scan_out_count"`
+	MachineScanned bool                  `json:"machine_scanned"`
+	ProcessFlow    []WODetailProcessStep `json:"process_flow"`
 
 		SavedQty     float64                     `json:"saved_qty"`
 	DandoriTime  string                      `json:"dandori_time"`
@@ -240,8 +240,8 @@ type RawMaterialLookupResponse struct {
 	UniqCode          string  `json:"uniq_code"`
 	PartNumber        string  `json:"part_number"`
 	PartName          string  `json:"part_name"`
-	RawMaterialType   string  `json:"raw_material_type"` 
-	TypeLabel         string  `json:"type_label"`        
+	RawMaterialType   string  `json:"raw_material_type"`
+	TypeLabel         string  `json:"type_label"`
 	UOM               string  `json:"uom"`
 	AvailableStock    float64 `json:"available_stock"`
 	StockWeightKg     float64 `json:"stock_weight_kg"`

@@ -1193,7 +1193,7 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 
 		cb := createdBy
 		prlRowID := head.PrlItemID
-		detailJSON, detailErr := buildBulkEntryDetailJSON(budgetType, r, g.items)
+		detailJSON, detailErr := buildBulkEntryDetailJSON(budgetType, r, rowMap, g.items)
 		if detailErr != nil {
 			return nil, apperror.InternalWrap("build bulk detail_jsonb failed", detailErr)
 		}
