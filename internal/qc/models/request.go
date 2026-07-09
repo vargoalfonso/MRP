@@ -17,7 +17,7 @@ type ApproveIncomingTaskRequest struct {
 }
 
 type RejectIncomingTaskRequest struct {
-	NumberOfDefects int           `json:"number_of_defects" binding:"required"`
+	NumberOfDefects int           `json:"number_of_defects"`
 	DateChecked     string        `json:"date_checked" binding:"required"` // format: YYYY-MM-DD
 	Defects         []DefectInput `json:"defects"`
 }

@@ -20,7 +20,7 @@ type IncomingReceivingScan struct {
 	ScannedBy         *string   `gorm:"column:scanned_by"`
 }
 
-func (IncomingReceivingScan) TableName() string { return "" }
+func (IncomingReceivingScan) TableName() string { return "incoming_receiving_scans" }
 
 type QCTask struct {
 	ID int64 `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
