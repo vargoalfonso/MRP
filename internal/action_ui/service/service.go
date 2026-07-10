@@ -597,8 +597,6 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	})
 }
 
-// CompleteProduction menandai seluruh Work Order selesai.
-// Semua UNIQ (work_order_items) wajib sudah FINISHED/DONE lebih dulu.
 func (s *service) CompleteProduction(ctx context.Context, woID int64) error {
 	items, err := s.repoProduction.FindWOItemsByWOID(ctx, woID)
 	if err != nil {
@@ -615,7 +613,18 @@ func (s *service) CompleteProduction(ctx context.Context, woID int64) error {
 		}
 	}
 
-	return s.repoProduction.UpdateWOStatus(ctx, woID, "Completed")
+	// 1) tandai WO selesai
+	if err := s.repoProduction.UpdateWOStatus(ctx, woID, "Completed"); err != nil {
+		return err
+	}
+
+	// 2) 🔥 sinkronkan WIP: semua wip_items milik WO ini ikut "done"
+	//    sehingga hilang dari board Work in Progress di Raigine.
+	if err := s.repoProduction.MarkWIPDoneByWO(ctx, woID); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, performedBy string) error {
