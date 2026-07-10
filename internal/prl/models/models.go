@@ -473,5 +473,6 @@ type ApproveInstance struct {
 }
 
 func (ApproveInstance) TableName() string {
+	// comment
 	return "approval_instances"
 }
