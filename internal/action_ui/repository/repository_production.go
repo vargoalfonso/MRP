@@ -43,6 +43,7 @@ type IProductionRepository interface {
 	CreateWIPItem(ctx context.Context, data *models.WIPItem) error
 	UpdateWIPItem(ctx context.Context, data *models.WIPItem) error
 	CreateWIPLog(ctx context.Context, data *models.WIPLog) error
+	MarkWIPDoneByWO(ctx context.Context, woID int64) error
 
 	ListWorkOrders(ctx context.Context, search string, limit int) ([]WOListAgg, error)
 	FindRawMaterialByCode(ctx context.Context, code string) (models.RawMaterial, error)
@@ -157,6 +158,37 @@ func (r *productionRepo) UpdateWIPItem(ctx context.Context, data *models.WIPItem
 func (r *productionRepo) CreateWIPLog(ctx context.Context, data *models.WIPLog) error {
 	return r.db.WithContext(ctx).
 		Create(data).Error
+}
+
+func (r *productionRepo) MarkWIPDoneByWO(ctx context.Context, woID int64) error {
+	now := time.Now()
+
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1) tandai semua wip_items milik WO ini jadi "done"
+		if err := tx.
+			Model(&models.WIPItem{}).
+			Where(`
+				wip_id IN (SELECT id FROM wips WHERE wo_id = ?)
+				AND status <> ?
+			`, woID, "done").
+			Updates(map[string]interface{}{
+				"status":        "done",
+				"qty_out":       gorm.Expr("qty_in"),
+				"qty_remaining": 0,
+				"updated_at":    now,
+			}).Error; err != nil {
+			return err
+		}
+
+		// 2) tandai header WIP jadi "done"
+		return tx.
+			Model(&models.WIP{}).
+			Where("wo_id = ?", woID).
+			Updates(map[string]interface{}{
+				"status":     "done",
+				"updated_at": now,
+			}).Error
+	})
 }
 
 //

@@ -81,6 +81,10 @@ type ScanOutRequest struct {
 	RawMaterials    []ScanOutRawMaterial `json:"raw_materials"`
 }
 
+type CompleteWORequest struct {
+	WOID int64 `json:"wo_id" binding:"required"`
+}
+
 type QCSubmitRequest struct {
 	QCTaskID int64 `json:"qc_task_id" binding:"required"`
 
@@ -304,6 +308,9 @@ type ScanOutContextItem struct {
 	WOItemID       int64                       `json:"wo_item_id"`
 	Uniq           string                      `json:"uniq"`
 	MachineScanned bool                        `json:"machine_scanned"`
+	Status         string                      `json:"status"`
+	CurrentStep    int                         `json:"current_step"`
+	TotalStep      int                         `json:"total_step"`
 	ScanInCount    int                         `json:"scan_in_count"`
 	ScanOutCount   int                         `json:"scan_out_count"`
 	TotalOutput    float64                     `json:"total_output"`

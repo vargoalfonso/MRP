@@ -261,6 +261,34 @@ func (h *HTTPHandler) ScanOut(ctx *app.Context) *app.CostumeResponse {
 	}
 }
 
+func (h *HTTPHandler) CompleteProduction(ctx *app.Context) *app.CostumeResponse {
+	var req dto.CompleteWORequest
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+
+	err := h.svc.CompleteProduction(ctx.Request.Context(), req.WOID)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "Work Order Completed",
+	}
+}
+
 func (h *HTTPHandler) QCApprove(ctx *app.Context) *app.CostumeResponse {
 	return h.qcSubmitWithStatus(ctx, "approve")
 }

@@ -80,6 +80,9 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	// ⏹️ Scan Out (finish process)
 	// POST /api/v1/action-ui/production/scan-out
 	production.POST("/scan-out", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.ScanOut))
+	
+	production.POST("/wo-complete", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.CompleteProduction))
+	
 	// ⏹️ Issue List
 	// POST /api/v1/action-ui/production/scan-out
 	production.GET("/issue/list", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.IssueList))

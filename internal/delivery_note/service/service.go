@@ -873,13 +873,13 @@ func (s *deliveryNoteService) SubmitDelivery(ctx context.Context, req models.Sub
 		// =============================
 		header := models.DeliveryScheduleCustomer{
 			UUID:           uuid.NewString(),
-			ScheduleNumber: generateScheduleNumber(), // nanti helper
+			ScheduleNumber: generateScheduleNumber(),
 			CustomerID:     req.CustomerID,
 			ScheduleDate:   parsedDate,
 			Cycle:          req.Cycle,
 			Priority:       priority,
-			Status:         "scheduled",
-			ApprovalStatus: "pending",
+			Status:         "dn_created",
+			ApprovalStatus: "approved",
 			CreatedBy:      req.CreatedBy,
 			CreatedAt:      time.Now(),
 			UpdatedAt:      time.Now(),
@@ -920,7 +920,7 @@ func (s *deliveryNoteService) SubmitDelivery(ctx context.Context, req models.Sub
 				TotalOrderQty:     fg.StockQty, // optional
 				TotalDeliveryQty:  item.Qty,
 				UOM:               item.UOM,
-				Status:            "scheduled",
+				Status:            "dn_created",
 				FGReadinessStatus: "ready",
 				CreatedAt:         time.Now(),
 				UpdatedAt:         time.Now(),

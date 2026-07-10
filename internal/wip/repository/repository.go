@@ -75,7 +75,8 @@ func (r *repository) FindAllWIPPaginated(ctx context.Context, page, limit int) (
 		Joins("JOIN wip_items ON wips.id = wip_items.wip_id").
 		Joins("JOIN work_orders ON wips.wo_id = work_orders.id").
 		Joins("JOIN items ON wip_items.uniq = items.uniq_code").
-		Joins("JOIN kanban_parameters ON wip_items.uniq = kanban_parameters.item_uniq_code").
+		Joins("LEFT JOIN kanban_parameters ON wip_items.uniq = kanban_parameters.item_uniq_code").
+		Where("wip_items.status <> ?", "done").
 		Count(&total).Error
 
 	if err != nil {
@@ -100,7 +101,8 @@ func (r *repository) FindAllWIPPaginated(ctx context.Context, page, limit int) (
 		Joins("JOIN wip_items ON wips.id = wip_items.wip_id").
 		Joins("JOIN work_orders ON wips.wo_id = work_orders.id").
 		Joins("JOIN items ON wip_items.uniq = items.uniq_code").
-		Joins("JOIN kanban_parameters ON wip_items.uniq = kanban_parameters.item_uniq_code").
+		Joins("LEFT JOIN kanban_parameters ON wip_items.uniq = kanban_parameters.item_uniq_code").
+		Where("wip_items.status <> ?", "done").
 		Order("wips.created_at DESC").
 		Offset((page - 1) * limit).
 		Limit(limit).
