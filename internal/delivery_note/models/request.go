@@ -25,6 +25,7 @@ type PreviewDNResponse struct {
 	TotalIncoming   int64                   `json:"total_incoming"`
 	TotalDNCreatd   int64                   `json:"total_dn_created"`
 	TotalDNIncoming int64                   `json:"total_dn_incoming"`
+	MaterialGrade   string                  `json:"material_grade"`
 	Items           []PreviewDNItemResponse `json:"items"`
 }
 

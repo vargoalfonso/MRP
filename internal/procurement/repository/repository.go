@@ -22,6 +22,7 @@ type IRepository interface {
 	// PO Detail
 	GetPOByID(ctx context.Context, poID int64) (*models.PurchaseOrder, error)
 	GetPOItems(ctx context.Context, poID int64) ([]models.PurchaseOrderItem, error)
+	GetPOMaterialGrade(ctx context.Context, poID int64) (string, error)
 	GetPOLogs(ctx context.Context, poID int64) ([]models.PurchaseOrderLog, error)
 
 	// DN queries
@@ -283,6 +284,26 @@ func (r *repo) GetPOItems(ctx context.Context, poID int64) ([]models.PurchaseOrd
 		return nil, fmt.Errorf("GetPOItems %d: %w", poID, err)
 	}
 	return items, nil
+}
+
+func (r *repo) GetPOMaterialGrade(ctx context.Context, poID int64) (string, error) {
+	var grade string
+
+	err := r.db.WithContext(ctx).
+		Table("purchase_order_items AS poi").
+		Select("ims.material_grade").
+		Joins("INNER JOIN items AS i ON i.uniq_code = poi.item_uniq_code").
+		Joins("INNER JOIN items_material_specs AS ims ON ims.item_revision_id = i.id").
+		Where("poi.po_id = ?", poID).
+		Order("poi.line_no ASC").
+		Limit(1).
+		Pluck("ims.material_grade", &grade).Error
+
+	if err != nil {
+		return "", fmt.Errorf("get PO material grade: %w", err)
+	}
+
+	return grade, nil
 }
 
 func (r *repo) GetPOLogs(ctx context.Context, poID int64) ([]models.PurchaseOrderLog, error) {

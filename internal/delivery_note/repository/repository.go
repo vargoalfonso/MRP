@@ -56,6 +56,8 @@ type IDeliveryNoteRepository interface {
 
 	GetFGForUpdate(tx *gorm.DB, uniq string) (*models.FinishedGoods, error)
 	ReduceFGStock(tx *gorm.DB, fgID int64, qty float64) error
+
+	GetMaterialGradeByItemUniqCode(ctx context.Context, uniqCode string) (string, error)
 }
 
 type DNCountSummary struct {
@@ -381,4 +383,18 @@ func (r *repository) ReduceFGStock(tx *gorm.DB, fgID int64, qty float64) error {
 	return tx.Model(&models.FinishedGoods{}).
 		Where("id = ?", fgID).
 		Update("stock_qty", gorm.Expr("stock_qty - ?", qty)).Error
+}
+
+func (r *repository) GetMaterialGradeByItemUniqCode(ctx context.Context, uniqCode string) (string, error) {
+	var materialGrade string
+
+	err := r.db.WithContext(ctx).
+		Table("items i").
+		Select("COALESCE(ims.material_grade, '')").
+		Joins("LEFT JOIN item_material_specs ims ON ims.item_revision_id = i.id").
+		Where("i.uniq_code = ?", uniqCode).
+		Limit(1).
+		Scan(&materialGrade).Error
+
+	return materialGrade, err
 }

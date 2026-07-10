@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/ganasa18/go-template/internal/procurement/models"
 	"github.com/ganasa18/go-template/internal/procurement/repository"
 	"github.com/ganasa18/go-template/pkg/pagination"
+	"gorm.io/datatypes"
 )
 
 // IService is the business-logic contract for the Procurement module.
@@ -141,6 +143,11 @@ func (s *svc) GetPODetail(ctx context.Context, poID int64) (*models.PODetailResp
 		return nil, err
 	}
 
+	materialGrade, err := s.repo.GetPOMaterialGrade(ctx, poID)
+	if err != nil {
+		return nil, err
+	}
+
 	// Resolve supplier name
 	var supplierName *string
 	if po.SupplierID != nil && *po.SupplierID > 0 {
@@ -178,17 +185,20 @@ func (s *svc) GetPODetail(ctx context.Context, poID int64) (*models.PODetailResp
 	itemDetails := make([]models.POItemDetail, 0, len(items))
 	for _, it := range items {
 		itemDetails = append(itemDetails, models.POItemDetail{
-			ID:           it.ID,
-			LineNo:       it.LineNo,
-			UniqCode:     it.ItemUniqCode,
-			PartNumber:   it.PartNumber,
-			PartName:     it.PartName,
-			Model:        it.ProductModel,
-			Qty:          it.OrderedQty,
-			Uom:          it.Uom,
-			PcsPerKanban: it.PcsPerKanban,
-			WeightKg:     it.WeightKg,
-			UnitPrice:    it.UnitPrice,
+			ID:            it.ID,
+			LineNo:        it.LineNo,
+			UniqCode:      it.ItemUniqCode,
+			ChildUniqCode: it.ChildUniqCode,
+			MaterialGrade: materialGrade,
+			MaterialSpec:  jsonToMap(it.MaterialSpec),
+			PartNumber:    it.PartNumber,
+			PartName:      it.PartName,
+			Model:         it.ProductModel,
+			Qty:           it.OrderedQty,
+			Uom:           it.Uom,
+			PcsPerKanban:  it.PcsPerKanban,
+			WeightKg:      it.WeightKg,
+			UnitPrice:     it.UnitPrice,
 		})
 	}
 
@@ -407,27 +417,57 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 		}
 	}
 
-	// ── Group entries by supplier ID (legacy BIGINT from budget entry) ──────
+	// ── Group by supplier ────────────────────────────────────────────────
+	// For raw_material/indirect entries with a detail_jsonb breakdown we group
+	// by the supplier assigned to each CHILD material (a single entry can span
+	// several suppliers). Entries without a usable breakdown (subcon, legacy
+	// rows) keep grouping by the entry-level supplier and are split using the
+	// flat po1_qty/po2_qty columns.
 	type supplierGroup struct {
 		legacyID     int64
 		supplierName string
-		entries      []models.POBudgetEntry
+		entries      []models.POBudgetEntry // flat-split fallback entries
+		children     []splitChild           // per-child split rows
 	}
 
 	groupByID := map[int64]*supplierGroup{}
+	ensureGroup := func(id int64, name string) *supplierGroup {
+		g, ok := groupByID[id]
+		if !ok {
+			g = &supplierGroup{legacyID: id, supplierName: name}
+			groupByID[id] = g
+		}
+		if g.supplierName == "" && name != "" {
+			g.supplierName = name
+		}
+		return g
+	}
+
 	for _, e := range entries {
+		children := extractSplitChildren(e)
+		if len(children) > 0 {
+			for _, c := range children {
+				var id int64
+				if c.supplierID != nil {
+					id = *c.supplierID
+				}
+				g := ensureGroup(id, c.supplierName)
+				g.children = append(g.children, c)
+			}
+			continue
+		}
+
+		// Fallback: entry-level grouping + flat po1_qty/po2_qty split.
 		var id int64
 		if e.SupplierID != nil {
 			id = *e.SupplierID
 		}
-		if _, ok := groupByID[id]; !ok {
-			name := ""
-			if e.SupplierName != nil {
-				name = *e.SupplierName
-			}
-			groupByID[id] = &supplierGroup{legacyID: id, supplierName: name}
+		name := ""
+		if e.SupplierName != nil {
+			name = *e.SupplierName
 		}
-		groupByID[id].entries = append(groupByID[id].entries, e)
+		g := ensureGroup(id, name)
+		g.entries = append(g.entries, e)
 	}
 
 	// ── Determine which stages to generate ───────────────────────────────
@@ -443,11 +483,13 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 	var result models.GeneratePOResponse
 
 	for _, grp := range groupByID {
-		// Compute budget-level stats (same for PO1 and PO2).
+		// Budget-level stats (same for PO1 and PO2). Fallback entries contribute
+		// their entry stats; child-split rows contribute their child budget.
 		stats := computeGroupStats(grp.entries)
+		stats.merge(computeChildStats(grp.children))
 
 		for _, stage := range stagesToGenerate {
-			po, poItems, err := s.buildStagePO(ctx, grp.legacyID, grp.entries, req, createdBy, stage)
+			po, poItems, err := s.buildStagePO(ctx, grp.legacyID, grp.entries, grp.children, req, createdBy, stage)
 			if err != nil {
 				return nil, err
 			}
@@ -471,24 +513,32 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 				Username: &createdBy,
 			})
 
+			materialGrade, err := s.repo.GetPOMaterialGrade(ctx, po.PoID)
+			if err != nil {
+				return nil, err
+			}
+
 			budgetRef := buildBudgetRef(req.PoType, req.Period, po.PoBudgetEntryID)
 			var totalQty float64
 			itemDetails := make([]models.POItemDetail, 0, len(poItems))
 			for _, it := range poItems {
 				totalQty += it.OrderedQty
 				itemDetails = append(itemDetails, models.POItemDetail{
-					ID:           it.ID,
-					LineNo:       it.LineNo,
-					UniqCode:     it.ItemUniqCode,
-					PartNumber:   it.PartNumber,
-					PartName:     it.PartName,
-					Model:        it.ProductModel,
-					Qty:          it.OrderedQty,
-					Uom:          it.Uom,
-					PcsPerKanban: it.PcsPerKanban,
-					WeightKg:     it.WeightKg,
-					Budget:       it.SalesPlan,
-					UnitPrice:    it.UnitPrice,
+					ID:            it.ID,
+					LineNo:        it.LineNo,
+					UniqCode:      it.ItemUniqCode,
+					ChildUniqCode: it.ChildUniqCode,
+					MaterialGrade: materialGrade,
+					MaterialSpec:  jsonToMap(it.MaterialSpec),
+					PartNumber:    it.PartNumber,
+					PartName:      it.PartName,
+					Model:         it.ProductModel,
+					Qty:           it.OrderedQty,
+					Uom:           it.Uom,
+					PcsPerKanban:  it.PcsPerKanban,
+					WeightKg:      it.WeightKg,
+					Budget:        it.SalesPlan,
+					UnitPrice:     it.UnitPrice,
 				})
 			}
 
@@ -539,51 +589,189 @@ type groupStats struct {
 	salesPlan     float64
 	totalBudgetPo float64 // sum of purchase_request (full, before split)
 	totalWeight   float64 // sum(weight_kg * purchase_request)
+	uniqSet       map[string]bool
 	totalUniq     int
 }
 
 // computeGroupStats derives budget-level stats from a set of budget entries.
 // These values are identical for PO1 and PO2 — they reflect the full budget, not the split.
 func computeGroupStats(entries []models.POBudgetEntry) groupStats {
-	uniqSet := map[string]bool{}
-	var s groupStats
+	s := groupStats{uniqSet: map[string]bool{}}
 	for _, e := range entries {
-		uniqSet[e.UniqCode] = true
+		s.uniqSet[e.UniqCode] = true
 		s.salesPlan += e.SalesPlan
 		s.totalBudgetPo += e.PurchaseRequest
 		if e.WeightKg != nil {
 			s.totalWeight += *e.WeightKg * e.PurchaseRequest
 		}
 	}
-	s.totalUniq = len(uniqSet)
+	s.totalUniq = len(s.uniqSet)
 	return s
 }
 
+// computeChildStats derives budget-level stats from per-child split rows.
+func computeChildStats(children []splitChild) groupStats {
+	s := groupStats{uniqSet: map[string]bool{}}
+	for _, c := range children {
+		s.uniqSet[c.uniqCode] = true
+		s.totalBudgetPo += c.childQty
+		if c.weightKg != nil {
+			s.totalWeight += *c.weightKg * c.childQty
+		}
+	}
+	s.totalUniq = len(s.uniqSet)
+	return s
+}
+
+// merge folds another stats bucket into this one (used when a supplier group
+// mixes fallback entries and child-split rows — rare, but kept correct).
+func (s *groupStats) merge(o groupStats) {
+	if s.uniqSet == nil {
+		s.uniqSet = map[string]bool{}
+	}
+	s.salesPlan += o.salesPlan
+	s.totalBudgetPo += o.totalBudgetPo
+	s.totalWeight += o.totalWeight
+	for k := range o.uniqSet {
+		s.uniqSet[k] = true
+	}
+	s.totalUniq = len(s.uniqSet)
+}
+
+// jsonToMap decodes a jsonb column into a generic map for API responses.
+func jsonToMap(raw []byte) map[string]interface{} {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil
+	}
+	return m
+}
+
 // buildStagePO builds one PurchaseOrder for the given stage (1 or 2).
-// Each budget entry is expanded into N kanban lines where N = ceil(rawQty / pcs_per_kanban).
-// Every line has qty = pcs_per_kanban (one physical kanban unit per line).
+//
+// Two paths:
+//   - children != nil: each detail_jsonb child is split by the stage percentage
+//     (childQty * pct / 100), then expanded into kanban lines. A per-stage
+//     snapshot of the split children is stored on po.DetailJSON.
+//   - entries (fallback): legacy path using the entry-level po1_qty/po2_qty.
+//
 // SalesPlan is carried on each item (transient) for response building.
-func (s *svc) buildStagePO(ctx context.Context, legacySupID int64, entries []models.POBudgetEntry, req models.GeneratePORequest, createdBy string, stage int) (*models.PurchaseOrder, []models.PurchaseOrderItem, error) {
+func (s *svc) buildStagePO(ctx context.Context, legacySupID int64, entries []models.POBudgetEntry, children []splitChild, req models.GeneratePORequest, createdBy string, stage int) (*models.PurchaseOrder, []models.PurchaseOrderItem, error) {
 	poNumber, err := s.repo.NextPONumber(ctx, req.PoType, req.Period)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	var firstEntryID *int64
-	if len(entries) > 0 {
-		id := entries[0].ID
-		firstEntryID = &id
-	}
-
 	now := time.Now()
 	createdByStr := createdBy
 
-	items := make([]models.PurchaseOrderItem, 0, len(entries))
+	items := make([]models.PurchaseOrderItem, 0)
 	lineNo := 1
 	var totalWeight float64
+	var firstEntryID *int64
+	snapshotChildren := make([]map[string]interface{}, 0, len(children))
 
+	appendKanbanLines := func(rawQty float64, pcsPerKanban *int, weightKg *float64, base models.PurchaseOrderItem) {
+		numKanbans := 1
+		kanbanQty := rawQty
+		if pcsPerKanban != nil && *pcsPerKanban > 0 {
+			k := float64(*pcsPerKanban)
+			numKanbans = int(math.Ceil(rawQty / k))
+			kanbanQty = k
+		}
+		if weightKg != nil {
+			totalWeight += *weightKg * kanbanQty * float64(numKanbans)
+		}
+		for i := 0; i < numKanbans; i++ {
+			line := base
+			line.LineNo = lineNo
+			line.OrderedQty = kanbanQty
+			line.Status = "open"
+			items = append(items, line)
+			lineNo++
+		}
+	}
+
+	// ── Child-split path ────────────────────────────────────────────────
+	// pct per entry drives the split; child qty in detail_jsonb is the full budget.
+	entryPct := map[int64][2]float64{} // entryID → {po1Pct, po2Pct}
+	for _, c := range children {
+		entryPct[c.entryID] = [2]float64{}
+	}
+	// Resolve pct per entry from the source budget rows (fetched once).
+	if len(entryPct) > 0 {
+		ids := make([]int64, 0, len(entryPct))
+		for id := range entryPct {
+			ids = append(ids, id)
+		}
+		srcEntries, ferr := s.repo.ListBudgetEntriesForGenerate(ctx, req.PoType, req.Period, nil, ids)
+		if ferr == nil {
+			for _, e := range srcEntries {
+				entryPct[e.ID] = [2]float64{e.Po1Pct, e.Po2Pct}
+			}
+		}
+	}
+
+	for _, c := range children {
+		if firstEntryID == nil {
+			id := c.entryID
+			firstEntryID = &id
+		}
+		pcts := entryPct[c.entryID]
+		po1Pct, po2Pct := pcts[0], pcts[1]
+		if po1Pct == 0 && po2Pct == 0 {
+			po1Pct, po2Pct = 60, 40 // safety fallback matching split defaults
+		}
+		rawQty := stageQty(c.childQty, stage, po1Pct, po2Pct)
+		if rawQty <= 0 {
+			continue
+		}
+
+		entryID := c.entryID
+		childUniq := c.childUniqCode
+		grade := c.materialGrade
+		specJSON := mapToJSON(c.materialSpec)
+
+		base := models.PurchaseOrderItem{
+			ItemUniqCode:    c.uniqCode,
+			PartName:        strPtrIfNonEmpty(c.partName),
+			PartNumber:      strPtrIfNonEmpty(c.partNumber),
+			Uom:             strPtrIfNonEmpty(c.uom),
+			WeightKg:        c.weightKg,
+			PoBudgetEntryID: &entryID,
+			ChildUniqCode:   strPtrIfNonEmpty(childUniq),
+			MaterialGrade:   strPtrIfNonEmpty(grade),
+			MaterialSpec:    specJSON,
+			MaterialType:    strPtrIfNonEmpty(req.PoType),
+		}
+		appendKanbanLines(rawQty, nil, c.weightKg, base)
+
+		snapshotChildren = append(snapshotChildren, map[string]interface{}{
+			"parent_uniq_code": c.parentUniq,
+			"uniq_code":        c.childUniqCode,
+			"uniq":             c.uniqCode,
+			"part_name":        c.partName,
+			"part_number":      c.partNumber,
+			"uom":              c.uom,
+			"weight_kg":        c.weightKg,
+			"material_grade":   c.materialGrade,
+			"material_spec":    c.materialSpec,
+			"supplier_id":      c.supplierID,
+			"supplier_name":    c.supplierName,
+			"child_qty":        c.childQty,
+			"stage_qty":        rawQty,
+		})
+	}
+
+	// ── Fallback path (entry-level flat split) ──────────────────────────
 	for _, e := range entries {
-		// Pick raw qty for this stage (pre-calculated as purchase_request * pct / 100).
+		if firstEntryID == nil {
+			id := e.ID
+			firstEntryID = &id
+		}
 		var rawQty float64
 		if stage == 1 {
 			rawQty = e.Po1Qty
@@ -593,39 +781,30 @@ func (s *svc) buildStagePO(ctx context.Context, legacySupID int64, entries []mod
 		if rawQty <= 0 {
 			continue
 		}
-
-		// Expand into N kanban lines. Each line = one full kanban unit (pcs_per_kanban qty).
-		// If pcs_per_kanban is not set, treat the whole rawQty as one line.
-		numKanbans := 1
-		kanbanQty := rawQty
-		if e.PcsPerKanban != nil && *e.PcsPerKanban > 0 {
-			k := float64(*e.PcsPerKanban)
-			numKanbans = int(math.Ceil(rawQty / k))
-			kanbanQty = k
+		entryID := e.ID
+		base := models.PurchaseOrderItem{
+			ItemUniqCode:    e.UniqCode,
+			ProductModel:    e.ProductModel,
+			MaterialType:    e.MaterialType,
+			PartName:        e.PartName,
+			PartNumber:      e.PartNumber,
+			Uom:             e.Uom,
+			WeightKg:        e.WeightKg,
+			PcsPerKanban:    e.PcsPerKanban,
+			PoBudgetEntryID: &entryID,
+			SalesPlan:       e.SalesPlan,
 		}
+		appendKanbanLines(rawQty, e.PcsPerKanban, e.WeightKg, base)
+	}
 
-		if e.WeightKg != nil {
-			totalWeight += *e.WeightKg * kanbanQty * float64(numKanbans)
+	var detailJSON datatypes.JSON = datatypes.JSON([]byte("{}"))
+	if len(snapshotChildren) > 0 {
+		payload := map[string]interface{}{
+			"stage":    stage,
+			"children": snapshotChildren,
 		}
-
-		for i := 0; i < numKanbans; i++ {
-			entryID := e.ID
-			items = append(items, models.PurchaseOrderItem{
-				LineNo:          lineNo,
-				ItemUniqCode:    e.UniqCode,
-				ProductModel:    e.ProductModel,
-				MaterialType:    e.MaterialType,
-				PartName:        e.PartName,
-				PartNumber:      e.PartNumber,
-				Uom:             e.Uom,
-				WeightKg:        e.WeightKg,
-				OrderedQty:      kanbanQty,
-				PcsPerKanban:    e.PcsPerKanban,
-				PoBudgetEntryID: &entryID,
-				SalesPlan:       e.SalesPlan,
-				Status:          "open",
-			})
-			lineNo++
+		if raw, merr := json.Marshal(payload); merr == nil {
+			detailJSON = datatypes.JSON(raw)
 		}
 	}
 
@@ -640,6 +819,7 @@ func (s *svc) buildStagePO(ctx context.Context, legacySupID int64, entries []mod
 		Status:           "pending",
 		PoDate:           &now,
 		TotalWeight:      &totalWeight,
+		DetailJSON:       detailJSON,
 		ExternalSystem:   strPtrIfNonEmpty(req.ExternalSystem),
 		ExternalPoNumber: strPtrIfNonEmpty(req.ExternalPoNumber),
 		CreatedBy:        &createdByStr,
@@ -647,6 +827,18 @@ func (s *svc) buildStagePO(ctx context.Context, legacySupID int64, entries []mod
 	}
 
 	return po, items, nil
+}
+
+// mapToJSON encodes a generic map into a jsonb column value (nil when empty).
+func mapToJSON(m map[string]interface{}) datatypes.JSON {
+	if len(m) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	return datatypes.JSON(raw)
 }
 
 // ---------------------------------------------------------------------------
