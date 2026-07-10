@@ -58,6 +58,9 @@ type IDeliveryNoteRepository interface {
 	ReduceFGStock(tx *gorm.DB, fgID int64, qty float64) error
 
 	GetMaterialGradeByItemUniqCode(ctx context.Context, uniqCode string) (string, error)
+
+	CountKanban(ctx context.Context) (int64, error)
+	CreateKanban(ctx context.Context, data *models.KanbanParameter) error
 }
 
 type DNCountSummary struct {
@@ -397,4 +400,14 @@ func (r *repository) GetMaterialGradeByItemUniqCode(ctx context.Context, uniqCod
 		Scan(&materialGrade).Error
 
 	return materialGrade, err
+}
+
+func (r *repository) CountKanban(ctx context.Context) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&models.KanbanParameter{}).Count(&count).Error
+	return count, err
+}
+
+func (r *repository) CreateKanban(ctx context.Context, data *models.KanbanParameter) error {
+	return r.db.WithContext(ctx).Create(data).Error
 }
