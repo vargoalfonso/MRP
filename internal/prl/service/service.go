@@ -15,6 +15,7 @@ import (
 	"time"
 
 	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
+	kanbanRepo "github.com/ganasa18/go-template/internal/kanban/repository"
 	"github.com/ganasa18/go-template/internal/prl/models"
 	prlRepo "github.com/ganasa18/go-template/internal/prl/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
@@ -55,12 +56,24 @@ type Service interface {
 }
 
 type service struct {
-	repo prlRepo.IRepository
-	db   *gorm.DB
+	repo       prlRepo.IRepository
+	kanbanRepo kanbanRepo.IKanbanParameterRepository
+	db         *gorm.DB
 }
 
-func New(repo prlRepo.IRepository, db *gorm.DB) Service {
-	return &service{repo: repo, db: db}
+func New(repo prlRepo.IRepository, kanbanRepo kanbanRepo.IKanbanParameterRepository, db *gorm.DB) Service {
+	return &service{repo: repo, kanbanRepo: kanbanRepo, db: db}
+}
+
+func (s *service) ensureKanbanParameterConfigured(ctx context.Context, uniqCode string) error {
+	_, err := s.kanbanRepo.FindByItemCode(ctx, uniqCode)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return apperror.BadRequest(fmt.Sprintf("kanban parameter untuk item %s belum di-setup", uniqCode))
+		}
+		return apperror.InternalWrap("find kanban parameter failed", err)
+	}
+	return nil
 }
 
 func (s *service) CreateUniqBOM(ctx context.Context, req models.CreateUniqBOMRequest) (*models.UniqBillOfMaterial, error) {
@@ -151,6 +164,10 @@ func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest, su
 	}
 	bom, err := s.resolveUniqBOMForPRL(ctx, uniqCode)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := s.ensureKanbanParameterConfigured(ctx, uniqCode); err != nil {
 		return nil, err
 	}
 
@@ -685,6 +702,10 @@ func (s *service) buildPRLFromEntry(ctx context.Context, entry models.CreatePRLE
 	}
 	if existing != nil {
 		return nil, apperror.BadRequest(fmt.Sprintf("PRL sudah ada untuk customer %s, uniq_code %s, periode %s (PRL ID: %s)", customer.CustomerID, uniqCode, period, existing.PRLID))
+	}
+
+	if err := s.ensureKanbanParameterConfigured(ctx, uniqCode); err != nil {
+		return nil, err
 	}
 
 	return &models.PRL{

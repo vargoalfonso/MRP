@@ -249,7 +249,8 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	customerSvc := customerService.New(customerRepo)
 	customerHTTPHandler := customerHandler.New(customerSvc)
 	prlRepo := prlRepository.New(db)
-	prlSvc := prlService.New(prlRepo, db)
+	kanbanRepo := kanbanRepository.New(db)
+	prlSvc := prlService.New(prlRepo, kanbanRepo, db)
 	prlHTTPHandler := prlHandler.New(prlSvc)
 	supplierRepo := supplierRepository.New(db)
 	supplierSvc := supplierService.New(supplierRepo)
@@ -357,7 +358,6 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	masterMachineSvc := masterMachineService.New(masterMachineRepo)
 	masterMachineHTTPHandler := masterMachineHandler.New(masterMachineSvc)
 
-	kanbanRepo := kanbanRepository.New(db)
 	kanbanSvc := kanbanService.New(kanbanRepo)
 	kanbanHTTPHandler := kanbanHandler.New(kanbanSvc)
 
