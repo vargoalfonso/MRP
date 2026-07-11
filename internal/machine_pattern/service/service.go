@@ -66,8 +66,14 @@ func (s *service) List(ctx context.Context, q ListQuery) (*models.ListMachinePat
 	}
 
 	responses := make([]models.MachinePatternResponse, len(items))
+
 	for i, item := range items {
-		responses[i] = toResponse(item)
+		grade, err := s.repo.GetMaterialGrade(ctx, item.UniqCode)
+		if err != nil {
+			return nil, err
+		}
+
+		responses[i] = toResponse(item, grade)
 	}
 
 	totalPages := int(math.Ceil(float64(total) / float64(limit)))
@@ -91,7 +97,13 @@ func (s *service) GetByID(ctx context.Context, id int64) (*models.MachinePattern
 	if err != nil {
 		return nil, err
 	}
-	resp := toResponse(*item)
+
+	grade, err := s.repo.GetMaterialGrade(ctx, item.UniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := toResponse(*item, grade)
 	return &resp, nil
 }
 
@@ -151,7 +163,12 @@ func (s *service) Create(ctx context.Context, req models.CreateMachinePatternReq
 		return nil, err
 	}
 
-	resp := toResponse(*item)
+	grade, err := s.repo.GetMaterialGrade(ctx, item.UniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := toResponse(*item, grade)
 	return &resp, nil
 }
 
@@ -187,7 +204,12 @@ func (s *service) Update(ctx context.Context, id int64, req models.UpdateMachine
 		return nil, err
 	}
 
-	resp := toResponse(*item)
+	grade, err := s.repo.GetMaterialGrade(ctx, item.UniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := toResponse(*item, grade)
 	return &resp, nil
 }
 
@@ -285,20 +307,21 @@ func (s *service) BulkCreate(ctx context.Context, req models.BulkMachinePatternR
 	}, nil
 }
 
-func toResponse(m models.MachinePattern) models.MachinePatternResponse {
+func toResponse(m models.MachinePattern, materialGrade string) models.MachinePatternResponse {
 	return models.MachinePatternResponse{
-		ID:           m.ID,
-		UniqCode:     m.UniqCode,
-		MachineID:    m.MachineID,
-		CycleTime:    m.CycleTime,
-		PatternValue: m.PatternValue,
-		WorkingDays:  m.WorkingDays,
-		MovingType:   m.MovingType,
-		MinOutput:    m.MinOutput,
-		PRLReference: m.PRLReference,
-		Status:       m.Status,
-		CreatedBy:    m.CreatedBy,
-		CreatedAt:    m.CreatedAt,
-		UpdatedAt:    m.UpdatedAt,
+		ID:            m.ID,
+		UniqCode:      m.UniqCode,
+		MachineID:     m.MachineID,
+		CycleTime:     m.CycleTime,
+		PatternValue:  m.PatternValue,
+		WorkingDays:   m.WorkingDays,
+		MovingType:    m.MovingType,
+		MinOutput:     m.MinOutput,
+		PRLReference:  m.PRLReference,
+		Status:        m.Status,
+		CreatedBy:     m.CreatedBy,
+		CreatedAt:     m.CreatedAt,
+		UpdatedAt:     m.UpdatedAt,
+		MaterialGrade: materialGrade,
 	}
 }

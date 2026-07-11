@@ -24,20 +24,21 @@ type MachinePattern struct {
 func (MachinePattern) TableName() string { return "machine_patterns" }
 
 type MachinePatternResponse struct {
-	ID           int64     `json:"id"`
-	UniqCode     string    `json:"uniq_code"`
-	MachineID    int64     `json:"machine_id"`
-	MachineName  string    `json:"machine_name,omitempty"`
-	CycleTime    *float64  `json:"cycle_time,omitempty"`
-	PatternValue float64   `json:"pattern_value"`
-	WorkingDays  int       `json:"working_days"`
-	MovingType   string    `json:"moving_type"`
-	MinOutput    *float64  `json:"min_output,omitempty"`
-	PRLReference *float64  `json:"prl_reference,omitempty"`
-	Status       string    `json:"status"`
-	CreatedBy    *string   `json:"created_by,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID            int64     `json:"id"`
+	UniqCode      string    `json:"uniq_code"`
+	MachineID     int64     `json:"machine_id"`
+	MachineName   string    `json:"machine_name,omitempty"`
+	CycleTime     *float64  `json:"cycle_time,omitempty"`
+	PatternValue  float64   `json:"pattern_value"`
+	WorkingDays   int       `json:"working_days"`
+	MovingType    string    `json:"moving_type"`
+	MinOutput     *float64  `json:"min_output,omitempty"`
+	PRLReference  *float64  `json:"prl_reference,omitempty"`
+	Status        string    `json:"status"`
+	CreatedBy     *string   `json:"created_by,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	MaterialGrade string    `json:"material_grade"`
 }
 
 type ListMachinePatternResponse struct {

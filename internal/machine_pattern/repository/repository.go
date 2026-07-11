@@ -20,6 +20,7 @@ type IRepository interface {
 	Delete(ctx context.Context, id int64) error
 	ValidateMachineExists(ctx context.Context, machineID int64) (bool, error)
 	GetSummary(ctx context.Context) (*models.MachinePatternSummary, error)
+	GetMaterialGrade(ctx context.Context, uniqCode string) (string, error)
 }
 
 type repository struct{ db *gorm.DB }
@@ -188,4 +189,18 @@ func (r *repository) GetSummary(ctx context.Context) (*models.MachinePatternSumm
 		Normal:       result.Normal,
 		AvgPattern:   result.AvgPattern,
 	}, nil
+}
+
+func (r *repository) GetMaterialGrade(ctx context.Context, uniqCode string) (string, error) {
+	var grade string
+
+	err := r.db.WithContext(ctx).
+		Table("items i").
+		Select("ims.material_grade").
+		Joins("JOIN item_material_specs ims ON ims.item_revision_id = i.id").
+		Where("i.uniq_code = ?", uniqCode).
+		Limit(1).
+		Scan(&grade).Error
+
+	return grade, err
 }
