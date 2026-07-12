@@ -259,3 +259,57 @@ func (s *importService) GenerateTemplateKanban(ctx context.Context) (*bytes.Buff
 
 	return buf, nil
 }
+
+func (s *importService) GenerateTemplateWO(ctx context.Context) (*bytes.Buffer, error) {
+	f := excelize.NewFile()
+	sheetName := "Template"
+	f.SetSheetName("Sheet1", sheetName)
+
+	headerStyle, _ := f.NewStyle(&excelize.Style{Font: &excelize.Font{Bold: true}})
+
+	headers := []string{
+		"wo_type",
+		"reference_wo",
+		"created_date",
+		"target_date",
+		"notes",
+		"item_uniq_code",
+		"quantity",
+		"uom",
+		"process_name",
+	}
+
+	for i, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		f.SetCellValue(sheetName, cell, h)
+		f.SetCellStyle(sheetName, cell, cell, headerStyle)
+	}
+
+	example := []interface{}{
+		"New",
+		"",
+		"2026-04-14",
+		"2026-04-20",
+		"WO harian shift 1",
+		"EMA-LV7-001",
+		6,
+		"Piece",
+		"Bending",
+	}
+
+	for i, v := range example {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 2)
+		f.SetCellValue(sheetName, cell, v)
+	}
+
+	f.SetColWidth(sheetName, "A", "I", 20)
+	f.SetPanes(sheetName, &excelize.Panes{Freeze: true, YSplit: 1, TopLeftCell: "A2"})
+	f.SetActiveSheet(0)
+
+	buf, err := f.WriteToBuffer()
+	if err != nil {
+		return nil, err
+	}
+
+	return buf, nil
+}

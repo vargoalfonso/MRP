@@ -443,7 +443,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 
 	importRepo := importRepo.New(db)
 	importSvc := importService.New(importRepo)
-	importHTTPHandler := importHandler.New(importSvc, authSvc)
+	importHTTPHandler := importHandler.New(importSvc, authSvc, woSvc)
 
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
