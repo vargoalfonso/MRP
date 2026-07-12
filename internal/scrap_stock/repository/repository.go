@@ -50,7 +50,11 @@ type IRepository interface {
 	ListScrapStocks(ctx context.Context, f ScrapStockFilter) ([]scrapModels.ScrapStock, int64, error)
 	GetScrapStockByID(ctx context.Context, id int64) (*scrapModels.ScrapStock, error)
 	CreateScrapStock(ctx context.Context, s *scrapModels.ScrapStock) error
+	UpdateScrapStock(ctx context.Context, id int64, fields map[string]interface{}) error
+	DeleteScrapStock(ctx context.Context, id int64, deletedBy string) error
 	AddScrapQty(ctx context.Context, id int64, delta float64, updatedBy string) error
+	// Packing options untuk create form (sumber: scan produksi / wip_items)
+	ListPackingNumbersByUniq(ctx context.Context, uniq string) ([]string, error)
 
 	// Scrap Release
 	ListScrapReleases(ctx context.Context, f ScrapReleaseFilter) ([]scrapModels.ScrapRelease, int64, error)
@@ -168,6 +172,42 @@ func (r *repository) CreateScrapStock(ctx context.Context, s *scrapModels.ScrapS
 	return nil
 }
 
+func (r *repository) UpdateScrapStock(ctx context.Context, id int64, fields map[string]interface{}) error {
+	if len(fields) == 0 {
+		return nil
+	}
+	res := r.db.WithContext(ctx).
+		Model(&scrapModels.ScrapStock{}).
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(fields)
+	if res.Error != nil {
+		return apperror.Internal("update scrap stock: " + res.Error.Error())
+	}
+	if res.RowsAffected == 0 {
+		return apperror.NotFound(fmt.Sprintf("scrap stock id %d tidak ditemukan", id))
+	}
+	return nil
+}
+
+func (r *repository) DeleteScrapStock(ctx context.Context, id int64, deletedBy string) error {
+	now := time.Now()
+	res := r.db.WithContext(ctx).
+		Model(&scrapModels.ScrapStock{}).
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(map[string]interface{}{
+			"deleted_at": now,
+			"updated_by": deletedBy,
+			"updated_at": now,
+		})
+	if res.Error != nil {
+		return apperror.Internal("delete scrap stock: " + res.Error.Error())
+	}
+	if res.RowsAffected == 0 {
+		return apperror.NotFound(fmt.Sprintf("scrap stock id %d tidak ditemukan", id))
+	}
+	return nil
+}
+
 // AddScrapQty increments (or decrements when delta < 0) the quantity and bumps updated_at.
 func (r *repository) AddScrapQty(ctx context.Context, id int64, delta float64, updatedBy string) error {
 	res := r.db.WithContext(ctx).
@@ -185,6 +225,23 @@ func (r *repository) AddScrapQty(ctx context.Context, id int64, delta float64, u
 		return apperror.NotFound(fmt.Sprintf("scrap stock id %d tidak ditemukan", id))
 	}
 	return nil
+}
+
+func (r *repository) ListPackingNumbersByUniq(ctx context.Context, uniq string) ([]string, error) {
+	var packings []string
+	err := r.db.WithContext(ctx).
+		Table("wip_items").
+		Distinct().
+		Where(
+			"uniq = ? AND COALESCE(packing_number, '') <> '' AND wip_type = ? AND status = ?",
+			uniq, "production", "done",
+		).
+		Order("packing_number ASC").
+		Pluck("packing_number", &packings).Error
+	if err != nil {
+		return nil, apperror.Internal("list packing numbers by uniq: " + err.Error())
+	}
+	return packings, nil
 }
 
 // ---------------------------------------------------------------------------

@@ -71,8 +71,11 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	ss.POST("", perm("scrap", "create"), m.base.RunAction(m.handler.CreateScrapStock))
 	// NOTE: /stats must be registered before /:id
 	ss.GET("/stats", perm("scrap", "view"), m.base.RunAction(m.handler.GetStats))
+	ss.GET("/packing-options", perm("scrap", "view"), m.base.RunAction(m.handler.ListPackingOptions))
 	ss.GET("/:id", perm("scrap", "view"), m.base.RunAction(m.handler.GetScrapStockByID))
 	ss.GET("/:id/history-logs", perm("scrap", "view"), m.base.RunAction(m.handler.ListScrapMovements))
+	ss.PUT("/:id", perm("scrap", "update"), m.base.RunAction(m.handler.UpdateScrapStock))
+	ss.DELETE("/:id", perm("scrap", "delete"), m.base.RunAction(m.handler.DeleteScrapStock))
 
 	// --- Scrap Release ---
 	sr := r.Group("/api/v1/scrap-releases")

@@ -36,6 +36,8 @@ type ScrapStockItem struct {
 	Model          *string    `json:"model"`
 	PackingNumber  *string    `json:"packing_number"`
 	WONumber       *string    `json:"wo_number"`
+	SourceQCLogID  *int64     `json:"source_qc_log_id"`
+	SourceDefectID *int64     `json:"source_defect_id"`
 	ScrapType      string     `json:"scrap_type"`
 	DisposalReason *string    `json:"disposal_reason"`
 	Quantity       float64    `json:"quantity"`

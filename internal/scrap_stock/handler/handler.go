@@ -119,6 +119,27 @@ func (h *HTTPHandler) GetScrapStockByID(ctx *app.Context) *app.CostumeResponse {
 	}
 }
 
+func (h *HTTPHandler) ListPackingOptions(ctx *app.Context) *app.CostumeResponse {
+	uniq := ctx.Query("uniq")
+	if uniq == "" {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "uniq is required",
+		}
+	}
+	data, err := h.svc.ListPackingNumbersByUniq(ctx.Request.Context(), uniq)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
 // CreateScrapStock creates a new scrap stock record (manual entry).
 //
 //	POST /api/v1/scrap-stocks
@@ -149,6 +170,70 @@ func (h *HTTPHandler) CreateScrapStock(ctx *app.Context) *app.CostumeResponse {
 		Status:    http.StatusCreated,
 		Message:   "Created",
 		Data:      data,
+	}
+}
+
+// UpdateScrapStock updates an existing scrap stock record.
+//
+//	PUT /api/v1/scrap-stocks/:id
+func (h *HTTPHandler) UpdateScrapStock(ctx *app.Context) *app.CostumeResponse {
+	id, ok := parseID(ctx)
+	if !ok {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid id",
+		}
+	}
+	var req scrapModels.UpdateScrapStockRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": errs},
+		}
+	}
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	data, err := h.svc.UpdateScrapStock(ctx.Request.Context(), id, req, userCtx.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "Updated",
+		Data:      data,
+	}
+}
+
+// DeleteScrapStock soft-deletes a scrap stock record.
+//
+//	DELETE /api/v1/scrap-stocks/:id
+func (h *HTTPHandler) DeleteScrapStock(ctx *app.Context) *app.CostumeResponse {
+	id, ok := parseID(ctx)
+	if !ok {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid id",
+		}
+	}
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	if err := h.svc.DeleteScrapStock(ctx.Request.Context(), id, userCtx.UserID); err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "Deleted",
 	}
 }
 
