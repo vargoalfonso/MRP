@@ -13,4 +13,14 @@ type ProductReturn struct {
 	Status         string    `gorm:"type:varchar(50);default:'PENDING'" json:"status"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+
+	// Read-only (kolom BRD + hasil JOIN). gorm:"->" agar TIDAK ditulis saat Create/Update.
+	Weight        float64    `gorm:"->" json:"weight"`
+	UOM           string     `gorm:"->" json:"uom"`
+	DateReceived  *time.Time `gorm:"->" json:"date_received"`
+	ScrapType     string     `gorm:"->" json:"scrap_type"`
+	PackingNumber string     `gorm:"->" json:"packing_number"`
+	PartName      string     `gorm:"->" json:"part_name"`
+	PartNumber    string     `gorm:"->" json:"part_number"`
+	Model         string     `gorm:"->" json:"model"`
 }

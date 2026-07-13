@@ -101,10 +101,52 @@ func (r *repo) CreateIncomingScan(ctx context.Context, req models.IncomingScanRe
 			return fmt.Errorf("lock dn item: %w", err)
 		}
 
-		// Validate delta_qty does not exceed remaining qty
-		remaining := dnItem.OrderQty - dnItem.QtyReceived
-		if req.DeltaQty > remaining {
-			return apperror.UnprocessableEntity(fmt.Sprintf("delta_qty %d exceeds remaining qty %d (ordered %d, received %d)", req.DeltaQty, remaining, dnItem.OrderQty, dnItem.QtyReceived))
+		var totalReturned float64
+		tx.Table("qc_logs").
+			Where("dn_item_id = ? AND UPPER(status) = ?", dnItem.ID, "REJECTED").
+			Select("COALESCE(SUM(qty_checked), 0)").Scan(&totalReturned)
+
+		// Removed strict package limit check to allow partial receive up to PO total using the same barcode.
+
+		var totalPoReceived float64
+		if err := tx.Table("delivery_note_items idi").
+			Joins("JOIN delivery_notes dn ON dn.id = idi.dn_id").
+			Where("dn.po_number = (SELECT po_number FROM delivery_notes WHERE id = ?) AND idi.item_uniq_code = ?", dnItem.IncomingDNID, dnItem.ItemUniqCode).
+			Select("COALESCE(SUM(idi.qty_received), 0)").
+			Scan(&totalPoReceived).Error; err != nil {
+			return fmt.Errorf("calculate total po received: %w", err)
+		}
+
+		var poReturned float64
+		tx.Table("qc_logs ql").
+			Joins("JOIN delivery_note_items idi ON idi.id = ql.dn_item_id").
+			Joins("JOIN delivery_notes dn ON dn.id = idi.dn_id").
+			Where("dn.po_number = (SELECT po_number FROM delivery_notes WHERE id = ?) AND idi.item_uniq_code = ? AND UPPER(ql.status) = ?", dnItem.IncomingDNID, dnItem.ItemUniqCode, "REJECTED").
+			Select("COALESCE(SUM(ql.qty_checked), 0)").Scan(&poReturned)
+
+		var poQty float64
+		tx.Table("purchase_order_items").
+			Joins("JOIN purchase_orders po ON po.po_id = purchase_order_items.po_id").
+			Where("po.po_number = (SELECT po_number FROM delivery_notes WHERE id = ?) AND purchase_order_items.item_uniq_code = ?", dnItem.IncomingDNID, dnItem.ItemUniqCode).
+			Select("COALESCE(SUM(purchase_order_items.ordered_qty), 0)").Scan(&poQty)
+		
+		if poQty <= 0 {
+			poQty = float64(dnItem.OrderQty)
+		}
+		if poQty <= 0 {
+			poQty = float64(dnItem.Quantity)
+		}
+		if poQty <= 0 {
+			var totalPoQty *int
+			tx.Table("delivery_notes").Where("id = ?", dnItem.IncomingDNID).Select("total_po_qty").Scan(&totalPoQty)
+			if totalPoQty != nil {
+				poQty = float64(*totalPoQty)
+			}
+		}
+
+		effectivePoReceived := totalPoReceived - poReturned
+		if float64(req.DeltaQty)+effectivePoReceived > poQty {
+			return apperror.UnprocessableEntity(fmt.Sprintf("Jumlah yang diterima (%.0f) akan melebihi TOTAL PO (%.0f) untuk item %s", float64(req.DeltaQty)+effectivePoReceived, poQty, dnItem.ItemUniqCode))
 		}
 
 		// Insert receiving scan (append-only)
@@ -156,13 +198,17 @@ func (r *repo) CreateIncomingScan(ctx context.Context, req models.IncomingScanRe
 		dnItemResp, err := r.buildIncomingScanDNItem(ctx, tx, dnItem)
 		if err != nil {
 			pn := req.PackingNumber
+			orderedQty := dnItem.OrderQty
+			if orderedQty <= 0 {
+				orderedQty = dnItem.Quantity
+			}
 			dnItemResp = &models.IncomingScanDNItem{
 				ID:             dnItem.ID,
 				ItemUniqCode:   dnItem.ItemUniqCode,
 				PackingNumber:  &pn,
-				QtyOrdered:     dnItem.Quantity,
+				QtyOrdered:     orderedQty,
 				QtyReceived:    dnItem.QtyReceived,
-				QtyRemaining:   dnItem.Quantity - dnItem.QtyReceived,
+				QtyRemaining:   orderedQty - dnItem.QtyReceived,
 				WeightKg:       dnItem.Weight,
 				WeightReceived: dnItem.WeightReceived,
 				QualityStatus:  dnItem.QualityStatus,
@@ -223,23 +269,59 @@ func (r *repo) getOrCreateIncomingQCTaskTx(ctx context.Context, tx *gorm.DB, dnI
 
 // buildIncomingScanDNItem constructs IncomingScanDNItem with PO, supplier, and DN type context.
 func (r *repo) buildIncomingScanDNItem(ctx context.Context, tx *gorm.DB, dnItem procModels.IncomingDNItem) (*models.IncomingScanDNItem, error) {
+	var dn procModels.IncomingDN
+	if err := tx.WithContext(ctx).First(&dn, "id = ?", dnItem.IncomingDNID).Error; err != nil {
+		return nil, err
+	}
+
+	var poQty float64
+	tx.Table("purchase_order_items").
+		Joins("JOIN purchase_orders po ON po.po_id = purchase_order_items.po_id").
+		Where("po.po_number = ? AND purchase_order_items.item_uniq_code = ?", dn.PoNumber, dnItem.ItemUniqCode).
+		Select("COALESCE(SUM(purchase_order_items.ordered_qty), 0)").Scan(&poQty)
+
+	orderedQty := int(poQty)
+	if orderedQty <= 0 {
+		orderedQty = dnItem.OrderQty
+	}
+	if orderedQty <= 0 {
+		orderedQty = dnItem.Quantity
+	}
+	
+	if dn.TotalPoQty != nil {
+		if orderedQty <= 0 {
+			orderedQty = *dn.TotalPoQty
+		}
+	}
+
+	var totalPoReceived float64
+	tx.Table("delivery_note_items idi").
+		Joins("JOIN delivery_notes dn ON dn.id = idi.dn_id").
+		Where("dn.po_number = ? AND idi.item_uniq_code = ?", dn.PoNumber, dnItem.ItemUniqCode).
+		Select("COALESCE(SUM(idi.qty_received), 0)").
+		Scan(&totalPoReceived)
+
+	var poReturned float64
+	tx.Table("qc_logs ql").
+		Joins("JOIN delivery_note_items idi ON idi.id = ql.dn_item_id").
+		Joins("JOIN delivery_notes dn ON dn.id = idi.dn_id").
+		Where("dn.po_number = ? AND idi.item_uniq_code = ? AND UPPER(ql.status) = ?", dn.PoNumber, dnItem.ItemUniqCode, "REJECTED").
+		Select("COALESCE(SUM(ql.qty_checked), 0)").Scan(&poReturned)
+
+	effectivePoReceived := int(totalPoReceived - poReturned)
+
 	resp := &models.IncomingScanDNItem{
 		ID:             dnItem.ID,
 		ItemUniqCode:   dnItem.ItemUniqCode,
 		PackingNumber:  dnItem.PackingNumber,
-		QtyOrdered:     dnItem.Quantity,
-		QtyReceived:    dnItem.QtyReceived,
-		QtyRemaining:   dnItem.Quantity - dnItem.QtyReceived,
+		QtyOrdered:     orderedQty,
+		QtyReceived:    effectivePoReceived,
+		QtyRemaining:   orderedQty - effectivePoReceived,
 		WeightKg:       dnItem.Weight,
 		WeightReceived: dnItem.WeightReceived,
 		QualityStatus:  dnItem.QualityStatus,
 		ReceivedAt:     dnItem.ReceivedAt,
 		UOM:            dnItem.Uom,
-	}
-
-	var dn procModels.IncomingDN
-	if err := tx.WithContext(ctx).First(&dn, "id = ?", dnItem.IncomingDNID).Error; err != nil {
-		return resp, nil
 	}
 
 	resp.PoNumber = &dn.PoNumber

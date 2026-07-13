@@ -36,6 +36,8 @@ type ScrapStockItem struct {
 	Model          *string    `json:"model"`
 	PackingNumber  *string    `json:"packing_number"`
 	WONumber       *string    `json:"wo_number"`
+	SourceQCLogID  *int64     `json:"source_qc_log_id"`
+	SourceDefectID *int64     `json:"source_defect_id"`
 	ScrapType      string     `json:"scrap_type"`
 	DisposalReason *string    `json:"disposal_reason"`
 	Quantity       float64    `json:"quantity"`
@@ -54,6 +56,26 @@ type ScrapStockItem struct {
 type ScrapStockListResponse struct {
 	Items      []ScrapStockItem `json:"items"`
 	Pagination ScrapPagination  `json:"pagination"`
+}
+
+// ---------------------------------------------------------------------------
+// Create form: source-agnostic UNIQ item options
+// ---------------------------------------------------------------------------
+
+// ScrapItemOption is one autocomplete row for the scrap create form.
+// Source is the shared items table, so it covers FG / RM / Indirect / subcon.
+type ScrapItemOption struct {
+	UniqCode     string  `json:"uniq_code"`
+	PartNumber   *string `json:"part_number"`
+	PartName     *string `json:"part_name"`
+	Model        *string `json:"model"`
+	UOM          *string `json:"uom"`
+	MaterialType *string `json:"material_type"`
+}
+
+// ScrapItemOptionsResponse is returned by GET /scrap-stocks/item-options.
+type ScrapItemOptionsResponse struct {
+	Items []ScrapItemOption `json:"items"`
 }
 
 // ---------------------------------------------------------------------------

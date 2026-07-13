@@ -463,3 +463,90 @@ func (h *HTTPHandler) ScanOutContext(ctx *app.Context) *app.CostumeResponse {
 		Data:      result,
 	}
 }
+
+// POST /api/v1/action-ui/qc-return/scan
+func (h *HTTPHandler) ScanReturn(ctx *app.Context) *app.CostumeResponse {
+	var req actionModels.ScanReturnRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+
+	result, err := h.svc.ScanReturn(ctx.Request.Context(), req)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data:      result,
+	}
+}
+
+// POST /api/v1/action-ui/qc-return/submit-to-qc
+func (h *HTTPHandler) SubmitReturnToQC(ctx *app.Context) *app.CostumeResponse {
+	var req actionModels.SubmitReturnToQCRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	result, err := h.svc.SubmitReturnToQC(ctx.Request.Context(), req, userCtx.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusCreated,
+		Message:   "OK",
+		Data:      result,
+	}
+}
+
+// GET /api/v1/action-ui/qc-return/pending-tasks
+func (h *HTTPHandler) PendingReturnTasks(ctx *app.Context) *app.CostumeResponse {
+	result, err := h.svc.PendingReturnTasks(ctx.Request.Context())
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data:      result,
+	}
+}
+
+// POST /api/v1/action-ui/qc-return/submit-validation
+func (h *HTTPHandler) SubmitReturnValidation(ctx *app.Context) *app.CostumeResponse {
+	var req actionModels.SubmitReturnValidationRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	if err := h.svc.SubmitReturnValidation(ctx.Request.Context(), req, userCtx.UserID); err != nil {
+		return app.NewError(ctx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+	}
+}

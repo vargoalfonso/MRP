@@ -5,6 +5,7 @@ import (
 	"context"
 	"math"
 	"time"
+	"strings"
 
 	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	scrapModels "github.com/ganasa18/go-template/internal/scrap_stock/models"
@@ -28,7 +29,10 @@ type IService interface {
 	ListScrapStocks(ctx context.Context, f repository.ScrapStockFilter) (*scrapModels.ScrapStockListResponse, error)
 	GetScrapStockByID(ctx context.Context, id int64) (*scrapModels.ScrapStockItem, error)
 	CreateScrapStock(ctx context.Context, req scrapModels.CreateScrapStockRequest, createdBy string) (*scrapModels.ScrapStockItem, error)
-
+	ListPackingNumbersByUniq(ctx context.Context, uniq string) ([]string, error)
+	ListItemOptions(ctx context.Context, q string, limit int) (*scrapModels.ScrapItemOptionsResponse, error)
+	UpdateScrapStock(ctx context.Context, id int64, req scrapModels.UpdateScrapStockRequest, updatedBy string) (*scrapModels.ScrapStockItem, error)
+	DeleteScrapStock(ctx context.Context, id int64, deletedBy string) error
 	// Incoming Scrap (Action UI scan flow)
 	CreateIncomingScrap(ctx context.Context, req scrapModels.IncomingScrapRequest, createdBy string) (*scrapModels.ScrapStockItem, error)
 
@@ -67,6 +71,8 @@ func toStockItem(s *scrapModels.ScrapStock) *scrapModels.ScrapStockItem {
 		Model:          s.Model,
 		PackingNumber:  s.PackingNumber,
 		WONumber:       s.WONumber,
+		SourceQCLogID:  s.SourceQCLogID,
+		SourceDefectID: s.SourceDefectID,
 		ScrapType:      s.ScrapType,
 		DisposalReason: s.DisposalReason,
 		Quantity:       s.Quantity,
@@ -109,13 +115,11 @@ func toReleaseItem(r *scrapModels.ScrapRelease) *scrapModels.ScrapReleaseItem {
 }
 
 func validateScrapType(t string) error {
-	if _, ok := scrapModels.ValidScrapTypes[t]; !ok {
-		return apperror.UnprocessableEntity(
-			"scrap_type must be one of: setting_machine_scrap, process_scrap, product_return_scrap")
+	if strings.TrimSpace(t) == "" {
+		return apperror.UnprocessableEntity("scrap_type is required")
 	}
 	return nil
 }
-
 func parseDate(s *string) *time.Time {
 	if s == nil || *s == "" {
 		return nil
@@ -178,6 +182,46 @@ func (sv *service) GetScrapStockByID(ctx context.Context, id int64) (*scrapModel
 	return toStockItem(s), nil
 }
 
+func (sv *service) ListPackingNumbersByUniq(ctx context.Context, uniq string) ([]string, error) {
+	uniq = strings.TrimSpace(uniq)
+	if uniq == "" {
+		return []string{}, nil
+	}
+	packings, err := sv.repo.ListPackingNumbersByUniq(ctx, uniq)
+	if err != nil {
+		return nil, err
+	}
+	return packings, nil
+}
+
+func (sv *service) ListItemOptions(ctx context.Context, q string, limit int) (*scrapModels.ScrapItemOptionsResponse, error) {
+	q = strings.TrimSpace(q)
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	rows, err := sv.repo.ListItemOptions(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]scrapModels.ScrapItemOption, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, scrapModels.ScrapItemOption{
+			UniqCode:     r.UniqCode,
+			PartNumber:   r.PartNumber,
+			PartName:     r.PartName,
+			Model:        r.Model,
+			UOM:          r.UOM,
+			MaterialType: r.MaterialType,
+		})
+	}
+	return &scrapModels.ScrapItemOptionsResponse{Items: out}, nil
+}
+
 func (sv *service) CreateScrapStock(ctx context.Context, req scrapModels.CreateScrapStockRequest, createdBy string) (*scrapModels.ScrapStockItem, error) {
 	if err := validateScrapType(req.ScrapType); err != nil {
 		return nil, err
@@ -222,6 +266,75 @@ func (sv *service) CreateScrapStock(ctx context.Context, req scrapModels.CreateS
 		LoggedBy:         s.CreatedBy,
 	})
 	return toStockItem(s), nil
+}
+func (sv *service) UpdateScrapStock(ctx context.Context, id int64, req scrapModels.UpdateScrapStockRequest, updatedBy string) (*scrapModels.ScrapStockItem, error) {
+	// pastikan record ada
+	if _, err := sv.repo.GetScrapStockByID(ctx, id); err != nil {
+		return nil, err
+	}
+
+	_, updaterName, err := creatorresolver.Resolve(ctx, sv.db, updatedBy)
+	if err != nil {
+		return nil, err
+	}
+
+	fields := map[string]interface{}{
+		"updated_by": updaterName,
+		"updated_at": time.Now(),
+	}
+	if req.PackingNumber != nil {
+		fields["packing_number"] = *req.PackingNumber
+	}
+	if req.ScrapType != nil {
+		if err := validateScrapType(*req.ScrapType); err != nil {
+			return nil, err
+		}
+		fields["scrap_type"] = *req.ScrapType
+	}
+	if req.DisposalReason != nil {
+		fields["disposal_reason"] = *req.DisposalReason
+	}
+	if req.Quantity != nil {
+		fields["quantity"] = *req.Quantity
+	}
+	if req.UOM != nil {
+		fields["uom"] = *req.UOM
+	}
+	if req.WeightKg != nil {
+		fields["weight_kg"] = *req.WeightKg
+	}
+	if req.DateReceived != nil {
+		fields["date_received"] = parseDate(req.DateReceived)
+	}
+	if req.Validator != nil {
+		fields["validator"] = *req.Validator
+	}
+	if req.Remarks != nil {
+		fields["remarks"] = *req.Remarks
+	}
+	if req.Status != nil {
+		fields["status"] = *req.Status
+	}
+
+	if err := sv.repo.UpdateScrapStock(ctx, id, fields); err != nil {
+		return nil, err
+	}
+	return sv.GetScrapStockByID(ctx, id)
+}
+
+func (sv *service) DeleteScrapStock(ctx context.Context, id int64, deletedBy string) error {
+	if _, err := sv.repo.GetScrapStockByID(ctx, id); err != nil {
+		return err
+	}
+	_, deleterName, err := creatorresolver.Resolve(ctx, sv.db, deletedBy)
+	if err != nil {
+		return err
+	}
+	var deleter string
+	if deleterName != nil {
+		deleter = *deleterName
+	}
+	return sv.repo.DeleteScrapStock(ctx, id, deleter)
 }
 
 // ---------------------------------------------------------------------------

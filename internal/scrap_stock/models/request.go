@@ -21,6 +21,19 @@ type CreateScrapStockRequest struct {
 	Remarks        *string  `json:"remarks"`
 }
 
+type UpdateScrapStockRequest struct {
+	PackingNumber  *string  `json:"packing_number"`
+	ScrapType      *string  `json:"scrap_type"`
+	DisposalReason *string  `json:"disposal_reason"`
+	Quantity       *float64 `json:"quantity" validate:"omitempty,gt=0"`
+	UOM            *string  `json:"uom"`
+	WeightKg       *float64 `json:"weight_kg"`
+	DateReceived   *string  `json:"date_received"` // YYYY-MM-DD
+	Validator      *string  `json:"validator"`
+	Remarks        *string  `json:"remarks"`
+	Status         *string  `json:"status"` // Active | Inactive
+}
+
 // ---------------------------------------------------------------------------
 // Incoming Scrap (Action UI) request
 // ---------------------------------------------------------------------------

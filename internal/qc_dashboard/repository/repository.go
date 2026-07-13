@@ -609,6 +609,7 @@ func (r *repository) CreateManualQCReport(ctx context.Context, req models.Create
 		if issueText == "" {
 			issueText = strings.TrimSpace(req.IssueReasonCode)
 		}
+		var sourceDefectID *int64
 		if req.NumberOfDefect > 0 || req.NumberOfScrap > 0 || issueText != "" {
 			defectItem := map[string]interface{}{
 				"qc_log_id":          qcLogID,
@@ -629,6 +630,21 @@ func (r *repository) CreateManualQCReport(ctx context.Context, req models.Create
 			if err := tx.Table("qc_defect_items").Create(&defectItem).Error; err != nil {
 				return apperror.Internal("create manual qc defect item: " + err.Error())
 			}
+
+			// Tangkap id defect item agar scrap bisa ditelusuri balik ke penyebab QC.
+			defectItemID := asInt64(defectItem["id"])
+			if defectItemID == 0 {
+				var row struct {
+					ID int64 `gorm:"column:id"`
+				}
+				if err := tx.Raw("SELECT currval(pg_get_serial_sequence('qc_defect_items','id')) AS id").Scan(&row).Error; err != nil {
+					return apperror.Internal("create manual qc defect item: missing inserted id")
+				}
+				defectItemID = row.ID
+			}
+			if defectItemID > 0 {
+				sourceDefectID = &defectItemID
+			}
 		}
 
 		if qcType == "production" && req.NumberOfScrap > 0 {
@@ -646,6 +662,7 @@ func (r *repository) CreateManualQCReport(ctx context.Context, req models.Create
 				CreatedBy:     stringPtrOrNil(performedBy),
 				UpdatedBy:     stringPtrOrNil(performedBy),
 				SourceQCLogID: &qcLogID,
+				SourceDefectID: sourceDefectID,
 			}
 			if err := tx.Create(&scrapStock).Error; err != nil {
 				return apperror.Internal("create manual qc scrap stock: " + err.Error())
@@ -679,6 +696,7 @@ func (r *repository) CreateManualQCReport(ctx context.Context, req models.Create
 					CreatedBy:     stringPtrOrNil(performedBy),
 					UpdatedBy:     stringPtrOrNil(performedBy),
 					SourceQCLogID: &qcLogID,
+					SourceDefectID: sourceDefectID,
 				}
 				if err := tx.Create(&scrapStock).Error; err != nil {
 					return apperror.Internal("create product return scrap stock: " + err.Error())
