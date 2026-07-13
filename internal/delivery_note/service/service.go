@@ -188,8 +188,38 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 
 			kanban, err := s.repo.GetKanbanByItemCode(ctx, it.ItemUniqCode)
 			if err != nil {
-				return fmt.Errorf("Uniq tersebut belum terdaftar pada kanban.")
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					// Buat Kanban baru
+					totalKanban, err := s.repo.CountKanban(ctx)
+					if err != nil {
+						return err
+					}
+
+					totalPO := totalKanban + 1
+					formatted := fmt.Sprintf("%04d", totalPO)
+					kanbanNumber := fmt.Sprintf("KBN-%d-%s", time.Now().Year(), formatted)
+
+					data := models.KanbanParameter{
+						KanbanNumber: kanbanNumber,
+						ItemUniqCode: it.ItemUniqCode,
+						KanbanQty:    0, // isi default
+						MinStock:     0,
+						MaxStock:     int(it.Qty), // sesuaikan dengan qty DN
+						Status:       "ACTIVE",    // sesuaikan
+					}
+
+					if err := s.repo.CreateKanban(ctx, &data); err != nil {
+						return err
+					}
+
+					kanban = &data
+				} else {
+					return err
+				}
 			}
+
+			// lanjut proses
+			fmt.Println(kanban.KanbanNumber)
 
 			date, err := time.Parse("02/01/2006", it.IncomingDate)
 			if err != nil {

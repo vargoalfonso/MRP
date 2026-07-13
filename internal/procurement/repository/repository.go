@@ -293,7 +293,7 @@ func (r *repo) GetPOMaterialGrade(ctx context.Context, poID int64) (string, erro
 		Table("purchase_order_items AS poi").
 		Select("ims.material_grade").
 		Joins("INNER JOIN items AS i ON i.uniq_code = poi.item_uniq_code").
-		Joins("INNER JOIN items_material_specs AS ims ON ims.item_revision_id = i.id").
+		Joins("INNER JOIN item_material_specs AS ims ON ims.item_revision_id = i.id").
 		Where("poi.po_id = ?", poID).
 		Order("poi.line_no ASC").
 		Limit(1).

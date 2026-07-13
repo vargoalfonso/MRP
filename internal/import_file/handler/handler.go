@@ -12,15 +12,18 @@ import (
 	registerService "github.com/ganasa18/go-template/internal/auth/service"
 	"github.com/ganasa18/go-template/internal/base/app"
 	importService "github.com/ganasa18/go-template/internal/import_file/service"
+	woService "github.com/ganasa18/go-template/internal/work_order/service"
+	userPkg "github.com/ganasa18/go-template/pkg/auth"
 )
 
 type HTTPHandler struct {
 	service importService.ImportService
 	auth    registerService.Authenticator
+	woSvc   woService.IService
 }
 
-func New(service importService.ImportService, auth registerService.Authenticator) *HTTPHandler {
-	return &HTTPHandler{service: service, auth: auth}
+func New(service importService.ImportService, auth registerService.Authenticator, woSvc woService.IService) *HTTPHandler {
+	return &HTTPHandler{service: service, auth: auth, woSvc: woSvc}
 }
 
 func (h *HTTPHandler) DownloadTemplate(appCtx *app.Context) *app.CostumeResponse {
@@ -40,6 +43,10 @@ func (h *HTTPHandler) DownloadTemplate(appCtx *app.Context) *app.CostumeResponse
 	case "kanban":
 		file, err = h.service.GenerateTemplateKanban(appCtx.Request.Context())
 		filename = "template_import_kanban.xlsx"
+
+	case "wo":
+		file, err = h.service.GenerateTemplateWO(appCtx.Request.Context())
+		filename = "template_import_wo.xlsx"
 
 	default:
 		return &app.CostumeResponse{
@@ -159,6 +166,33 @@ func (h *HTTPHandler) BulkImport(appCtx *app.Context) *app.CostumeResponse {
 
 		success = result.Success
 		failed = result.Failed
+
+	case "wo":
+		requests, err := h.service.ParsingWO(appCtx.Request.Context(), filePath)
+		if err != nil {
+			os.Remove(filePath)
+			return &app.CostumeResponse{
+				Status:  http.StatusBadRequest,
+				Message: "gagal parsing excel",
+				Data:    err.Error(),
+			}
+		}
+
+		totalData = len(requests)
+		createdBy := "system"
+		userCtx := userPkg.MustExtractUserContext(appCtx)
+		if userCtx != nil {
+			createdBy = userCtx.UserID
+		}
+
+		for _, req := range requests {
+			_, err = h.woSvc.Create(appCtx.Request.Context(), req, createdBy)
+			if err != nil {
+				failed++
+				continue
+			}
+			success++
+		}
 
 	default:
 		os.Remove(filePath)

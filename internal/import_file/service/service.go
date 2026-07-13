@@ -9,6 +9,7 @@ import (
 
 	"github.com/ganasa18/go-template/internal/import_file/models"
 	"github.com/ganasa18/go-template/internal/import_file/repository"
+	woModels "github.com/ganasa18/go-template/internal/work_order/models"
 	"github.com/google/uuid"
 	"github.com/xuri/excelize/v2"
 )
@@ -16,9 +17,11 @@ import (
 type ImportService interface {
 	GenerateTemplatePrls(ctx context.Context) (*bytes.Buffer, error)
 	GenerateTemplateKanban(ctx context.Context) (*bytes.Buffer, error)
+	GenerateTemplateWO(ctx context.Context) (*bytes.Buffer, error)
 
 	ParsingPRL(ctx context.Context, filePath string) ([]models.ImportDataRequest, error)
 	ParsingKanban(ctx context.Context, filePath string) ([]models.CreateKanbanParameterRequest, error)
+	ParsingWO(ctx context.Context, filePath string) ([]woModels.CreateWorkOrderRequest, error)
 
 	BulkInsertPRL(ctx context.Context, data []models.ImportDataRequest, filePath string) (*models.BulkInsertResponse, error)
 	BulkInsertKanban(ctx context.Context, data []models.CreateKanbanParameterRequest, filePath string) (*models.BulkInsertResponse, error)
