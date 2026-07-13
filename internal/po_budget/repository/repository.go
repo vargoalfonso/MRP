@@ -82,6 +82,13 @@ type IRepository interface {
 	SumAllocatedQty(ctx context.Context, prlRowID int64, budgetType string) (float64, error)
 	// SumAllocatedQtyBatch returns allocated totals for a slice of prl_row_ids in one query.
 	SumAllocatedQtyBatch(ctx context.Context, prlRowIDs []int64, budgetType string) (map[int64]float64, error)
+
+	// ResolveTypeMaterialByUniq returns item_material_specs.type_material keyed by
+	// uniq_code (lowercased). Used to classify each item/child into
+	// raw / indirect / subcon at bulk-create time. Missing entries (no spec /
+	// NULL type_material) are simply absent from the map and treated as subcon
+	// by the caller.
+	ResolveTypeMaterialByUniq(ctx context.Context, uniqCodes []string) (map[string]string, error)
 }
 
 type repo struct{ db *gorm.DB }
@@ -688,6 +695,46 @@ func (r *repo) SumAllocatedQtyBatch(ctx context.Context, prlRowIDs []int64, budg
 	out := make(map[int64]float64, len(rows))
 	for _, r := range rows {
 		out[r.PrlRowID] = r.Total
+	}
+	return out, nil
+}
+
+// ResolveTypeMaterialByUniq returns a map[lower(uniq_code)]type_material for the
+// requested uniq_codes. It reads item_material_specs.type_material through the
+// item's revisions, preferring the most recent revision that actually carries a
+// non-empty type_material. Codes without any spec (or with only NULL/empty
+// type_material) are omitted from the result.
+func (r *repo) ResolveTypeMaterialByUniq(ctx context.Context, uniqCodes []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(uniqCodes) == 0 {
+		return out, nil
+	}
+
+	type row struct {
+		UniqCode     string
+		TypeMaterial string
+	}
+	var rows []row
+	// DISTINCT ON picks one spec per item, ordering by revision recency so the
+	// latest non-empty type_material wins for each uniq_code.
+	err := r.db.WithContext(ctx).
+		Table("items AS i").
+		Select(`DISTINCT ON (i.uniq_code)
+			i.uniq_code,
+			NULLIF(TRIM(COALESCE(ims.type_material, '')), '') AS type_material`).
+		Joins("JOIN item_revisions ir ON ir.item_id = i.id").
+		Joins("JOIN item_material_specs ims ON ims.item_revision_id = ir.id").
+		Where("i.deleted_at IS NULL AND i.uniq_code IN ? AND NULLIF(TRIM(COALESCE(ims.type_material, '')), '') IS NOT NULL", uniqCodes).
+		Order("i.uniq_code, ir.id DESC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, rw := range rows {
+		if rw.TypeMaterial == "" {
+			continue
+		}
+		out[strings.ToLower(strings.TrimSpace(rw.UniqCode))] = strings.ToLower(strings.TrimSpace(rw.TypeMaterial))
 	}
 	return out, nil
 }
