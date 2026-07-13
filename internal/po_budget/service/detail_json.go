@@ -71,8 +71,12 @@ func buildBulkEntryDetailJSON(
 			"quantity":              itemQty,
 			"existing_raw_material": strings.TrimSpace(valueOrEmpty(item.ExistingRawMaterial)),
 			"uom":                   strings.TrimSpace(valueOrEmpty(item.Uom)),
-			"material_spec":         item.MaterialSpec,
-			"suppliers":             suppliers,
+			// budget_type records the type this child was classified into so the
+			// entry's detail is self-describing (all children in one entry share
+			// the entry's budget_type — items are grouped by type before this).
+			"budget_type":   budgetType,
+			"material_spec": item.MaterialSpec,
+			"suppliers":     suppliers,
 		}
 	}
 

@@ -21,6 +21,32 @@ func shouldAttachPRLChildren(budgetType string) bool {
 	}
 }
 
+// Budget type constants used when classifying items/children by their
+// item_material_specs.type_material at bulk-create time.
+const (
+	budgetTypeRawMaterial = "raw_material"
+	budgetTypeIndirect    = "indirect"
+	budgetTypeSubcon      = "subcon"
+)
+
+// budgetTypeFromMaterial maps a raw item_material_specs.type_material value
+// (raw | indirect | subcon | "") to a po_budget_entries.budget_type.
+//
+// Rules (confirmed with product):
+//   - "raw"           -> raw_material
+//   - "indirect"      -> indirect
+//   - "subcon" / ""   -> subcon  (default when spec/type_material is missing)
+func budgetTypeFromMaterial(typeMaterial string) string {
+	switch strings.TrimSpace(strings.ToLower(typeMaterial)) {
+	case "raw", "raw_material":
+		return budgetTypeRawMaterial
+	case "indirect":
+		return budgetTypeIndirect
+	default:
+		return budgetTypeSubcon
+	}
+}
+
 func parsePRLChildRefs(raw []byte) ([]prlChildReference, error) {
 	trimmed := strings.TrimSpace(string(raw))
 	if trimmed == "" || trimmed == "null" {

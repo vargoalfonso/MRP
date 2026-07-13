@@ -32,6 +32,7 @@ type IRepository interface {
 
 	// Supplier lookup (legacy)
 	GetLegacySupplier(ctx context.Context, supplierID int64) (*models.LegacySupplier, error)
+	GetLegacySupplierByName(ctx context.Context, name string) (*models.LegacySupplier, error)
 	ListLegacySuppliersByIDs(ctx context.Context, supplierIDs []int64) ([]models.LegacySupplier, error)
 	ListLegacySuppliersForBudget(ctx context.Context, budgetType, period string) ([]models.LegacySupplier, error)
 
@@ -381,6 +382,23 @@ func (r *repo) GetLegacySupplier(ctx context.Context, supplierID int64) (*models
 	var s models.LegacySupplier
 	if err := r.db.WithContext(ctx).First(&s, "id = ?", supplierID).Error; err != nil {
 		return nil, fmt.Errorf("GetLegacySupplier %d: %w", supplierID, err)
+	}
+	return &s, nil
+}
+
+// GetLegacySupplierByName resolves a legacy supplier row by (case-insensitive,
+// trimmed) name. Used to map a name-only supplier from a budget entry's
+// detail_jsonb back to a real supplier_id when generating POs.
+func (r *repo) GetLegacySupplierByName(ctx context.Context, name string) (*models.LegacySupplier, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("GetLegacySupplierByName: empty name")
+	}
+	var s models.LegacySupplier
+	if err := r.db.WithContext(ctx).
+		Where("LOWER(TRIM(supplier_name)) = LOWER(TRIM(?))", name).
+		First(&s).Error; err != nil {
+		return nil, fmt.Errorf("GetLegacySupplierByName %q: %w", name, err)
 	}
 	return &s, nil
 }

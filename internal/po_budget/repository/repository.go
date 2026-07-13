@@ -82,6 +82,13 @@ type IRepository interface {
 	SumAllocatedQty(ctx context.Context, prlRowID int64, budgetType string) (float64, error)
 	// SumAllocatedQtyBatch returns allocated totals for a slice of prl_row_ids in one query.
 	SumAllocatedQtyBatch(ctx context.Context, prlRowIDs []int64, budgetType string) (map[int64]float64, error)
+
+	// ResolveTypeMaterialByUniq returns item_material_specs.type_material keyed by
+	// uniq_code (lowercased). Used to classify each item/child into
+	// raw / indirect / subcon at bulk-create time. Missing entries (no spec /
+	// NULL type_material) are simply absent from the map and treated as subcon
+	// by the caller.
+	ResolveTypeMaterialByUniq(ctx context.Context, uniqCodes []string) (map[string]string, error)
 }
 
 type repo struct{ db *gorm.DB }
@@ -689,6 +696,89 @@ func (r *repo) SumAllocatedQtyBatch(ctx context.Context, prlRowIDs []int64, budg
 	for _, r := range rows {
 		out[r.PrlRowID] = r.Total
 	}
+	return out, nil
+}
+
+// ResolveTypeMaterialByUniq returns a map[lower(uniq_code)]type_material for the
+// requested uniq_codes. It reads item_material_specs.type_material off each
+// item's CURRENT BOM revision — i.e. the item_revision referenced by
+// bom_item.is_current = true (the same "current" pointer used everywhere else
+// in this module, e.g. ListCurrentBomChildrenByParentUniq). This matters
+// because an item can carry several Draft/Released revisions whose
+// type_material disagree (e.g. v1-v3 = subcon, v4 = raw): only the revision
+// the rest of the system treats as "current" should decide the type, not
+// merely the highest revision id.
+//
+// Falls back to the item's latest revision (by id) when no bom_item row is
+// marked current for it (e.g. leaf raw-material items with no BOM header of
+// their own). Codes without any resolvable type_material are omitted from the
+// result, and the caller defaults those to subcon.
+func (r *repo) ResolveTypeMaterialByUniq(ctx context.Context, uniqCodes []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(uniqCodes) == 0 {
+		return out, nil
+	}
+
+	type row struct {
+		UniqCode     string
+		TypeMaterial string
+	}
+
+	// Preferred path: item_revision pinned by bom_item.is_current = true.
+	var currentRows []row
+	err := r.db.WithContext(ctx).
+		Table("items AS i").
+		Select(`
+			i.uniq_code,
+			NULLIF(TRIM(COALESCE(ims.type_material, '')), '') AS type_material`).
+		Joins("JOIN bom_item bi ON bi.item_id = i.id AND bi.is_current = true").
+		Joins("JOIN item_material_specs ims ON ims.item_revision_id = bi.root_item_revision_id").
+		Where("i.deleted_at IS NULL AND i.uniq_code IN ?", uniqCodes).
+		Scan(&currentRows).Error
+	if err != nil {
+		return nil, err
+	}
+	resolved := make(map[string]bool, len(currentRows))
+	for _, rw := range currentRows {
+		key := strings.ToLower(strings.TrimSpace(rw.UniqCode))
+		resolved[key] = true
+		if rw.TypeMaterial == "" {
+			continue
+		}
+		out[key] = strings.ToLower(strings.TrimSpace(rw.TypeMaterial))
+	}
+
+	// Fallback for codes with no bom_item.is_current row at all (e.g. leaf
+	// items that are never a BOM root themselves): use their latest revision.
+	remaining := make([]string, 0, len(uniqCodes))
+	for _, code := range uniqCodes {
+		if !resolved[strings.ToLower(strings.TrimSpace(code))] {
+			remaining = append(remaining, code)
+		}
+	}
+	if len(remaining) > 0 {
+		var latestRows []row
+		err := r.db.WithContext(ctx).
+			Table("items AS i").
+			Select(`DISTINCT ON (i.uniq_code)
+				i.uniq_code,
+				NULLIF(TRIM(COALESCE(ims.type_material, '')), '') AS type_material`).
+			Joins("JOIN item_revisions ir ON ir.item_id = i.id").
+			Joins("JOIN item_material_specs ims ON ims.item_revision_id = ir.id").
+			Where("i.deleted_at IS NULL AND i.uniq_code IN ? AND NULLIF(TRIM(COALESCE(ims.type_material, '')), '') IS NOT NULL", remaining).
+			Order("i.uniq_code, ir.id DESC").
+			Scan(&latestRows).Error
+		if err != nil {
+			return nil, err
+		}
+		for _, rw := range latestRows {
+			if rw.TypeMaterial == "" {
+				continue
+			}
+			out[strings.ToLower(strings.TrimSpace(rw.UniqCode))] = strings.ToLower(strings.TrimSpace(rw.TypeMaterial))
+		}
+	}
+
 	return out, nil
 }
 

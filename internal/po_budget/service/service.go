@@ -1076,25 +1076,45 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 
 	subtype := req.BudgetSubtype
 
-	// Group items by their underlying PRL (a single BulkFromPRLRequest can, in
-	// principle, mix items from several PRLs when the FE lets a user pick
-	// multiple PRLs). Each PRL group collapses into exactly one
-	// po_budget_entries row, with every UNIQ item + supplier allocation for
-	// that PRL merged into detail_jsonb.children[].
+	// Resolve the budget_type for every item from item_material_specs.type_material.
+	// The URL :type is intentionally ignored — the type is derived from the data
+	// so a single PRL submit can produce multiple entries of different types
+	// (raw_material / indirect / subcon) that share the same prl_ref but differ
+	// in budget_type. Prefer the BOM child uniq_code (child_uniq_code), falling
+	// back to the item's own uniq_code.
+	typeLookupCodes := make([]string, 0, len(req.Items))
+	for _, item := range req.Items {
+		typeLookupCodes = append(typeLookupCodes, itemTypeUniqCode(item))
+	}
+	typeMap, err := s.repo.ResolveTypeMaterialByUniq(ctx, typeLookupCodes)
+	if err != nil {
+		return nil, apperror.InternalWrap("resolve type_material failed", err)
+	}
+	resolveItemBudgetType := func(item models.BulkItemInput) string {
+		code := strings.ToLower(strings.TrimSpace(itemTypeUniqCode(item)))
+		return budgetTypeFromMaterial(typeMap[code])
+	}
+
+	// Group items by (prl_id, resolved budget_type). raw_material and indirect
+	// items collapse into one entry per (prl, type) — the parents[] tree is kept
+	// but filtered to only the items of that type. subcon items are NOT grouped:
+	// each subcon item becomes its own entry, so we give every subcon item a
+	// unique group key.
 	type prlGroup struct {
-		prlRef string
-		row    models.PRLRow
-		items  []models.BulkItemInput
+		prlRef     string
+		budgetType string
+		row        models.PRLRow
+		items      []models.BulkItemInput
 	}
 	groupOrder := make([]string, 0, len(req.Items))
 	groups := make(map[string]*prlGroup, len(req.Items))
 
-	for _, item := range req.Items {
+	for idx, item := range req.Items {
 		r := rowMap[item.PrlItemID]
 
 		// Validate: sum of new supplier quantities for this item against its
 		// own PRL-row ceiling (unchanged from before — validation stays
-		// per-item even though rows are now grouped per-PRL).
+		// strictly per-item regardless of how rows are grouped afterwards).
 		var newTotal float64
 		for _, sup := range item.Suppliers {
 			newTotal += sup.Quantity
@@ -1113,20 +1133,32 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 			continue
 		}
 
-		g, ok := groups[r.PrlID]
+		itemType := resolveItemBudgetType(item)
+
+		// Group key: raw/indirect share a key per (prl, type); subcon is split
+		// per item by appending the item index so it never collapses.
+		key := r.PrlID + "|" + itemType
+		if itemType == budgetTypeSubcon {
+			key = fmt.Sprintf("%s|%s|%d", r.PrlID, itemType, idx)
+		}
+
+		g, ok := groups[key]
 		if !ok {
-			g = &prlGroup{prlRef: r.PrlID, row: r}
-			groups[r.PrlID] = g
-			groupOrder = append(groupOrder, r.PrlID)
+			g = &prlGroup{prlRef: r.PrlID, budgetType: itemType, row: r}
+			groups[key] = g
+			groupOrder = append(groupOrder, key)
 		}
 		g.items = append(g.items, item)
 	}
 
-	for _, prlRef := range groupOrder {
-		g := groups[prlRef]
+	for _, key := range groupOrder {
+		g := groups[key]
 		if len(g.items) == 0 {
 			continue
 		}
+
+		entryBudgetType := g.budgetType
+		attachChildren := shouldAttachPRLChildren(entryBudgetType)
 
 		head := g.items[0]
 		r := g.row
@@ -1136,26 +1168,27 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 			uniqCode = head.UniqCode
 		}
 		productModel := r.ProductModel
-		if shouldAttachPRLChildren(budgetType) && head.ProductModel != nil {
+		if attachChildren && head.ProductModel != nil {
 			productModel = head.ProductModel
 		} else if productModel == nil {
 			productModel = head.ProductModel
 		}
 		partName := r.PartName
-		if shouldAttachPRLChildren(budgetType) && head.PartName != nil {
+		if attachChildren && head.PartName != nil {
 			partName = head.PartName
 		} else if partName == nil {
 			partName = head.PartName
 		}
 		partNumber := r.PartNumber
-		if shouldAttachPRLChildren(budgetType) && head.PartNumber != nil {
+		if attachChildren && head.PartNumber != nil {
 			partNumber = head.PartNumber
 		} else if partNumber == nil {
 			partNumber = head.PartNumber
 		}
 
-		// Resolve PO split once per PRL group (falls back to po_split_settings).
-		po1Pct, po2Pct, err := s.resolveSplit(ctx, budgetType, head.Po1Pct, head.Po2Pct)
+		// Resolve PO split once per group (falls back to po_split_settings for
+		// this group's own budget_type).
+		po1Pct, po2Pct, err := s.resolveSplit(ctx, entryBudgetType, head.Po1Pct, head.Po2Pct)
 		if err != nil {
 			return nil, err
 		}
@@ -1193,13 +1226,13 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 
 		cb := createdBy
 		prlRowID := head.PrlItemID
-		detailJSON, detailErr := buildBulkEntryDetailJSON(budgetType, r, rowMap, g.items)
+		detailJSON, detailErr := buildBulkEntryDetailJSON(entryBudgetType, r, rowMap, g.items)
 		if detailErr != nil {
 			return nil, apperror.InternalWrap("build bulk detail_jsonb failed", detailErr)
 		}
 
 		entries = append(entries, models.POBudgetEntry{
-			BudgetType:      budgetType,
+			BudgetType:      entryBudgetType,
 			CustomerID:      nil,
 			CustomerName:    r.CustomerName,
 			UniqCode:        uniqCode,
@@ -1232,11 +1265,21 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 		if err := s.repo.BulkCreateEntries(ctx, entries); err != nil {
 			return nil, apperror.InternalWrap("database error", err)
 		}
-		// Create one approval instance per entry (MinLevels=1).
+		// Create one approval instance per entry (MinLevels=1) plus a per-entry
+		// history trail. History notes carry the entry's budget_type so the
+		// audit log reflects each item's resolved type (raw_material / indirect /
+		// subcon), not the URL :type.
 		for _, e := range entries {
 			if e.ID == 0 {
 				return nil, apperror.Internal("bulk create po budget returned empty entry id")
 			}
+
+			cb := createdBy
+			createdNote := fmt.Sprintf("Bulk from PRL — %s", e.BudgetType)
+			submittedNote := fmt.Sprintf("Submitted for approval — %s", e.BudgetType)
+			_ = s.repo.CreateLog(ctx, &models.POBudgetEntryLog{EntryID: e.ID, Action: "Created", Username: &cb, Notes: &createdNote})
+			_ = s.repo.CreateLog(ctx, &models.POBudgetEntryLog{EntryID: e.ID, Action: "Submitted", Username: &cb, Notes: &submittedNote})
+
 			if _, err := approval.CreateInstance(ctx, s.db, approval.CreateInstanceParams{
 				ActionName:     "po-budget",
 				ReferenceTable: "po_budget_entries",
@@ -1251,6 +1294,19 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 
 	result.Created = len(entries)
 	return result, nil
+}
+
+// itemTypeUniqCode returns the uniq_code used to classify an item's
+// type_material. For raw/indirect the BOM child (child_uniq_code) determines the
+// type; for plain subcon items only the parent uniq_code is present. We prefer
+// child_uniq_code and fall back to uniq_code.
+func itemTypeUniqCode(item models.BulkItemInput) string {
+	if item.ChildUniqCode != nil {
+		if code := strings.TrimSpace(*item.ChildUniqCode); code != "" {
+			return code
+		}
+	}
+	return strings.TrimSpace(item.UniqCode)
 }
 
 func toPrlResponse(p models.PrlForecast) models.PrlForecastResponse {
