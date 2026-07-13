@@ -56,15 +56,15 @@ func (s *importService) ParsingPRL(ctx context.Context, filePath string) ([]mode
 		row := rows[i]
 
 		item := models.ImportDataRequest{
-			CustomerName:   helper.SafeGet(row, 1), // skip kolom "no"
-			UniqCode:       helper.SafeGet(row, 2),
-			ProductModel:   helper.SafeGet(row, 3),
-			PartName:       helper.SafeGet(row, 4),
-			PartNumber:     helper.SafeGet(row, 5),
-			ForecastPeriod: helper.SafeGet(row, 6),
+			CustomerName:   helper.SafeGet(row, 0),
+			UniqCode:       helper.SafeGet(row, 1),
+			ProductModel:   helper.SafeGet(row, 2),
+			PartName:       helper.SafeGet(row, 3),
+			PartNumber:     helper.SafeGet(row, 4),
+			ForecastPeriod: helper.SafeGet(row, 5),
 		}
 
-		qtyStr := helper.SafeGet(row, 7)
+		qtyStr := helper.SafeGet(row, 6)
 
 		qty, err := strconv.ParseFloat(cleanNumber(qtyStr), 64)
 		if err != nil {
