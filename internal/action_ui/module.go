@@ -100,6 +100,19 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	qcGroup.POST("/approve", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.QCApprove))
 	qcGroup.POST("/reject", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.QCReject))
 	qcGroup.POST("/finish", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.QCFinish))
+
+	// ================================
+	// QC RETURN (Product Return)
+	// ================================
+	// POST /api/v1/action-ui/qc-return/scan
+	// POST /api/v1/action-ui/qc-return/submit-to-qc
+	// GET  /api/v1/action-ui/qc-return/pending-tasks
+	// POST /api/v1/action-ui/qc-return/submit-validation
+	qcReturn := g.Group("/qc-return")
+	qcReturn.POST("/scan", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.ScanReturn))
+	qcReturn.POST("/submit-to-qc", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.SubmitReturnToQC))
+	qcReturn.GET("/pending-tasks", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.PendingReturnTasks))
+	qcReturn.POST("/submit-validation", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.SubmitReturnValidation))
 }
 
 

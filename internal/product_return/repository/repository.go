@@ -44,11 +44,18 @@ func (r *repository) Create(ctx context.Context, req models.CreateProductReturnR
 type ProductReturn struct {
 	ID             uint      `gorm:"column:id" json:"id"`
 	Uniq           string    `gorm:"column:uniq" json:"uniq"`
+	DNNumber       string    `gorm:"column:dn_number" json:"dn_number"`
 	QuantityScrap  int       `gorm:"column:quantity_scrap" json:"quantity_scrap"`
 	QuantityRework int       `gorm:"column:quantity_rework" json:"quantity_rework"`
 	Status         string    `gorm:"column:status" json:"status"`
 	CreatedAt      time.Time `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt      time.Time `gorm:"column:updated_at" json:"updated_at"`
+
+	// BRD fields (kolom hasil migration 0078) — ikut ter-select via pr.*
+	Weight       float64    `gorm:"column:weight" json:"weight"`
+	UOM          string     `gorm:"column:uom" json:"uom"`
+	DateReceived *time.Time `gorm:"column:date_received" json:"date_received"`
+	ScrapType    string     `gorm:"column:scrap_type" json:"scrap_type"`
 
 	// Hasil JOIN
 	PackingNumber string `gorm:"column:packing_number" json:"packing_number"`

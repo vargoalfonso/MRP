@@ -55,6 +55,14 @@ type IService interface {
 	ScanMachine(ctx context.Context, req dto.ScanMachineRequest) (*dto.ScanMachineResponse, error)
 
 	ScanOutContext(ctx context.Context, woNumber string) (*dto.ScanOutContextResponse, error)
+
+	// =============================
+	// Product Return (BRD)
+	// =============================
+	ScanReturn(ctx context.Context, req models.ScanReturnRequest) (*models.ScanReturnResponse, error)
+	SubmitReturnToQC(ctx context.Context, req models.SubmitReturnToQCRequest, submittedBy string) (*models.ProductReturnRow, error)
+	PendingReturnTasks(ctx context.Context) ([]models.PendingReturnTask, error)
+	SubmitReturnValidation(ctx context.Context, req models.SubmitReturnValidationRequest, validatedBy string) error
 }
 
 type service struct {
@@ -2165,6 +2173,322 @@ func deref(p *string) string {
 		return ""
 	}
 	return strings.TrimSpace(*p)
+}
+
+// =============================
+// Product Return (BRD)
+// =============================
+
+// ScanReturn resolves an item from a scanned kanban / packing list and returns
+// the auto-fill payload for the Product Return form.
+func (s *service) ScanReturn(ctx context.Context, req models.ScanReturnRequest) (*models.ScanReturnResponse, error) {
+	code := strings.TrimSpace(req.QRCodeValue)
+	if code == "" {
+		return nil, errors.New("qr_code_value is required")
+	}
+
+	resp := &models.ScanReturnResponse{ScrapType: "Product Return"}
+
+	// 1) Resolve packing/kanban -> item uniq code (reuse the incoming lookup).
+	uniqCode := code
+	if item, err := s.repo.LookupByPackingNumber(ctx, code, ""); err == nil && item != nil {
+		if item.ItemUniqCode != "" {
+			uniqCode = item.ItemUniqCode
+		}
+		if item.PackingNumber != nil && *item.PackingNumber != "" {
+			resp.PackingNumber = *item.PackingNumber
+		}
+		if item.UOM != nil && *item.UOM != "" {
+			resp.SelectedUnit = *item.UOM
+		}
+	}
+
+	resp.Uniq = uniqCode
+	resp.UniqID = uniqCode
+	if resp.PackingNumber == "" {
+		resp.PackingNumber = code
+	}
+
+	// 2) Enrich with master item info (part number / name / model).
+	var itemRow struct {
+		PartNumber string `gorm:"column:part_number"`
+		PartName   string `gorm:"column:part_name"`
+		Model      string `gorm:"column:model"`
+	}
+	if err := s.db.WithContext(ctx).
+		Table("items").
+		Select("part_number, part_name, model").
+		Where("uniq_code = ?", uniqCode).
+		Limit(1).
+		Scan(&itemRow).Error; err == nil {
+		resp.PartNumber = itemRow.PartNumber
+		resp.PartName = itemRow.PartName
+		resp.Model = itemRow.Model
+	}
+
+	return resp, nil
+}
+
+// SubmitReturnToQC creates a PENDING product_returns row so the item is queued
+// for QC validation. Scrap is NOT written here — only after QC validation.
+func (s *service) SubmitReturnToQC(ctx context.Context, req models.SubmitReturnToQCRequest, submittedBy string) (*models.ProductReturnRow, error) {
+	_ = submittedBy // reserved for audit once created_by exists
+
+	uniq := strings.TrimSpace(req.Uniq)
+	if uniq == "" {
+		return nil, errors.New("uniq is required")
+	}
+
+	// DN fallback: dn_number -> packing_number -> kanban/packing list -> "-".
+	dnNumber := strings.TrimSpace(req.DNNumber)
+	if dnNumber == "" {
+		if p := strings.TrimSpace(req.PackingNumber); p != "" {
+			dnNumber = p
+		} else if k := strings.TrimSpace(req.KanbanPackingList); k != "" {
+			dnNumber = k
+		} else {
+			dnNumber = "-"
+		}
+	}
+
+	scrapType := strings.TrimSpace(req.ScrapType)
+	if scrapType == "" {
+		scrapType = "Product Return"
+	}
+
+	row := models.ProductReturnRow{
+		Uniq:           uniq,
+		DNNumber:       dnNumber,
+		QuantityScrap:  req.QuantityScrap,
+		QuantityRework: req.QuantityRework,
+		ScrapType:      scrapType,
+		Status:         "PENDING",
+	}
+	if req.Weight != nil {
+		row.Weight = *req.Weight
+	}
+	if u := strings.TrimSpace(req.UnitMeasurement); u != "" {
+		row.Uom = u
+	}
+	if d := parseReturnDate(req.DateReceived); d != nil {
+		row.DateReceived = d
+	}
+
+	if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// parseReturnDate parses common date formats coming from the UI.
+func parseReturnDate(raw string) *time.Time {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return nil
+	}
+	for _, layout := range []string{"2006-01-02", time.RFC3339, "2006-01-02T15:04:05"} {
+		if t, err := time.Parse(layout, v); err == nil {
+			return &t
+		}
+	}
+	return nil
+}
+
+// PendingReturnTasks lists product returns awaiting QC validation.
+func (s *service) PendingReturnTasks(ctx context.Context) ([]models.PendingReturnTask, error) {
+	var rows []struct {
+		ID           uint
+		Uniq         string
+		DNNumber     string
+		QuantityScrap int
+		Weight       float64
+		Uom          string
+		ScrapType    string
+		PartNumber   string
+		PartName     string
+		Model        string
+	}
+
+	err := s.db.WithContext(ctx).
+		Table("product_returns AS pr").
+		Select(`pr.id AS id, pr.uniq AS uniq, pr.dn_number AS dn_number,
+			pr.quantity_scrap AS quantity_scrap, pr.weight AS weight, pr.uom AS uom,
+			pr.scrap_type AS scrap_type,
+			COALESCE(i.part_number, '') AS part_number,
+			COALESCE(i.part_name, '') AS part_name,
+			COALESCE(i.model, '') AS model`).
+		Joins("LEFT JOIN items AS i ON i.uniq_code = pr.uniq").
+		Where("pr.status = ?", "PENDING").
+		Order("pr.id DESC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	tasks := make([]models.PendingReturnTask, 0, len(rows))
+	for _, r := range rows {
+		tasks = append(tasks, models.PendingReturnTask{
+			ReturnID:          strconv.FormatUint(uint64(r.ID), 10),
+			KanbanPackingList: r.DNNumber,
+			PackingNumber:     r.DNNumber,
+			Uniq:              r.Uniq,
+			UniqID:            r.Uniq,
+			PartNumber:        r.PartNumber,
+			PartName:          r.PartName,
+			Model:             r.Model,
+			QuantityScrap:     r.QuantityScrap,
+			Weight:            r.Weight,
+			UnitMeasurement:   r.Uom,
+			ScrapType:         r.ScrapType,
+		})
+	}
+	return tasks, nil
+}
+
+// Rule (confirmed vs BRD):
+//   - PASS      -> status APPROVED. Scrap is written ONLY when quantity_scrap > 0.
+//   - NOT_PASS  -> status REJECTED. No scrap written.
+func (s *service) SubmitReturnValidation(ctx context.Context, req models.SubmitReturnValidationRequest, validatedBy string) error {
+	returnID := strings.TrimSpace(req.ReturnID)
+	if returnID == "" {
+		return errors.New("return_id is required")
+	}
+
+	id, err := strconv.ParseUint(returnID, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid return_id: %w", err)
+	}
+
+	newStatus := "APPROVED"
+	action := strings.ToUpper(strings.TrimSpace(req.Action))
+	status := strings.ToLower(strings.TrimSpace(req.Status))
+	if action == "NOT_PASS" || status == "rejected" {
+		newStatus = "REJECTED"
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1) Load the product return row.
+		var pr models.ProductReturnRow
+		if err := tx.First(&pr, uint(id)).Error; err != nil {
+			return err
+		}
+
+		// 2) Update its status.
+		if err := tx.Model(&pr).Update("status", newStatus).Error; err != nil {
+			return err
+		}
+
+		// 3) Scrap DB update ONLY when validated PASS and there is scrap qty.
+		if newStatus == "APPROVED" && pr.QuantityScrap > 0 {
+			// Lookup part info dari tabel items berdasarkan uniq_code
+			// (product_returns tidak menyimpan part_number/part_name/model).
+			var item struct {
+				PartNumber string `gorm:"column:part_number"`
+				PartName   string `gorm:"column:part_name"`
+				Model      string `gorm:"column:model"`
+			}
+			_ = tx.Table("items").
+				Select("part_number, part_name, model").
+				Where("uniq_code = ?", pr.Uniq).
+				Take(&item).Error // abaikan error: kalau item tidak ada, field dibiarkan kosong
+
+			scrap := scrapModels.ScrapStock{
+				UUID:      uuid.New(),
+				UniqCode:  pr.Uniq,
+				ScrapType: scrapModels.ScrapTypeProductReturn,
+				Quantity:  float64(pr.QuantityScrap),
+				Status:    scrapModels.StockStatusActive,
+			}
+
+			// Part info hasil lookup
+			if strings.TrimSpace(item.PartNumber) != "" {
+				pn := item.PartNumber
+				scrap.PartNumber = &pn
+			}
+			if strings.TrimSpace(item.PartName) != "" {
+				pnm := item.PartName
+				scrap.PartName = &pnm
+			}
+			if strings.TrimSpace(item.Model) != "" {
+				md := item.Model
+				scrap.Model = &md
+			}
+			// Packing number: pakai dn_number yang tersimpan saat submit-to-qc
+			if strings.TrimSpace(pr.DNNumber) != "" && pr.DNNumber != "-" {
+				pkg := pr.DNNumber
+				scrap.PackingNumber = &pkg
+			}
+
+			if strings.TrimSpace(pr.Uom) != "" {
+				uom := pr.Uom
+				scrap.UOM = &uom
+			}
+			if pr.Weight > 0 {
+				w := pr.Weight
+				scrap.WeightKg = &w
+			}
+			if pr.DateReceived != nil {
+				scrap.DateReceived = pr.DateReceived
+			}
+			if strings.TrimSpace(validatedBy) != "" {
+				v := validatedBy
+				scrap.Validator = &v
+				scrap.CreatedBy = &v
+			}
+
+				// Cek apakah sudah ada scrap AKTIF dgn uniq_code + tipe yang sama.
+			addQty := float64(pr.QuantityScrap)
+
+			var scrapID int64
+			var beforeQty float64
+
+			var existing scrapModels.ScrapStock
+			findErr := tx.Where(
+				"uniq_code = ? AND scrap_type = ? AND status = ?",
+				pr.Uniq, scrapModels.ScrapTypeProductReturn, scrapModels.StockStatusActive,
+			).First(&existing).Error
+
+			switch {
+			case findErr == nil:
+				// uniq sudah ada -> akumulasikan quantity
+				scrapID = existing.ID
+				beforeQty = existing.Quantity
+				if err := tx.Model(&scrapModels.ScrapStock{}).
+					Where("id = ?", existing.ID).
+					Update("quantity", existing.Quantity+addQty).Error; err != nil {
+					return err
+				}
+			case errors.Is(findErr, gorm.ErrRecordNotFound):
+				// belum ada -> buat baris baru
+				if err := tx.Create(&scrap).Error; err != nil {
+					return err
+				}
+				scrapID = scrap.ID // di-populate GORM setelah Create
+				beforeQty = 0
+			default:
+				return findErr
+			}
+
+			// Tulis history log ke inventory_movement_logs supaya muncul di
+			// endpoint history-logs (difilter: movement_category='scrap' & entity_id=scrapID).
+			var refNo *string
+			if strings.TrimSpace(pr.DNNumber) != "" && pr.DNNumber != "-" {
+				dn := pr.DNNumber
+				refNo = &dn
+			}
+			if err := s.createInventoryMovementLog(
+				tx, "scrap", "incoming",
+				pr.Uniq, &scrapID,
+				beforeQty, addQty, beforeQty+addQty,
+				refNo, stringPtr("PRODUCT_RETURN"),
+				stringPtr("Incoming scrap from Product Return QC approval"),
+				stringPtr(validatedBy),
+			); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrderItem) ([]dto.ScanOutContextRawMaterial, error) {
