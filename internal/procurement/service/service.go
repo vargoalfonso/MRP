@@ -430,12 +430,37 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 		children     []splitChild           // per-child split rows
 	}
 
-	groupByID := map[int64]*supplierGroup{}
-	ensureGroup := func(id int64, name string) *supplierGroup {
-		g, ok := groupByID[id]
+	// Group STRICTLY by supplier identity so each generated PO carries exactly
+	// ONE supplier (while still allowing many uniq per PO). We key by the legacy
+	// supplier_id when it is known (> 0); otherwise we fall back to the
+	// normalized supplier name so two different name-only suppliers are NOT
+	// merged into a single PO (the previous int64-keyed map collapsed every
+	// null-id supplier into one PO with supplier_id=0).
+	groupByKey := map[string]*supplierGroup{}
+	ensureGroup := func(id *int64, name string) *supplierGroup {
+		var legacyID int64
+		if id != nil && *id > 0 {
+			legacyID = *id
+		}
+		name = strings.TrimSpace(name)
+
+		var key string
+		switch {
+		case legacyID > 0:
+			key = fmt.Sprintf("id:%d", legacyID)
+		case name != "":
+			key = "name:" + strings.ToLower(name)
+		default:
+			key = "unknown"
+		}
+
+		g, ok := groupByKey[key]
 		if !ok {
-			g = &supplierGroup{legacyID: id, supplierName: name}
-			groupByID[id] = g
+			g = &supplierGroup{legacyID: legacyID, supplierName: name}
+			groupByKey[key] = g
+		}
+		if g.legacyID == 0 && legacyID > 0 {
+			g.legacyID = legacyID
 		}
 		if g.supplierName == "" && name != "" {
 			g.supplierName = name
@@ -447,27 +472,33 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 		children := extractSplitChildren(e)
 		if len(children) > 0 {
 			for _, c := range children {
-				var id int64
-				if c.supplierID != nil {
-					id = *c.supplierID
-				}
-				g := ensureGroup(id, c.supplierName)
+				g := ensureGroup(c.supplierID, c.supplierName)
 				g.children = append(g.children, c)
 			}
 			continue
 		}
 
 		// Fallback: entry-level grouping + flat po1_qty/po2_qty split.
-		var id int64
-		if e.SupplierID != nil {
-			id = *e.SupplierID
-		}
 		name := ""
 		if e.SupplierName != nil {
 			name = *e.SupplierName
 		}
-		g := ensureGroup(id, name)
+		g := ensureGroup(e.SupplierID, name)
 		g.entries = append(g.entries, e)
+	}
+
+	// Resolve name-only supplier groups (legacy supplier_id still unknown) back
+	// to a real supplier_id by matching the supplier name, so the generated PO
+	// stores a proper supplier_id and the PO board can display the supplier name.
+	for _, grp := range groupByKey {
+		if grp.legacyID == 0 && grp.supplierName != "" {
+			if sup, serr := s.repo.GetLegacySupplierByName(ctx, grp.supplierName); serr == nil && sup != nil {
+				grp.legacyID = sup.SupplierID
+				if grp.supplierName == "" {
+					grp.supplierName = sup.SupplierName
+				}
+			}
+		}
 	}
 
 	// ── Determine which stages to generate ───────────────────────────────
@@ -482,7 +513,7 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 	// ── Generate PO for each supplier × stage ────────────────────────────
 	var result models.GeneratePOResponse
 
-	for _, grp := range groupByID {
+	for _, grp := range groupByKey {
 		// Budget-level stats (same for PO1 and PO2). Fallback entries contribute
 		// their entry stats; child-split rows contribute their child budget.
 		stats := computeGroupStats(grp.entries)
