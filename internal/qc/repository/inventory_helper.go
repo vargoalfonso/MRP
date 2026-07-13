@@ -62,6 +62,51 @@ func lookupPOItem(tx *gorm.DB, itemUniqCode string) (partNumber, partName, mater
 	return
 }
 
+func ensureItemMaster(tx *gorm.DB, itemUniqCode string, uom *string) error {
+	var count int64
+	if err := tx.Table("items").
+		Where("uniq_code = ?", itemUniqCode).
+		Count(&count).Error; err != nil {
+		return fmt.Errorf("cek item master: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	// Best-effort ambil detail dari PO item
+	poPartNumber, poPartName, poMaterialType := lookupPOItem(tx, itemUniqCode)
+
+	partName := itemUniqCode
+	if poPartName != nil && strings.TrimSpace(*poPartName) != "" {
+		partName = strings.TrimSpace(*poPartName)
+	}
+	materialType := "raw_material"
+	if poMaterialType != nil && strings.TrimSpace(*poMaterialType) != "" {
+		materialType = strings.TrimSpace(*poMaterialType)
+	}
+	itemUOM := "PCS"
+	if uom != nil && strings.TrimSpace(*uom) != "" {
+		itemUOM = strings.TrimSpace(*uom)
+	}
+
+	newItem := map[string]interface{}{
+		"uuid":          uuid.New().String(),
+		"uniq_code":     itemUniqCode,
+		"part_number":   poPartNumber, // boleh nil
+		"part_name":     partName,
+		"material_type": materialType,
+		"sourcing_type": "Buy", // wajib salah satu dari: Make / Buy / Make-or-Buy
+		"uom":           itemUOM,
+		"status":        "Active", // wajib salah satu dari: Active / Inactive / Obsolete
+		"created_at":    time.Now(),
+		"updated_at":    time.Now(),
+	}
+	if err := tx.Table("items").Create(&newItem).Error; err != nil {
+		return fmt.Errorf("auto-create item master %s: %w", itemUniqCode, err)
+	}
+	return nil
+}
+
 func generateQRBase64(value string) (string, error) {
 	// generate PNG QR (256x256)
 	png, err := qrcode.Encode(value, qrcode.Medium, 256)
@@ -141,11 +186,27 @@ func (r *repo) upsertRawMaterial(
 			Where("uniq_code = ?", itemUniqCode).
 			First(&item).Error; err != nil {
 
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("item master dengan uniq_code %s tidak ditemukan", itemUniqCode)
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("query item master: %w", err)
 			}
 
-			return fmt.Errorf("query item master: %w", err)
+			if err := ensureItemMaster(tx, itemUniqCode, uom); err != nil {
+				return err
+			}
+			if err := tx.
+				Table("items").
+				Select(`
+					id,
+					uniq_code,
+					part_number,
+					part_name,
+					material_type,
+					uom
+				`).
+				Where("uniq_code = ?", itemUniqCode).
+				First(&item).Error; err != nil {
+				return fmt.Errorf("reload item master setelah auto-create: %w", err)
+			}
 		}
 
 		now := time.Now()
@@ -289,11 +350,27 @@ func (r *repo) upsertIndirectRawMaterial(
 			Where("uniq_code = ?", itemUniqCode).
 			First(&item).Error; err != nil {
 
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return fmt.Errorf("item master dengan uniq_code %s tidak ditemukan", itemUniqCode)
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("query item master: %w", err)
 			}
 
-			return fmt.Errorf("query item master: %w", err)
+			// Item master belum ada -> buat otomatis, lalu muat ulang.
+			if err := ensureItemMaster(tx, itemUniqCode, uom); err != nil {
+				return err
+			}
+			if err := tx.
+				Table("items").
+				Select(`
+					id,
+					uniq_code,
+					part_number,
+					part_name,
+					uom
+				`).
+				Where("uniq_code = ?", itemUniqCode).
+				First(&item).Error; err != nil {
+				return fmt.Errorf("reload item master setelah auto-create: %w", err)
+			}
 		}
 
 		now := time.Now()

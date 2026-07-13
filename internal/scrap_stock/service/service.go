@@ -30,6 +30,7 @@ type IService interface {
 	GetScrapStockByID(ctx context.Context, id int64) (*scrapModels.ScrapStockItem, error)
 	CreateScrapStock(ctx context.Context, req scrapModels.CreateScrapStockRequest, createdBy string) (*scrapModels.ScrapStockItem, error)
 	ListPackingNumbersByUniq(ctx context.Context, uniq string) ([]string, error)
+	ListItemOptions(ctx context.Context, q string, limit int) (*scrapModels.ScrapItemOptionsResponse, error)
 	UpdateScrapStock(ctx context.Context, id int64, req scrapModels.UpdateScrapStockRequest, updatedBy string) (*scrapModels.ScrapStockItem, error)
 	DeleteScrapStock(ctx context.Context, id int64, deletedBy string) error
 	// Incoming Scrap (Action UI scan flow)
@@ -190,10 +191,35 @@ func (sv *service) ListPackingNumbersByUniq(ctx context.Context, uniq string) ([
 	if err != nil {
 		return nil, err
 	}
-	if packings == nil {
-		packings = []string{}
-	}
 	return packings, nil
+}
+
+func (sv *service) ListItemOptions(ctx context.Context, q string, limit int) (*scrapModels.ScrapItemOptionsResponse, error) {
+	q = strings.TrimSpace(q)
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	rows, err := sv.repo.ListItemOptions(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]scrapModels.ScrapItemOption, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, scrapModels.ScrapItemOption{
+			UniqCode:     r.UniqCode,
+			PartNumber:   r.PartNumber,
+			PartName:     r.PartName,
+			Model:        r.Model,
+			UOM:          r.UOM,
+			MaterialType: r.MaterialType,
+		})
+	}
+	return &scrapModels.ScrapItemOptionsResponse{Items: out}, nil
 }
 
 func (sv *service) CreateScrapStock(ctx context.Context, req scrapModels.CreateScrapStockRequest, createdBy string) (*scrapModels.ScrapStockItem, error) {

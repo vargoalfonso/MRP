@@ -101,10 +101,35 @@ func (r *repo) CreateIncomingScan(ctx context.Context, req models.IncomingScanRe
 			return fmt.Errorf("lock dn item: %w", err)
 		}
 
-		// Validate delta_qty does not exceed remaining qty
-		remaining := dnItem.OrderQty - dnItem.QtyReceived
+		var totalReturned float64
+		tx.Table("qc_logs").
+			Where("dn_item_id = ? AND UPPER(status) = ?", dnItem.ID, "REJECTED").
+			Select("COALESCE(SUM(qty_checked), 0)").Scan(&totalReturned)
+
+		remaining := dnItem.Quantity - (dnItem.QtyReceived - int(totalReturned))
 		if req.DeltaQty > remaining {
-			return apperror.UnprocessableEntity(fmt.Sprintf("delta_qty %d exceeds remaining qty %d (ordered %d, received %d)", req.DeltaQty, remaining, dnItem.OrderQty, dnItem.QtyReceived))
+			return apperror.UnprocessableEntity(fmt.Sprintf("delta_qty %d exceeds remaining qty %d (package qty %d, received %d, returned %d)", req.DeltaQty, remaining, dnItem.Quantity, dnItem.QtyReceived, int(totalReturned)))
+		}
+
+		var totalPoReceived float64
+		if err := tx.Table("delivery_note_items idi").
+			Joins("JOIN delivery_notes dn ON dn.id = idi.dn_id").
+			Where("dn.po_number = (SELECT po_number FROM delivery_notes WHERE id = ?) AND idi.item_uniq_code = ?", dnItem.IncomingDNID, dnItem.ItemUniqCode).
+			Select("COALESCE(SUM(idi.qty_received), 0)").
+			Scan(&totalPoReceived).Error; err != nil {
+			return fmt.Errorf("calculate total po received: %w", err)
+		}
+
+		var poReturned float64
+		tx.Table("qc_logs ql").
+			Joins("JOIN delivery_note_items idi ON idi.id = ql.dn_item_id").
+			Joins("JOIN delivery_notes dn ON dn.id = idi.dn_id").
+			Where("dn.po_number = (SELECT po_number FROM delivery_notes WHERE id = ?) AND idi.item_uniq_code = ? AND UPPER(ql.status) = ?", dnItem.IncomingDNID, dnItem.ItemUniqCode, "REJECTED").
+			Select("COALESCE(SUM(ql.qty_checked), 0)").Scan(&poReturned)
+
+		effectivePoReceived := totalPoReceived - poReturned
+		if float64(req.DeltaQty)+effectivePoReceived > float64(dnItem.OrderQty) {
+			return apperror.UnprocessableEntity(fmt.Sprintf("Jumlah yang diterima (%.0f) akan melebihi TOTAL PO (%d) untuk item %s", float64(req.DeltaQty)+effectivePoReceived, dnItem.OrderQty, dnItem.ItemUniqCode))
 		}
 
 		// Insert receiving scan (append-only)
@@ -156,13 +181,17 @@ func (r *repo) CreateIncomingScan(ctx context.Context, req models.IncomingScanRe
 		dnItemResp, err := r.buildIncomingScanDNItem(ctx, tx, dnItem)
 		if err != nil {
 			pn := req.PackingNumber
+			orderedQty := dnItem.OrderQty
+			if orderedQty <= 0 {
+				orderedQty = dnItem.Quantity
+			}
 			dnItemResp = &models.IncomingScanDNItem{
 				ID:             dnItem.ID,
 				ItemUniqCode:   dnItem.ItemUniqCode,
 				PackingNumber:  &pn,
-				QtyOrdered:     dnItem.Quantity,
+				QtyOrdered:     orderedQty,
 				QtyReceived:    dnItem.QtyReceived,
-				QtyRemaining:   dnItem.Quantity - dnItem.QtyReceived,
+				QtyRemaining:   orderedQty - dnItem.QtyReceived,
 				WeightKg:       dnItem.Weight,
 				WeightReceived: dnItem.WeightReceived,
 				QualityStatus:  dnItem.QualityStatus,
@@ -223,13 +252,21 @@ func (r *repo) getOrCreateIncomingQCTaskTx(ctx context.Context, tx *gorm.DB, dnI
 
 // buildIncomingScanDNItem constructs IncomingScanDNItem with PO, supplier, and DN type context.
 func (r *repo) buildIncomingScanDNItem(ctx context.Context, tx *gorm.DB, dnItem procModels.IncomingDNItem) (*models.IncomingScanDNItem, error) {
+	// Qty acuan penerimaan diambil dari order_qty (nilai "Total PO" di DN Management).
+	// Kolom quantity bisa 0 / tidak terisi pada sebagian DN, sehingga tidak boleh
+	// dipakai sebagai basis sisa penerimaan. Fallback ke quantity kalau order_qty kosong.
+	orderedQty := dnItem.OrderQty
+	if orderedQty <= 0 {
+		orderedQty = dnItem.Quantity
+	}
+
 	resp := &models.IncomingScanDNItem{
 		ID:             dnItem.ID,
 		ItemUniqCode:   dnItem.ItemUniqCode,
 		PackingNumber:  dnItem.PackingNumber,
-		QtyOrdered:     dnItem.Quantity,
+		QtyOrdered:     orderedQty,
 		QtyReceived:    dnItem.QtyReceived,
-		QtyRemaining:   dnItem.Quantity - dnItem.QtyReceived,
+		QtyRemaining:   orderedQty - dnItem.QtyReceived,
 		WeightKg:       dnItem.Weight,
 		WeightReceived: dnItem.WeightReceived,
 		QualityStatus:  dnItem.QualityStatus,

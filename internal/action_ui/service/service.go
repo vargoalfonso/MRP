@@ -2201,6 +2201,27 @@ func (s *service) ScanReturn(ctx context.Context, req models.ScanReturnRequest) 
 		if item.UOM != nil && *item.UOM != "" {
 			resp.SelectedUnit = *item.UOM
 		}
+	} else {
+		var dnItem struct {
+			ItemUniqCode  string `gorm:"column:item_uniq_code"`
+			PackingNumber string `gorm:"column:packing_number"`
+			UOM           string `gorm:"column:uom"`
+		}
+		if err := s.db.WithContext(ctx).
+			Table("delivery_note_items_customer").
+			Select("item_uniq_code, packing_number, uom").
+			Where("packing_number = ?", code).
+			First(&dnItem).Error; err == nil {
+			if dnItem.ItemUniqCode != "" {
+				uniqCode = dnItem.ItemUniqCode
+			}
+			if dnItem.PackingNumber != "" {
+				resp.PackingNumber = dnItem.PackingNumber
+			}
+			if dnItem.UOM != "" {
+				resp.SelectedUnit = dnItem.UOM
+			}
+		}
 	}
 
 	resp.Uniq = uniqCode
@@ -2254,6 +2275,56 @@ func (s *service) SubmitReturnToQC(ctx context.Context, req models.SubmitReturnT
 	scrapType := strings.TrimSpace(req.ScrapType)
 	if scrapType == "" {
 		scrapType = "Product Return"
+	}
+
+	if dnNumber != "-" {
+		var maxQty float64
+		var found bool
+
+		var outItem struct {
+			Quantity float64 `gorm:"column:quantity"`
+		}
+		if err := s.db.WithContext(ctx).Table("delivery_note_items_customer").
+			Select("quantity").
+			Where("packing_number = ? AND item_uniq_code = ?", dnNumber, uniq).
+			First(&outItem).Error; err == nil {
+			maxQty = outItem.Quantity
+			found = true
+		}
+
+		if !found {
+			var total struct {
+				Total float64
+			}
+			if err := s.db.WithContext(ctx).Table("delivery_note_items_customer").
+				Select("SUM(quantity) as total").
+				Joins("JOIN delivery_notes_customer dn ON dn.id = delivery_note_items_customer.dn_id").
+				Where("dn.dn_number = ? AND item_uniq_code = ?", dnNumber, uniq).
+				Scan(&total).Error; err == nil && total.Total > 0 {
+				maxQty = total.Total
+				found = true
+			}
+		}
+
+		if !found {
+			var inItem struct {
+				Quantity float64 `gorm:"column:quantity"`
+			}
+			if err := s.db.WithContext(ctx).Table("delivery_note_items").
+				Select("quantity").
+				Where("packing_number = ? AND item_uniq_code = ?", dnNumber, uniq).
+				First(&inItem).Error; err == nil {
+				maxQty = inItem.Quantity
+				found = true
+			}
+		}
+
+		if found {
+			totalInput := float64(req.QuantityScrap + req.QuantityRework)
+			if totalInput > maxQty {
+				return nil, apperror.BadRequest(fmt.Sprintf("Kuantitas yang diinput (%v) tidak boleh melebihi kuantitas dari DN (%v)", totalInput, maxQty))
+			}
+		}
 	}
 
 	row := models.ProductReturnRow{

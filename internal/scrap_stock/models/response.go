@@ -59,6 +59,26 @@ type ScrapStockListResponse struct {
 }
 
 // ---------------------------------------------------------------------------
+// Create form: source-agnostic UNIQ item options
+// ---------------------------------------------------------------------------
+
+// ScrapItemOption is one autocomplete row for the scrap create form.
+// Source is the shared items table, so it covers FG / RM / Indirect / subcon.
+type ScrapItemOption struct {
+	UniqCode     string  `json:"uniq_code"`
+	PartNumber   *string `json:"part_number"`
+	PartName     *string `json:"part_name"`
+	Model        *string `json:"model"`
+	UOM          *string `json:"uom"`
+	MaterialType *string `json:"material_type"`
+}
+
+// ScrapItemOptionsResponse is returned by GET /scrap-stocks/item-options.
+type ScrapItemOptionsResponse struct {
+	Items []ScrapItemOption `json:"items"`
+}
+
+// ---------------------------------------------------------------------------
 // Scrap Release responses
 // ---------------------------------------------------------------------------
 

@@ -53,8 +53,10 @@ type IRepository interface {
 	UpdateScrapStock(ctx context.Context, id int64, fields map[string]interface{}) error
 	DeleteScrapStock(ctx context.Context, id int64, deletedBy string) error
 	AddScrapQty(ctx context.Context, id int64, delta float64, updatedBy string) error
-	// Packing options untuk create form (sumber: scan produksi / wip_items)
+	// Packing options untuk create form (sumber: scan produksi / wip_items + delivery_note_items)
 	ListPackingNumbersByUniq(ctx context.Context, uniq string) ([]string, error)
+	// UNIQ item options untuk create form (sumber: items — FG/RM/Indirect/subcon)
+	ListItemOptions(ctx context.Context, q string, limit int) ([]ItemOption, error)
 
 	// Scrap Release
 	ListScrapReleases(ctx context.Context, f ScrapReleaseFilter) ([]scrapModels.ScrapRelease, int64, error)
@@ -166,10 +168,155 @@ func (r *repository) CreateScrapStock(ctx context.Context, s *scrapModels.ScrapS
 	if s.Status == "" {
 		s.Status = scrapModels.StockStatusActive
 	}
-	if err := r.db.WithContext(ctx).Create(s).Error; err != nil {
-		return apperror.Internal("create scrap stock: " + err.Error())
+
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Potong stok dari inventory asli
+		if err := deductInventoryForScrap(tx, s); err != nil {
+			return err
+		}
+
+		// 2. Simpan record scrap stock
+		if err := tx.Create(s).Error; err != nil {
+			return apperror.Internal("create scrap stock: " + err.Error())
+		}
+		return nil
+	})
+}
+
+func deductInventoryForScrap(tx *gorm.DB, s *scrapModels.ScrapStock) error {
+	var packing string
+	if s.PackingNumber != nil {
+		packing = *s.PackingNumber
+	}
+
+	switch s.ScrapType {
+	case "Product Return Scrap":
+		return deductProductReturn(tx, s)
+	case "Setting Machine Scrap":
+		return deductTable(tx, "raw_materials", "quantity", "uniq_code", s.UniqCode, packing, s.Quantity)
+	case "Process Scrap":
+		// Auto detect
+		err := deductTable(tx, "wip_items", "stock", "uniq", s.UniqCode, packing, s.Quantity)
+		if err == nil {
+			return nil
+		}
+		err = deductTable(tx, "raw_materials", "quantity", "uniq_code", s.UniqCode, packing, s.Quantity)
+		if err == nil {
+			return nil
+		}
+		err = deductTable(tx, "finished_goods", "quantity", "uniq_code", s.UniqCode, packing, s.Quantity)
+		if err == nil {
+			return nil
+		}
+		return apperror.UnprocessableEntity("Stok tidak mencukupi atau barang tidak ditemukan di WIP/RM/FG")
+	default:
+		// Fallback: mencoba cari di raw_materials
+		_ = deductTable(tx, "raw_materials", "quantity", "uniq_code", s.UniqCode, packing, s.Quantity)
+		return nil
+	}
+}
+
+func deductProductReturn(tx *gorm.DB, s *scrapModels.ScrapStock) error {
+	type PRRow struct {
+		ID             int64
+		QuantityScrap  float64
+		QuantityRework float64
+	}
+	var rows []PRRow
+	q := tx.Table("product_returns").Where("uniq = ? AND (quantity_scrap > 0 OR quantity_rework > 0)", s.UniqCode)
+	if s.PackingNumber != nil {
+		q = q.Where("dn_number = ?", *s.PackingNumber)
+	}
+	if err := q.Order("created_at ASC").Scan(&rows).Error; err != nil {
+		return err
+	}
+
+	remaining := s.Quantity
+	for _, row := range rows {
+		if remaining <= 0 {
+			break
+		}
+
+		// Potong quantity_scrap dulu
+		if row.QuantityScrap > 0 {
+			deductScrap := remaining
+			if row.QuantityScrap < deductScrap {
+				deductScrap = row.QuantityScrap
+			}
+			if err := tx.Table("product_returns").Where("id = ?", row.ID).UpdateColumn("quantity_scrap", gorm.Expr("quantity_scrap - ?", deductScrap)).Error; err != nil {
+				return err
+			}
+			remaining -= deductScrap
+		}
+
+		// Jika masih kurang, potong dari quantity_rework
+		if remaining > 0 && row.QuantityRework > 0 {
+			deductRework := remaining
+			if row.QuantityRework < deductRework {
+				deductRework = row.QuantityRework
+			}
+			if err := tx.Table("product_returns").Where("id = ?", row.ID).UpdateColumn("quantity_rework", gorm.Expr("quantity_rework - ?", deductRework)).Error; err != nil {
+				return err
+			}
+			remaining -= deductRework
+		}
+	}
+
+	if remaining > 0 {
+		return apperror.UnprocessableEntity(fmt.Sprintf("Stok di Product Return tidak mencukupi. Kurang %v", remaining))
 	}
 	return nil
+}
+
+func deductTable(tx *gorm.DB, tableName, qtyColumn, uniqColumn, uniq, packing string, qty float64) error {
+	type StockRow struct {
+		ID  int64
+		Qty float64 `gorm:"column:qty_val"`
+	}
+	var rows []StockRow
+	q := tx.Table(tableName).
+		Select(fmt.Sprintf("id, %s AS qty_val", qtyColumn)).
+		Where(fmt.Sprintf("%s AND %s = ? AND %s > 0", getDeletedCondition(tableName), uniqColumn, qtyColumn), uniq)
+	if packing != "" {
+		if tableName == "wip_items" {
+			q = q.Where("packing_number = ?", packing)
+		} else {
+			q = q.Where("packing_number = ?", packing)
+		}
+	}
+
+	if err := q.Order("created_at ASC").Scan(&rows).Error; err != nil {
+		return err
+	}
+
+	remaining := qty
+	for _, row := range rows {
+		if remaining <= 0 {
+			break
+		}
+		deduct := remaining
+		if row.Qty < deduct {
+			deduct = row.Qty
+		}
+
+		res := tx.Table(tableName).Where("id = ?", row.ID).UpdateColumn(qtyColumn, gorm.Expr(fmt.Sprintf("%s - ?", qtyColumn), deduct))
+		if res.Error != nil {
+			return res.Error
+		}
+		remaining -= deduct
+	}
+
+	if remaining > 0 {
+		return fmt.Errorf("stok %s tidak mencukupi (kurang %v)", tableName, remaining)
+	}
+	return nil
+}
+
+func getDeletedCondition(tableName string) string {
+	if tableName == "wip_items" || tableName == "product_returns" {
+		return "1=1"
+	}
+	return "deleted_at IS NULL"
 }
 
 func (r *repository) UpdateScrapStock(ctx context.Context, id int64, fields map[string]interface{}) error {
@@ -228,20 +375,94 @@ func (r *repository) AddScrapQty(ctx context.Context, id int64, delta float64, u
 }
 
 func (r *repository) ListPackingNumbersByUniq(ctx context.Context, uniq string) ([]string, error) {
+	// Sumber packing: scan produksi (wip_items) untuk finished goods,
+	// digabung dengan scan Packing List / DN (delivery_note_items) untuk
+	// raw material / indirect / incoming lainnya.
 	var packings []string
-	err := r.db.WithContext(ctx).
-		Table("wip_items").
-		Distinct().
-		Where(
-			"uniq = ? AND COALESCE(packing_number, '') <> '' AND wip_type = ? AND status = ?",
-			uniq, "production", "done",
-		).
-		Order("packing_number ASC").
-		Pluck("packing_number", &packings).Error
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT DISTINCT packing_number FROM (
+			SELECT packing_number
+			FROM wip_items
+			WHERE uniq = ?
+			  AND COALESCE(packing_number, '') <> ''
+			  AND wip_type = 'production'
+			  AND status = 'done'
+			UNION
+			SELECT packing_number
+			FROM delivery_note_items
+			WHERE item_uniq_code = ?
+			  AND COALESCE(packing_number, '') <> ''
+			UNION
+			SELECT dn_number AS packing_number
+			FROM product_returns
+			WHERE uniq = ?
+			  AND COALESCE(dn_number, '') <> ''
+			  AND (quantity_scrap > 0 OR quantity_rework > 0)
+		) t
+		ORDER BY packing_number ASC
+	`, uniq, uniq, uniq).Pluck("packing_number", &packings).Error
 	if err != nil {
 		return nil, apperror.Internal("list packing numbers by uniq: " + err.Error())
 	}
 	return packings, nil
+}
+
+// ItemOption is one row for the source-agnostic UNIQ autocomplete on the
+// scrap create form. Source is the shared items table.
+type ItemOption struct {
+	UniqCode     string  `gorm:"column:uniq_code"`
+	PartNumber   *string `gorm:"column:part_number"`
+	PartName     *string `gorm:"column:part_name"`
+	Model        *string `gorm:"column:model"`
+	UOM          *string `gorm:"column:uom"`
+	MaterialType *string `gorm:"column:material_type"`
+}
+
+func (r *repository) ListItemOptions(ctx context.Context, q string, limit int) ([]ItemOption, error) {
+	// Scrap bisa berasal dari semua sumber inventory, jadi UNIQ dikumpulkan dari
+	// semua tabel stok (finished_goods / raw_materials / indirect / subcon), plus
+	// master items. Item yang tidak punya baris di items tetap muncul di sini.
+	// DISTINCT ON + prioritas sumber memilih detail part terbaik per uniq_code.
+	rows := make([]ItemOption, 0, limit)
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			uniq_code,
+			MAX(part_number) AS part_number,
+			MAX(part_name) AS part_name,
+			MAX(model) AS model,
+			MAX(uom) AS uom,
+			material_type
+		FROM (
+			SELECT uniq_code, part_number, part_name, model, uom, material_type
+			  FROM items                  WHERE deleted_at IS NULL
+			UNION ALL
+			SELECT uniq_code, part_number, part_name, model, uom, 'Finished Good'::text
+			  FROM finished_goods         WHERE deleted_at IS NULL
+			UNION ALL
+			SELECT uniq_code, part_number, part_name, NULL::text, uom, raw_material_type
+			  FROM raw_materials          WHERE deleted_at IS NULL
+			UNION ALL
+			SELECT uniq_code, part_number, part_name, NULL::text, uom, 'Indirect Material'::text
+			  FROM indirect_raw_materials WHERE deleted_at IS NULL
+			UNION ALL
+			SELECT uniq_code, part_number, part_name, NULL::text, NULL::text, 'Subcon'::text
+			  FROM subcon_inventories     WHERE deleted_at IS NULL
+			UNION ALL
+			SELECT uniq, NULL::text, NULL::text, NULL::text, NULL::text, 'Product Return'::text
+			  FROM product_returns
+		) t
+		WHERE ($1 = ''
+			OR uniq_code                 ILIKE '%' || $1 || '%'
+			OR COALESCE(part_name, '')   ILIKE '%' || $1 || '%'
+			OR COALESCE(part_number, '') ILIKE '%' || $1 || '%')
+		GROUP BY uniq_code, material_type
+		ORDER BY uniq_code
+		LIMIT $2
+	`, q, limit).Scan(&rows).Error
+	if err != nil {
+		return nil, apperror.Internal("list scrap item options: " + err.Error())
+	}
+	return rows, nil
 }
 
 // ---------------------------------------------------------------------------

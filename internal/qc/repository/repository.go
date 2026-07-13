@@ -245,6 +245,31 @@ func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefect
 		}
 
 		qtyScrap := sumDefectScrap(defects)
+		qtyDefect := sumDefectDefect(defects)
+		if len(defects) == 0 && numberOfDefects > 0 {
+			qtyDefect = float64(numberOfDefects)
+		}
+
+		if numberOfDefects > 0 {
+			_, poNumberApprove, err := loadDNTypeAndPONumber(tx, dnItem.IncomingDNID)
+			if err != nil {
+				return err
+			}
+			productReturn := map[string]interface{}{
+				"uniq":            dnItem.ItemUniqCode,
+				"dn_number":       poNumberApprove,
+				"quantity_scrap":  int(qtyScrap),
+				"quantity_rework": int(qtyDefect),
+				"status":          "pending",
+				"created_at":      time.Now(),
+				"updated_at":      time.Now(),
+			}
+
+			if err := tx.Table("product_returns").Create(productReturn).Error; err != nil {
+				return fmt.Errorf("create product_return: %w", err)
+			}
+		}
+
 		qcLogID, err := insertIncomingQCLog(tx, task, dnItem, checkedAt, performedBy, roundQty, approvedQty, numberOfDefects, qtyScrap, "APPROVED", defects)
 		if err != nil {
 			return err
@@ -333,12 +358,15 @@ func (r *repo) RejectIncoming(ctx context.Context, taskID int64, numberOfDefects
 
 		qtyScrap := sumDefectScrap(defects)
 		qtyDefect := sumDefectDefect(defects)
+		if len(defects) == 0 && numberOfDefects > 0 {
+			qtyDefect = float64(numberOfDefects)
+		}
 
 		productReturn := map[string]interface{}{
 			"uniq":            dnItem.ItemUniqCode,
 			"dn_number":       poNumber,
-			"quantity_scrap":  qtyScrap,
-			"quantity_rework": qtyDefect,
+			"quantity_scrap":  int(qtyScrap),
+			"quantity_rework": int(qtyDefect),
 			"status":          "pending",
 			"created_at":      time.Now(),
 			"updated_at":      time.Now(),

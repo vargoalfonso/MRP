@@ -140,6 +140,30 @@ func (h *HTTPHandler) ListPackingOptions(ctx *app.Context) *app.CostumeResponse 
 	}
 }
 
+// ListItemOptions returns source-agnostic UNIQ options (FG/RM/Indirect/subcon)
+// for the scrap create form.
+//
+//	GET /api/v1/scrap-stocks/item-options?q=TST&limit=20
+func (h *HTTPHandler) ListItemOptions(ctx *app.Context) *app.CostumeResponse {
+	q := ctx.Query("q")
+	limit := 20
+	if v := ctx.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	data, err := h.svc.ListItemOptions(ctx.Request.Context(), q, limit)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
 // CreateScrapStock creates a new scrap stock record (manual entry).
 //
 //	POST /api/v1/scrap-stocks
