@@ -163,20 +163,39 @@ func (s *service) CreateBulk(ctx context.Context, req woModels.CreateBulkWorkOrd
 	}
 
 	documentType := strings.ToUpper(strings.TrimSpace(req.SourceDocumentType))
-	if documentType != "SO" && documentType != "PO" && documentType != "DN" {
-		return nil, apperror.BadRequest("source_document_type must be one of SO, PO, DN")
+	if documentType != "SO" && documentType != "PO" && documentType != "DN" && documentType != "PRL" {
+		return nil, apperror.BadRequest("source_document_type must be one of SO, PO, DN, PRL")
 	}
+	isPRL := documentType == "PRL"
 
-	header, err := s.repo.GetBulkSourceDocument(ctx, strings.TrimSpace(req.SourceDocumentID))
-	if err != nil {
-		return nil, err
-	}
-	if documentType != header.DocumentType {
-		return nil, apperror.BadRequest("source_document_type does not match source document")
-	}
-	sourceRows, err := s.repo.ListBulkSourceDocumentItems(ctx, strings.TrimSpace(req.SourceDocumentID))
-	if err != nil {
-		return nil, err
+	var sourceRows []woRepo.BulkSourceDocumentItemRow
+	var err error
+	if isPRL {
+		// PRL bulk source: items are the PRL parent UNIQs plus their BOM-expanded
+		// child materials (already resolved by the caller). Load PRL rows so
+		// source_line_id can be validated and UOM/target-date fall back sensibly.
+		// Child material UNIQs differ from the parent PRL item UNIQ, so the
+		// item_uniq_code == source uniq check is skipped for PRL below.
+		sourceRows, err = s.repo.GetPrlSourceItems(ctx, strings.TrimSpace(req.SourceDocumentID))
+		if err != nil {
+			return nil, err
+		}
+		if len(sourceRows) == 0 {
+			return nil, apperror.NotFound("PRL tidak ditemukan")
+		}
+	} else {
+		var header *woRepo.BulkSourceDocumentHeaderRow
+		header, err = s.repo.GetBulkSourceDocument(ctx, strings.TrimSpace(req.SourceDocumentID))
+		if err != nil {
+			return nil, err
+		}
+		if documentType != header.DocumentType {
+			return nil, apperror.BadRequest("source_document_type does not match source document")
+		}
+		sourceRows, err = s.repo.ListBulkSourceDocumentItems(ctx, strings.TrimSpace(req.SourceDocumentID))
+		if err != nil {
+			return nil, err
+		}
 	}
 	sourceByLine := make(map[string]woRepo.BulkSourceDocumentItemRow, len(sourceRows))
 	for _, row := range sourceRows {
@@ -266,7 +285,7 @@ func (s *service) CreateBulk(ctx context.Context, req woModels.CreateBulkWorkOrd
 			if !ok {
 				return apperror.UnprocessableEntity("source_line_id does not belong to source document")
 			}
-			if strings.TrimSpace(src.ItemUniqCode) != strings.TrimSpace(it.ItemUniqCode) {
+			if !isPRL && strings.TrimSpace(src.ItemUniqCode) != strings.TrimSpace(it.ItemUniqCode) {
 				return apperror.UnprocessableEntity("item_uniq_code does not match source document item")
 			}
 			kp, err := s.getKanbanParam(ctx, tx, it.ItemUniqCode)
@@ -275,30 +294,13 @@ func (s *service) CreateBulk(ctx context.Context, req woModels.CreateBulkWorkOrd
 			}
 			pcsPerKanban := it.KanbanQty
 			if pcsPerKanban <= 0 {
-				// NOTE: Validasi "uniq sudah terdaftar di kanban_parameters atau belum"
-				// dinonaktifkan (di-comment) sesuai permintaan. WO bulk tetap bisa dibuat
-				// walau uniq belum punya kanban_parameters.
-				// if kp == nil || kp.KanbanQty <= 0 {
-				// 	return apperror.UnprocessableEntity("kanban_parameters tidak ditemukan for item_uniq_code")
-				// }
-				if kp != nil && kp.KanbanQty > 0 {
-					pcsPerKanban = kp.KanbanQty
+				if kp == nil || kp.KanbanQty <= 0 {
+					return apperror.UnprocessableEntity("kanban_parameters tidak ditemukan for item_uniq_code")
 				}
+				pcsPerKanban = kp.KanbanQty
 			}
-			// Fallback bila kanban_parameters tidak ada: seluruh qty jadi 1 kanban.
-			if pcsPerKanban <= 0 {
-				pcsPerKanban = int(math.Ceil(round4(it.Quantity)))
-				if pcsPerKanban <= 0 {
-					pcsPerKanban = 1
-				}
-			}
-			// NOTE: Validasi keberadaan kanban_number juga dinonaktifkan (di-comment).
-			// if kp == nil || strings.TrimSpace(kp.KanbanNumber) == "" {
-			// 	return apperror.UnprocessableEntity("kanban_parameters tidak ditemukan for item_uniq_code")
-			// }
-			kanbanPrefix := "KBN-NA"
-			if kp != nil && strings.TrimSpace(kp.KanbanNumber) != "" {
-				kanbanPrefix = kp.KanbanNumber
+			if kp == nil || strings.TrimSpace(kp.KanbanNumber) == "" {
+				return apperror.UnprocessableEntity("kanban_parameters tidak ditemukan for item_uniq_code")
 			}
 			remaining := round4(it.Quantity)
 			if remaining <= 0 {
@@ -313,8 +315,8 @@ func (s *service) CreateBulk(ctx context.Context, req woModels.CreateBulkWorkOrd
 				perUniqSeq[it.ItemUniqCode]++
 				seq := perUniqSeq[it.ItemUniqCode]
 				itemUUID := uuid.New()
-				kanbanNumber := fmt.Sprintf("%s-%s-%s-%02d", kanbanPrefix, it.ItemUniqCode, woNumber, seq)
-				kpNum := kanbanPrefix
+				kanbanNumber := fmt.Sprintf("%s-%s-%s-%02d", kp.KanbanNumber, it.ItemUniqCode, woNumber, seq)
+				kpNum := kp.KanbanNumber
 				kpSeq := seq
 				itemQR, err := generateQRDataURL(qrPayloadWOItem(kanbanNumber))
 				if err != nil {
@@ -557,30 +559,13 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 			}
 			pcsPerKanban := it.KanbanQty
 			if pcsPerKanban <= 0 {
-				// NOTE: Validasi "uniq sudah terdaftar di kanban_parameters atau belum"
-				// dinonaktifkan (di-comment) sesuai permintaan. WO single tetap bisa dibuat
-				// walau uniq belum punya kanban_parameters.
-				// if kp == nil || kp.KanbanQty <= 0 {
-				// 	return apperror.UnprocessableEntity("kanban_qty is required (kanban_parameters tidak ditemukan for item_uniq_code)")
-				// }
-				if kp != nil && kp.KanbanQty > 0 {
-					pcsPerKanban = kp.KanbanQty
+				if kp == nil || kp.KanbanQty <= 0 {
+					return apperror.UnprocessableEntity("kanban_qty is required (kanban_parameters tidak ditemukan for item_uniq_code)")
 				}
+				pcsPerKanban = kp.KanbanQty
 			}
-			// Fallback bila kanban_parameters tidak ada: seluruh qty jadi 1 kanban.
-			if pcsPerKanban <= 0 {
-				pcsPerKanban = int(math.Ceil(round4(it.Quantity)))
-				if pcsPerKanban <= 0 {
-					pcsPerKanban = 1
-				}
-			}
-			// NOTE: Validasi keberadaan kanban_number juga dinonaktifkan (di-comment).
-			// if kp == nil || strings.TrimSpace(kp.KanbanNumber) == "" {
-			// 	return apperror.UnprocessableEntity("kanban_parameters tidak ditemukan for item_uniq_code")
-			// }
-			kanbanPrefix := "KBN-NA"
-			if kp != nil && strings.TrimSpace(kp.KanbanNumber) != "" {
-				kanbanPrefix = kp.KanbanNumber
+			if kp == nil || strings.TrimSpace(kp.KanbanNumber) == "" {
+				return apperror.UnprocessableEntity("kanban_parameters tidak ditemukan for item_uniq_code")
 			}
 
 			remaining := round4(it.Quantity)
@@ -603,8 +588,8 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 				_ = kbPrefix
 				// Format: <KBN-YYYY-####>-<ITEM_UNIQ_CODE>-<WO_NUMBER>-<NN>
 				// WO_NUMBER included to guarantee global uniqueness.
-				kanbanNumber := fmt.Sprintf("%s-%s-%s-%02d", kanbanPrefix, it.ItemUniqCode, woNumber, perUniqSeq[it.ItemUniqCode])
-				kpNum := kanbanPrefix
+				kanbanNumber := fmt.Sprintf("%s-%s-%s-%02d", kp.KanbanNumber, it.ItemUniqCode, woNumber, perUniqSeq[it.ItemUniqCode])
+				kpNum := kp.KanbanNumber
 				kpSeq := perUniqSeq[it.ItemUniqCode]
 				itemQR, err := generateQRDataURL(qrPayloadWOItem(kanbanNumber))
 				if err != nil {

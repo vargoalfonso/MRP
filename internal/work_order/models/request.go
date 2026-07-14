@@ -22,7 +22,7 @@ type CreateWorkOrderItem struct {
 
 type CreateBulkWorkOrderRequest struct {
 	SourceDocumentID   string                    `json:"source_document_id" validate:"required"`
-	SourceDocumentType string                    `json:"source_document_type" validate:"required,oneof=SO PO DN"`
+	SourceDocumentType string                    `json:"source_document_type" validate:"required,oneof=SO PO DN PRL"`
 	WOType             string                    `json:"wo_type" validate:"required,oneof=New Assembly Rework Addendum"`
 	CreatedDate        *string                   `json:"created_date"`
 	TargetDate         *string                   `json:"target_date"`
