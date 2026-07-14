@@ -46,6 +46,7 @@ type SessionListRow struct {
 	ScheduleDate      *time.Time `gorm:"column:schedule_date"`
 	CountedDate       *time.Time `gorm:"column:counted_date"`
 	Remarks           *string    `gorm:"column:remarks"`
+	UOM               *string    `gorm:"column:uom"`
 	TotalEntries      int        `gorm:"column:total_entries"`
 	TotalVarianceQty  float64    `gorm:"column:total_variance_qty"`
 	SystemQtyTotal    float64    `gorm:"column:system_qty_total"`
@@ -149,6 +150,7 @@ func (r *repository) ListSessions(ctx context.Context, f SessionFilter) ([]Sessi
 		s.schedule_date,
 		s.counted_date,
 		s.remarks,
+		(SELECT string_agg(DISTINCT e.uom, ', ' ORDER BY e.uom) FROM stock_opname_entries e WHERE e.session_id = s.id AND e.uom IS NOT NULL AND e.uom <> '') AS uom,
 		s.total_entries,
 		s.total_variance_qty,
 		COALESCE((SELECT SUM(e.system_qty_snapshot) FROM stock_opname_entries e WHERE e.session_id = s.id), 0) AS system_qty_total,
