@@ -28,6 +28,7 @@ type IRepository interface {
 	ListBulkSourceDocuments(ctx context.Context, documentType, q, targetDate string, limit int) ([]BulkSourceDocumentRow, error)
 	GetBulkSourceDocument(ctx context.Context, documentUUID string) (*BulkSourceDocumentHeaderRow, error)
 	ListBulkSourceDocumentItems(ctx context.Context, documentUUID string) ([]BulkSourceDocumentItemRow, error)
+	GetPrlSourceItems(ctx context.Context, prlID string) ([]BulkSourceDocumentItemRow, error)
 
 	ListWorkOrders(ctx context.Context, f ListFilter) ([]WorkOrderRow, int64, error)
 }
@@ -561,6 +562,31 @@ func (r *repository) ListBulkSourceDocumentItems(ctx context.Context, documentUU
 	`, documentUUID).Scan(&rows).Error
 	if err != nil {
 		return nil, apperror.InternalWrap("failed to list bulk source document items", err)
+	}
+	return rows, nil
+}
+
+// GetPrlSourceItems loads PRL rows for a given prl_id, shaped as bulk source
+// document items so bulk work-order creation can source directly from a PRL.
+// SourceLineUUID is the PRL row id and matches CreateBulkWorkOrderItem.source_line_id.
+func (r *repository) GetPrlSourceItems(ctx context.Context, prlID string) ([]BulkSourceDocumentItemRow, error) {
+	var rows []BulkSourceDocumentItemRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			p.id::text AS source_line_uuid,
+			p.uniq_code AS item_uniq_code,
+			p.part_name,
+			p.part_number,
+			'' AS uom,
+			p.quantity::float8 AS quantity,
+			NULL AS target_date
+		FROM prls p
+		WHERE p.deleted_at IS NULL
+		  AND p.prl_id = ?
+		ORDER BY p.id ASC
+	`, prlID).Scan(&rows).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("failed to load prl source items", err)
 	}
 	return rows, nil
 }

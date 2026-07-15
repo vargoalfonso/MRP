@@ -182,6 +182,18 @@ func (h *HTTPHandler) Calculate(ctx *app.Context) *app.CostumeResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Summary  GET /api/v1/machine-patterns/summary
+// ---------------------------------------------------------------------------
+
+func (h *HTTPHandler) Summary(ctx *app.Context) *app.CostumeResponse {
+	resp, err := h.svc.Summary(ctx.Request.Context())
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return app.NewSuccess(ctx, http.StatusOK, resp)
+}
+
+// ---------------------------------------------------------------------------
 // GetParams  GET /api/v1/machine-patterns/params
 // ---------------------------------------------------------------------------
 

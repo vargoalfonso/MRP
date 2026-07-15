@@ -43,6 +43,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		g.POST("", m.base.RunAction(m.handler.Create))
 		g.POST("/bulk", m.base.RunAction(m.handler.BulkCreate))
 		g.GET("/calculate", m.base.RunAction(m.handler.Calculate))
+		g.GET("/summary", m.base.RunAction(m.handler.Summary))
 		g.GET("/params", m.base.RunAction(m.handler.GetParams))
 		g.PUT("/params", m.base.RunAction(m.handler.UpdateParams))
 		g.GET("/safety-stock", m.base.RunAction(m.handler.SafetyStock))

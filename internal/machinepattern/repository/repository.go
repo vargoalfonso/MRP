@@ -22,6 +22,9 @@ type IRepository interface {
 	GetParams(ctx context.Context) (*models.MachinePatternParam, error)
 	UpsertParams(ctx context.Context, p *models.MachinePatternParam) error
 
+	// Aggregates
+	Summary(ctx context.Context) (*models.SummaryResponse, error)
+
 	// Cross-module reads
 	GetMachineNamesByIDs(ctx context.Context, ids []int64) (map[int64]string, error)
 }
@@ -153,6 +156,41 @@ func (r *repository) UpsertParams(ctx context.Context, p *models.MachinePatternP
 		return apperror.InternalWrap("UpsertParams", result.Error)
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Aggregates
+// ---------------------------------------------------------------------------
+
+// Summary aggregates dashboard counts across all machine patterns.
+func (r *repository) Summary(ctx context.Context) (*models.SummaryResponse, error) {
+	out := &models.SummaryResponse{}
+
+	if err := r.db.WithContext(ctx).Model(&models.MachinePattern{}).
+		Count(&out.TotalPattern).Error; err != nil {
+		return nil, apperror.InternalWrap("Summary total", err)
+	}
+	if err := r.db.WithContext(ctx).Model(&models.MachinePattern{}).
+		Where("moving_type = ?", "Fast Moving").Count(&out.FastMoving).Error; err != nil {
+		return nil, apperror.InternalWrap("Summary fast", err)
+	}
+	if err := r.db.WithContext(ctx).Model(&models.MachinePattern{}).
+		Where("moving_type = ?", "Slow Moving").Count(&out.SlowMoving).Error; err != nil {
+		return nil, apperror.InternalWrap("Summary slow", err)
+	}
+	if err := r.db.WithContext(ctx).Model(&models.MachinePattern{}).
+		Where("moving_type = ?", "Normal").Count(&out.Normal).Error; err != nil {
+		return nil, apperror.InternalWrap("Summary normal", err)
+	}
+
+	var avg struct{ Avg float64 }
+	if err := r.db.WithContext(ctx).Model(&models.MachinePattern{}).
+		Select("COALESCE(AVG(pattern_value), 0) AS avg").Scan(&avg).Error; err != nil {
+		return nil, apperror.InternalWrap("Summary avg", err)
+	}
+	out.AvgPattern = avg.Avg
+
+	return out, nil
 }
 
 // ---------------------------------------------------------------------------

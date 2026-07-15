@@ -19,6 +19,7 @@ type IService interface {
 	GetByID(ctx context.Context, id int64) (*models.MachinePatternResponse, error)
 	List(ctx context.Context, q models.ListQuery) (*models.ListMachinePatternResponse, error)
 	Calculate(ctx context.Context, req models.CalculateRequest) (*models.CalculateResult, error)
+	Summary(ctx context.Context) (*models.SummaryResponse, error)
 	GetParams(ctx context.Context) (*models.MachinePatternParam, error)
 	UpdateParams(ctx context.Context, req models.UpdateParamRequest) (*models.MachinePatternParam, error)
 	ListSafetyStock(ctx context.Context) ([]models.SafetyStockOutput, error)
@@ -47,7 +48,12 @@ func (s *service) Create(ctx context.Context, req models.CreateMachinePatternReq
 		return nil, err
 	}
 
-	calc := calculate(req.PrlReference, float64(req.WorkingDays), req.CycleTimeSec, params)
+	cycleTimeSec := req.ResolveCycleTimeSec()
+	if cycleTimeSec <= 0 {
+		return nil, apperror.BadRequest("cycle_time is required and must be greater than 0")
+	}
+
+	calc := calculate(req.PrlReference, float64(req.WorkingDays), cycleTimeSec, params)
 
 	status := req.Status
 	if status == "" {
@@ -57,12 +63,12 @@ func (s *service) Create(ctx context.Context, req models.CreateMachinePatternReq
 	mp := &models.MachinePattern{
 		UniqCode:     req.UniqCode,
 		MachineID:    req.MachineID,
-		CycleTimeSec: req.CycleTimeSec,
+		CycleTimeSec: cycleTimeSec,
 		PrlReference: req.PrlReference,
 		PatternValue: calc.PatternValue,
 		WorkingDays:  req.WorkingDays,
 		MovingType:   calc.MovingType,
-		MinOutput:    req.MinOutput,
+		MinOutput:    calc.MinOutput,
 		Status:       status,
 	}
 	if err := s.repo.Create(ctx, mp); err != nil {
@@ -92,7 +98,14 @@ func (s *service) BulkCreate(ctx context.Context, req models.BulkCreateRequest) 
 			continue
 		}
 
-		calc := calculate(item.PrlReference, float64(item.WorkingDays), item.CycleTimeSec, params)
+		cycleTimeSec := item.ResolveCycleTimeSec()
+		if cycleTimeSec <= 0 {
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("row %d: cycle_time is required and must be greater than 0", i+1))
+			continue
+		}
+
+		calc := calculate(item.PrlReference, float64(item.WorkingDays), cycleTimeSec, params)
 		status := item.Status
 		if status == "" {
 			status = "Active"
@@ -100,12 +113,12 @@ func (s *service) BulkCreate(ctx context.Context, req models.BulkCreateRequest) 
 		mp := &models.MachinePattern{
 			UniqCode:     item.UniqCode,
 			MachineID:    item.MachineID,
-			CycleTimeSec: item.CycleTimeSec,
+			CycleTimeSec: cycleTimeSec,
 			PrlReference: item.PrlReference,
 			PatternValue: calc.PatternValue,
 			WorkingDays:  item.WorkingDays,
 			MovingType:   calc.MovingType,
-			MinOutput:    item.MinOutput,
+			MinOutput:    calc.MinOutput,
 			Status:       status,
 		}
 		if err := s.repo.Create(ctx, mp); err != nil {
@@ -210,6 +223,14 @@ func (s *service) List(ctx context.Context, q models.ListQuery) (*models.ListMac
 		Limit: q.Limit,
 		Items: resps,
 	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Summary (dashboard aggregate)
+// ---------------------------------------------------------------------------
+
+func (s *service) Summary(ctx context.Context) (*models.SummaryResponse, error) {
+	return s.repo.Summary(ctx)
 }
 
 // ---------------------------------------------------------------------------
@@ -380,6 +401,7 @@ func toResponse(mp models.MachinePattern, machineName string) models.MachinePatt
 		MachineName:  machineName,
 		MachineID:    mp.MachineID,
 		CycleTimeSec: mp.CycleTimeSec,
+		CycleTime:    mp.CycleTimeSec,
 		PrlReference: mp.PrlReference,
 		PatternValue: mp.PatternValue,
 		WorkingDays:  mp.WorkingDays,
