@@ -13,6 +13,7 @@ import (
 	"github.com/ganasa18/go-template/internal/action_ui/models"
 	"github.com/ganasa18/go-template/internal/action_ui/repository"
 	scrapModels "github.com/ganasa18/go-template/internal/scrap_stock/models"
+	woModels "github.com/ganasa18/go-template/internal/work_order/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
@@ -2372,6 +2373,7 @@ func (s *service) PendingReturnTasks(ctx context.Context) ([]models.PendingRetur
 		Uniq         string
 		DNNumber     string
 		QuantityScrap int
+		QuantityRework int
 		Weight       float64
 		Uom          string
 		ScrapType    string
@@ -2383,7 +2385,7 @@ func (s *service) PendingReturnTasks(ctx context.Context) ([]models.PendingRetur
 	err := s.db.WithContext(ctx).
 		Table("product_returns AS pr").
 		Select(`pr.id AS id, pr.uniq AS uniq, pr.dn_number AS dn_number,
-			pr.quantity_scrap AS quantity_scrap, pr.weight AS weight, pr.uom AS uom,
+			pr.quantity_scrap AS quantity_scrap, pr.quantity_rework AS quantity_rework, pr.weight AS weight, pr.uom AS uom,
 			pr.scrap_type AS scrap_type,
 			COALESCE(i.part_number, '') AS part_number,
 			COALESCE(i.part_name, '') AS part_name,
@@ -2411,6 +2413,7 @@ func (s *service) PendingReturnTasks(ctx context.Context) ([]models.PendingRetur
 			Weight:            r.Weight,
 			UnitMeasurement:   r.Uom,
 			ScrapType:         r.ScrapType,
+			QuantityRework:    r.QuantityRework,
 		})
 	}
 	return tasks, nil
@@ -2558,6 +2561,38 @@ func (s *service) SubmitReturnValidation(ctx context.Context, req models.SubmitR
 				return err
 			}
 		}
+
+		// 4) If newStatus == "APPROVED" and there is rework qty, auto-create Rework WO
+		if newStatus == "APPROVED" && pr.QuantityRework > 0 {
+			woNumber := fmt.Sprintf("WO-RW-%s-%d", time.Now().Format("20060102"), pr.ID)
+			now := time.Now()
+
+			wo := woModels.WorkOrder{
+				UUID:           uuid.New(),
+				WoNumber:       woNumber,
+				WoType:         "Rework",
+				WOKind:         "standard",
+				Status:         "New",
+				ApprovalStatus: "Approved",
+				CreatedDate:    now,
+			}
+			if err := tx.Create(&wo).Error; err != nil {
+				return err
+			}
+
+			woItem := woModels.WorkOrderItem{
+				UUID:         uuid.New(),
+				WoID:         wo.ID,
+				ItemUniqCode: pr.Uniq,
+				Quantity:     float64(pr.QuantityRework),
+				Status:       "New",
+				KanbanNumber: fmt.Sprintf("KBN-RW-%d", pr.ID),
+			}
+			if err := tx.Create(&woItem).Error; err != nil {
+				return err
+			}
+		}
+
 		return nil
 	})
 }
