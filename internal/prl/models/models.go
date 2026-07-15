@@ -25,6 +25,16 @@ var AllowedPRLStatuses = []string{
 	PRLStatusRejected,
 }
 
+const (
+	PRLTypeReguler    = "reguler"
+	PRLTypeAdditional = "additional"
+)
+
+var AllowedPRLTypes = []string{
+	PRLTypeReguler,
+	PRLTypeAdditional,
+}
+
 type UniqBillOfMaterial struct {
 	ID           int64          `gorm:"primaryKey;autoIncrement" json:"-"`
 	UUID         string         `gorm:"uniqueIndex;not null" json:"id"`
@@ -60,6 +70,7 @@ type PRL struct {
 	ForecastPeriod string         `gorm:"type:text;not null" json:"forecast_period"`
 	Quantity       int64          `gorm:"not null" json:"quantity"`
 	Status         string         `gorm:"not null;default:'pending'" json:"status"`
+	PRLType        string         `gorm:"type:varchar(20);not null;default:'reguler'" json:"prl_type"`
 	Remarks        *string        `gorm:"type:text" json:"remarks,omitempty"`
 	ApprovedAt     *time.Time     `gorm:"default:null" json:"approved_at,omitempty"`
 	RejectedAt     *time.Time     `gorm:"default:null" json:"rejected_at,omitempty"`
@@ -230,6 +241,7 @@ type CreatePRLRequest struct {
 	PartNumber     FlexibleStringList `json:"part_number" validate:"-"`
 	ForecastPeriod string             `json:"forecast_period" validate:"required"`
 	Quantity       int64              `json:"quantity" validate:"required,gte=1"`
+	PRLType        string             `json:"prl_type" validate:"omitempty,oneof=reguler additional"`
 	Remarks        string             `json:"remarks" validate:"omitempty"`
 }
 
@@ -242,6 +254,7 @@ type CreatePRLEntryRequest struct {
 	PartNumber     string            `json:"part_number" validate:"omitempty,max=150"`
 	ForecastPeriod string            `json:"forecast_period" validate:"required"`
 	Quantity       int64             `json:"quantity" validate:"required,gte=1"`
+	PRLType        string            `json:"prl_type" validate:"omitempty,oneof=reguler additional"`
 	Remarks        string            `json:"remarks" validate:"omitempty"`
 }
 

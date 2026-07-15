@@ -193,6 +193,7 @@ func (s *service) CreatePRL(ctx context.Context, req models.CreatePRLRequest, su
 		ForecastPeriod: period,
 		Quantity:       req.Quantity,
 		Status:         models.PRLStatusPending,
+		PRLType:        normalizePRLType(req.PRLType),
 		Remarks:        normalizeOptionalString(req.Remarks),
 		Note:           uuid.NewString(),
 		ChildJSONB:     datatypes.JSON([]byte("[]")),
@@ -722,6 +723,7 @@ func (s *service) buildPRLFromEntry(ctx context.Context, entry models.CreatePRLE
 		ForecastPeriod: period,
 		Quantity:       entry.Quantity,
 		Status:         models.PRLStatusPending,
+		PRLType:        normalizePRLType(entry.PRLType),
 		Remarks:        normalizeOptionalString(entry.Remarks),
 		ChildJSONB:     datatypes.JSON([]byte(fmt.Sprintf("[{\"uniq_code\": \"%s\", \"product_model\": \"%s\", \"part_name\": \"%s\", \"part_number\": \"%s\"}]", bom.UniqCode, bom.ProductModel, bom.PartName, bom.PartNumber))),
 	}, nil
@@ -1080,6 +1082,15 @@ func normalizeOptionalStatus(value string) (*string, error) {
 		return &status, nil
 	default:
 		return nil, apperror.BadRequest("status must be one of: pending, approved, rejected")
+	}
+}
+
+func normalizePRLType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case models.PRLTypeAdditional:
+		return models.PRLTypeAdditional
+	default:
+		return models.PRLTypeReguler
 	}
 }
 

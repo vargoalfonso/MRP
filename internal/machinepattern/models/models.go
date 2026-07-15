@@ -54,11 +54,23 @@ type RefMachine struct {
 type CreateMachinePatternRequest struct {
 	UniqCode     string  `json:"uniq_code"     validate:"required"`
 	MachineID    int64   `json:"machine_id"    validate:"required,min=1"`
-	CycleTimeSec float64 `json:"cycle_time_sec" validate:"required,min=0"`
-	PrlReference float64 `json:"prl_reference"  validate:"required,min=0"`
-	WorkingDays  int     `json:"working_days"   validate:"required,min=1"`
-	MinOutput    float64 `json:"min_output"     validate:"required,min=0"`
+	CycleTimeSec float64 `json:"cycle_time_sec"`          // canonical (seconds)
+	CycleTime    float64 `json:"cycle_time"`              // alias accepted from frontend
+	PrlReference float64 `json:"prl_reference" validate:"min=0"` // 0 is a valid value (no PRL yet)
+	WorkingDays  int     `json:"working_days"  validate:"required,min=1"`
+	PatternValue float64 `json:"pattern_value"`           // optional client hint (server recalculates)
+	MovingType   string  `json:"moving_type"`             // optional client hint (server recalculates)
+	MinOutput    float64 `json:"min_output" validate:"min=0"`    // 0 allowed; server recomputes
 	Status       string  `json:"status"`
+}
+
+// ResolveCycleTimeSec returns the cycle time in seconds, accepting either the
+// canonical "cycle_time_sec" field or the frontend "cycle_time" alias.
+func (r CreateMachinePatternRequest) ResolveCycleTimeSec() float64 {
+	if r.CycleTimeSec > 0 {
+		return r.CycleTimeSec
+	}
+	return r.CycleTime
 }
 
 // UpdateMachinePatternRequest — partial update
@@ -107,6 +119,7 @@ type MachinePatternResponse struct {
 	MachineName  string  `json:"machine_name"`
 	MachineID    int64   `json:"machine_id"`
 	CycleTimeSec float64 `json:"cycle_time_sec"`
+	CycleTime    float64 `json:"cycle_time"`
 	PrlReference float64 `json:"prl_reference"`
 	PatternValue float64 `json:"pattern_value"`
 	WorkingDays  int     `json:"working_days"`
@@ -152,4 +165,13 @@ type SafetyStockOutput struct {
 	PatternValue    float64 `json:"pattern_value"`
 	MovingType      string  `json:"moving_type"`
 	SafetyStockQty  float64 `json:"safety_stock_qty"` // daily_output * working_days
+}
+
+// SummaryResponse — aggregate counts for the machine pattern dashboard cards.
+type SummaryResponse struct {
+	TotalPattern int64   `json:"total_pattern"`
+	FastMoving   int64   `json:"fast_moving"`
+	SlowMoving   int64   `json:"slow_moving"`
+	Normal       int64   `json:"normal"`
+	AvgPattern   float64 `json:"avg_pattern"`
 }

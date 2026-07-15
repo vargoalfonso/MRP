@@ -26,6 +26,7 @@ type StockOpnameSessionItem struct {
 	ScheduleDate      *time.Time `json:"schedule_date"`
 	CountedDate       *time.Time `json:"counted_date"`
 	Remarks           *string    `json:"remarks"`
+	UOM               *string    `json:"uom"`
 	TotalEntries      int        `json:"total_entries"`
 	TotalVarianceQty  float64    `json:"total_variance_qty"`
 	SystemQtyTotal    float64    `json:"system_qty_total"`
