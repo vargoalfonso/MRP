@@ -772,10 +772,6 @@ func (s *service) GetWorkOrderItemQR(ctx context.Context, itemUUID string, refre
 	if err != nil {
 		return nil, err
 	}
-	if !refresh && it.QRImageBase64 != nil && strings.TrimSpace(*it.QRImageBase64) != "" {
-		payload := qrPayloadWOItem(it.KanbanNumber)
-		return &woModels.WorkOrderItemQRResponse{KanbanNumber: it.KanbanNumber, QRPayload: payload, DataURL: *it.QRImageBase64}, nil
-	}
 
 	payload := qrPayloadWOItem(it.KanbanNumber)
 	dataURL, err := generateQRDataURL(payload)
@@ -783,10 +779,16 @@ func (s *service) GetWorkOrderItemQR(ctx context.Context, itemUUID string, refre
 		return nil, apperror.InternalWrap("failed to generate QR", err)
 	}
 
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return s.repo.UpdateWorkOrderItemQR(ctx, tx, it.ID, dataURL)
-	}); err != nil {
-		return nil, err
+	// Always refresh item QR from the kanban payload. Some historical item rows may
+	// contain a cached WO-header QR, and returning that cache makes item scans read
+	// as {"t":"wo",...} instead of {"t":"wo_item",...}.
+	shouldUpdateCache := refresh || it.QRImageBase64 == nil || strings.TrimSpace(*it.QRImageBase64) != dataURL
+	if shouldUpdateCache {
+		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return s.repo.UpdateWorkOrderItemQR(ctx, tx, it.ID, dataURL)
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	return &woModels.WorkOrderItemQRResponse{KanbanNumber: it.KanbanNumber, QRPayload: payload, DataURL: dataURL}, nil
@@ -1216,12 +1218,8 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 	items := make([]woModels.WorkOrderDetailItem, 0, len(itemRows))
 	for _, it := range itemRows {
 		var itemQR *string
-		if it.QRImageBase64 != nil && strings.TrimSpace(*it.QRImageBase64) != "" {
-			itemQR = it.QRImageBase64
-		} else {
-			if qr, err := generateQRDataURL(qrPayloadWOItem(it.KanbanNumber)); err == nil {
-				itemQR = &qr
-			}
+		if qr, err := generateQRDataURL(qrPayloadWOItem(it.KanbanNumber)); err == nil {
+			itemQR = &qr
 		}
 		items = append(items, woModels.WorkOrderDetailItem{
 			ID:              it.UUID.String(),
@@ -1281,9 +1279,7 @@ func (s *service) GetBulkDetail(ctx context.Context, woUUID string) (*woModels.W
 	items := make([]woModels.WorkOrderDetailItem, 0, len(itemRows))
 	for _, it := range itemRows {
 		var itemQR *string
-		if it.QRImageBase64 != nil && strings.TrimSpace(*it.QRImageBase64) != "" {
-			itemQR = it.QRImageBase64
-		} else if qr, err := generateQRDataURL(qrPayloadWOItem(it.KanbanNumber)); err == nil {
+		if qr, err := generateQRDataURL(qrPayloadWOItem(it.KanbanNumber)); err == nil {
 			itemQR = &qr
 		}
 		items = append(items, woModels.WorkOrderDetailItem{ID: it.UUID.String(), WoItemID: it.UUID.String(), KanbanNumber: it.KanbanNumber, ItemUniqCode: it.ItemUniqCode, Quantity: it.Quantity, UOM: it.UOM, ProcessName: it.ProcessName, Status: it.Status, ProcessFlowJSON: jsonRawOrEmpty(it.ProcessFlowJSON), QRDataURL: itemQR})
