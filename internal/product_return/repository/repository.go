@@ -2,9 +2,12 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/ganasa18/go-template/internal/product_return/models"
+	woModels "github.com/ganasa18/go-template/internal/work_order/models"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -24,6 +27,21 @@ func New(db *gorm.DB) IProductReturnRepository {
 	return &repository{db: db}
 }
 
+func parseDate(d string) *time.Time {
+	if d == "" {
+		return nil
+	}
+	t, err := time.Parse("2006-01-02", d)
+	if err == nil {
+		return &t
+	}
+	t2, err2 := time.Parse(time.RFC3339, d)
+	if err2 == nil {
+		return &t2
+	}
+	return nil
+}
+
 func (r *repository) Create(ctx context.Context, req models.CreateProductReturnRequest) (*models.ProductReturn, error) {
 	data := models.ProductReturn{
 		Uniq:           req.Uniq,
@@ -31,6 +49,10 @@ func (r *repository) Create(ctx context.Context, req models.CreateProductReturnR
 		QuantityScrap:  req.QuantityScrap,
 		QuantityRework: req.QuantityRework,
 		Status:         req.Status,
+		Weight:         req.Weight,
+		UOM:            req.UOM,
+		ScrapType:      req.ScrapType,
+		DateReceived:   parseDate(req.DateReceived),
 	}
 
 	err := r.db.WithContext(ctx).Create(&data).Error
@@ -185,8 +207,51 @@ func (r *repository) Update(ctx context.Context, id int64, req models.UpdateProd
 	data.QuantityScrap = req.QuantityScrap
 	data.QuantityRework = req.QuantityRework
 	data.Status = req.Status
+	data.Weight = req.Weight
+	data.UOM = req.UOM
+	data.ScrapType = req.ScrapType
+	if pd := parseDate(req.DateReceived); pd != nil {
+		data.DateReceived = pd
+	}
 
-	err = r.db.WithContext(ctx).Save(&data).Error
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&data).Error; err != nil {
+			return err
+		}
+
+		// Auto-create Rework WO if approved and has rework quantity
+		if req.Status == "APPROVED" && req.QuantityRework > 0 {
+			woNumber := fmt.Sprintf("WO-RW-%s-%d", time.Now().Format("20060102"), data.ID)
+			now := time.Now()
+
+			wo := woModels.WorkOrder{
+				UUID:           uuid.New(),
+				WoNumber:       woNumber,
+				WoType:         "Rework",
+				WOKind:         "standard",
+				Status:         "New",
+				ApprovalStatus: "Approved",
+				CreatedDate:    now,
+			}
+			if err := tx.Create(&wo).Error; err != nil {
+				return err
+			}
+
+			woItem := woModels.WorkOrderItem{
+				UUID:         uuid.New(),
+				WoID:         wo.ID,
+				ItemUniqCode: data.Uniq,
+				Quantity:     float64(req.QuantityRework),
+				Status:       "New",
+				KanbanNumber: fmt.Sprintf("KBN-RW-%d", data.ID),
+			}
+			if err := tx.Create(&woItem).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
 	if err != nil {
 		return nil, err
 	}

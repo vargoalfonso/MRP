@@ -69,6 +69,7 @@ type PendingReturnTask struct {
 	Weight            float64 `json:"weight"`
 	UnitMeasurement   string  `json:"unit_measurement"`
 	ScrapType         string  `json:"scrap_type"`
+	QuantityRework    int     `json:"quantity_rework"`
 }
 
 // SubmitReturnValidationRequest is submitted by QC when validating a return.
