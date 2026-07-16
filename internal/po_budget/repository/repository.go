@@ -220,6 +220,9 @@ func (r *repo) ListEntries(ctx context.Context, f ListFilter) ([]models.POBudget
 	if f.BudgetType != "" {
 		q = q.Where("budget_type = ?", f.BudgetType)
 	}
+	if f.BudgetSubtype != "" {
+		q = q.Where("COALESCE(budget_subtype, 'regular') = ?", f.BudgetSubtype)
+	}
 	if f.UniqCode != "" {
 		q = q.Where("uniq_code ILIKE ?", "%"+f.UniqCode+"%")
 	}
