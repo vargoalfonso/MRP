@@ -847,6 +847,9 @@ func (r *repository) applyPRLFilters(query *gorm.DB, filters models.PRLListFilte
 	if filters.UniqCode != nil {
 		query = query.Where("uniq_code ILIKE ?", *filters.UniqCode)
 	}
+	if len(filters.PRLTypes) > 0 {
+		query = query.Where("prl_type IN ?", filters.PRLTypes)
+	}
 	return query
 }
 

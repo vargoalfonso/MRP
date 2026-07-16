@@ -129,6 +129,7 @@ func approvalManagerBaseQuery(filterType, status, search string, currentLevel in
 			WHEN 'po-budget' THEN 'PO Budget'
 			WHEN 'stock_opname' THEN 'Stock Opname'
 			WHEN 'Delivery Note' THEN 'Delivery Note'
+   WHEN 'wo' THEN 'Work Order'
 			ELSE ai.action_name
 		END AS module_label,
 		ai.reference_table,
@@ -201,6 +202,21 @@ func approvalManagerBaseQuery(filterType, status, search string, currentLevel in
 			COALESCE(dn.created_by, '') AS submitted_by_name,
 			dn.created_at::text AS submitted_at
 		FROM delivery_notes dn
+		UNION ALL
+  SELECT
+  'Work Order' AS action_name,
+  wo.ID AS reference_id,
+  COALESCE ( wo.wo_number, wo.ID :: TEXT ) AS document_id,
+  COALESCE ( wo.UUID :: TEXT, '' ) AS document_uuid,
+  COALESCE ( woi.part_name, 'WO' ) AS item_name,
+  COALESCE ( woi.item_uniq_code, woi.part_number, wo.ID :: TEXT ) AS item_code,
+  ( '/api/v1//working-order/' || wo.ID ) :: TEXT AS detail_url,
+  ( '/api/v1//working-order/work-orders/' || wo.ID || '//approval' ) :: TEXT AS approval_url,
+  '' :: TEXT AS submitted_by_name,
+  wo.created_at :: TEXT AS submitted_at
+FROM
+  work_orders wo
+  INNER JOIN work_order_items woi ON wo.ID = woi.wo_id
 	) src ON src.action_name = ai.action_name AND src.reference_id = ai.reference_id
 	WHERE 1=1`
 	args := make([]interface{}, 0)
