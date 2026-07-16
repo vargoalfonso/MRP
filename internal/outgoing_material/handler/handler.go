@@ -124,3 +124,98 @@ func (h *HTTPHandler) CreateOutgoingRM(ctx *app.Context) *app.CostumeResponse {
 		Data:      data,
 	}
 }
+
+// UpdateOutgoingRM updates an existing outgoing RM transaction.
+// When quantity_out (and/or uniq) changes, stock in raw_materials is
+// re-calculated automatically inside a single DB transaction.
+//
+//	PUT /api/v1/outgoing-raw-materials/:id
+func (h *HTTPHandler) UpdateOutgoingRM(ctx *app.Context) *app.CostumeResponse {
+	id, ok := parseID(ctx)
+	if !ok {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid id",
+		}
+	}
+	var req outModels.UpdateOutgoingRMRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": errs},
+		}
+	}
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	data, err := h.svc.Update(ctx.Request.Context(), id, req, userCtx.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "Updated",
+		Data:      data,
+	}
+}
+
+// DeleteOutgoingRM soft-deletes an outgoing RM transaction.
+// NOTE: stock is intentionally NOT restored here. Use POST /:id/restore-stock
+// to return the quantity back to raw_materials.
+//
+//	DELETE /api/v1/outgoing-raw-materials/:id
+func (h *HTTPHandler) DeleteOutgoingRM(ctx *app.Context) *app.CostumeResponse {
+	id, ok := parseID(ctx)
+	if !ok {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid id",
+		}
+	}
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	if err := h.svc.Delete(ctx.Request.Context(), id, userCtx.UserID); err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "Deleted",
+	}
+}
+
+// RestoreStock returns the transaction's quantity back into raw_materials stock.
+// It is a manual, one-time action (guarded against double restore) meant to be
+// used after a transaction was deleted or created by mistake.
+//
+//	POST /api/v1/outgoing-raw-materials/:id/restore-stock
+func (h *HTTPHandler) RestoreStock(ctx *app.Context) *app.CostumeResponse {
+	id, ok := parseID(ctx)
+	if !ok {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid id",
+		}
+	}
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	data, err := h.svc.RestoreStock(ctx.Request.Context(), id, userCtx.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "Stock restored",
+		Data:      data,
+	}
+}

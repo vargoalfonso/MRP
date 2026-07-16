@@ -32,6 +32,11 @@ type OutgoingRawMaterial struct {
 	RequestedBy         *string `gorm:"size:255"`
 	Remarks             *string `gorm:"type:text"`
 
+	// StockRestoredAt is set when a user manually returns this transaction's
+	// quantity back into raw_materials stock via the "restore stock" action.
+	// A non-nil value prevents a second (double) restore.
+	StockRestoredAt *time.Time `gorm:"index"`
+
 	CreatedBy *string    `gorm:"size:255"`
 	CreatedAt time.Time  `gorm:"not null;default:now()"`
 	UpdatedBy *string    `gorm:"size:255"`

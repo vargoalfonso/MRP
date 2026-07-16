@@ -17,10 +17,11 @@ type OutgoingRMItem struct {
 	Purpose             *string   `json:"purpose"`
 	WorkOrderNo         *string   `json:"work_order_no"`
 	DestinationLocation *string   `json:"destination_location"`
-	RequestedBy         *string   `json:"requested_by"`
-	Remarks             *string   `json:"remarks"`
-	CreatedBy           *string   `json:"created_by"`
-	CreatedAt           time.Time `json:"created_at"`
+	RequestedBy         *string    `json:"requested_by"`
+	Remarks             *string    `json:"remarks"`
+	StockRestoredAt     *time.Time `json:"stock_restored_at"`
+	CreatedBy           *string    `json:"created_by"`
+	CreatedAt           time.Time  `json:"created_at"`
 }
 
 type Pagination struct {
