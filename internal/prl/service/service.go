@@ -487,6 +487,10 @@ func (s *service) ListPRLs(ctx context.Context, query models.ListPRLQuery) (*mod
 	}
 	customerUUID := normalizeOptionalString(query.CustomerUUID)
 	uniqCode := normalizeOptionalString(query.UniqCode)
+	prlTypes, err := normalizeOptionalPRLTypes(query.PRLType)
+	if err != nil {
+		return nil, err
+	}
 
 	filters := models.PRLListFilters{
 		Search:         models.Trimmed(query.Search),
@@ -494,6 +498,7 @@ func (s *service) ListPRLs(ctx context.Context, query models.ListPRLQuery) (*mod
 		ForecastPeriod: period,
 		CustomerUUID:   customerUUID,
 		UniqCode:       uniqCode,
+		PRLTypes:       prlTypes,
 		Page:           page,
 		Limit:          limit,
 		Offset:         (page - 1) * limit,
@@ -1092,6 +1097,35 @@ func normalizePRLType(value string) string {
 	default:
 		return models.PRLTypeReguler
 	}
+}
+
+// normalizeOptionalPRLTypes parses a single value or comma-separated list of
+// PRL types (e.g. "reguler" or "reguler,additional") and validates each
+// entry. An empty input means "no filter" (nil).
+func normalizeOptionalPRLTypes(value string) ([]string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	parts := strings.Split(trimmed, ",")
+	seen := make(map[string]bool, len(parts))
+	types := make([]string, 0, len(parts))
+	for _, part := range parts {
+		prlType := strings.ToLower(strings.TrimSpace(part))
+		if prlType == "" {
+			continue
+		}
+		switch prlType {
+		case models.PRLTypeReguler, models.PRLTypeAdditional:
+			if !seen[prlType] {
+				seen[prlType] = true
+				types = append(types, prlType)
+			}
+		default:
+			return nil, apperror.BadRequest("prl_type must be one of: reguler, additional")
+		}
+	}
+	return types, nil
 }
 
 func normalizeOptionalString(value string) *string {

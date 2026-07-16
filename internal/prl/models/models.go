@@ -278,8 +278,12 @@ type ListPRLQuery struct {
 	ForecastPeriod string `form:"forecast_period"`
 	CustomerUUID   string `form:"customer_uuid"`
 	UniqCode       string `form:"uniq_code"`
-	Page           int    `form:"page"`
-	Limit          int    `form:"limit"`
+	// PRLType accepts a single value or a comma-separated list, e.g.
+	// "reguler" or "reguler,additional", so the UI can filter by one or
+	// multiple PRL types at once.
+	PRLType string `form:"prl_type"`
+	Page    int    `form:"page"`
+	Limit   int    `form:"limit"`
 }
 
 type ListPRLHistoryQuery struct {
@@ -405,6 +409,7 @@ type PRLListFilters struct {
 	ForecastPeriod *string
 	CustomerUUID   *string
 	UniqCode       *string
+	PRLTypes       []string
 	Page           int
 	Limit          int
 	Offset         int
