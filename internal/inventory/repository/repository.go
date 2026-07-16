@@ -697,7 +697,9 @@ func (r *repo) GetMovementHistory(ctx context.Context, category, uniqCode string
 
 	var rows []HistoryRow
 	err := q.Select(`
-		id, uniq_code, qty_change, weight_change, movement_type, source_flag, dn_number, notes, logged_by, logged_at,
+		id, uniq_code, qty_change, weight_change, movement_type, source_flag, 
+		COALESCE(NULLIF(TRIM(dn_number), ''), NULLIF(TRIM(reference_id), '')) AS dn_number, 
+		notes, logged_by, logged_at,
 		CASE WHEN source_flag = 'incoming_scan' THEN 'incoming' ELSE 'confirmed' END AS log_status
 	`).
 		Order("logged_at DESC").

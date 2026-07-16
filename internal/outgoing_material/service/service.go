@@ -5,7 +5,6 @@ import (
 	"math"
 	"time"
 
-	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	outModels "github.com/ganasa18/go-template/internal/outgoing_material/models"
 	"github.com/ganasa18/go-template/internal/outgoing_material/repository"
 	"github.com/ganasa18/go-template/pkg/pagination"
@@ -20,6 +19,13 @@ type IService interface {
 	List(ctx context.Context, p pagination.OutgoingRMPaginationInput) (*outModels.OutgoingRMListResponse, error)
 	GetByID(ctx context.Context, id int64) (*outModels.OutgoingRMItem, error)
 	Create(ctx context.Context, req outModels.CreateOutgoingRMRequest, createdBy string) (*outModels.OutgoingRMItem, error)
+	// Update edits an outgoing transaction. When quantity_out (and/or uniq)
+	// changes, raw_materials stock is re-calculated atomically.
+	Update(ctx context.Context, id int64, req outModels.UpdateOutgoingRMRequest, updatedBy string) (*outModels.OutgoingRMItem, error)
+	// Delete soft-deletes an outgoing transaction. Stock is NOT restored.
+	Delete(ctx context.Context, id int64, deletedBy string) error
+	// RestoreStock returns the transaction quantity back into raw_materials stock (one-time).
+	RestoreStock(ctx context.Context, id int64, updatedBy string) (*outModels.OutgoingRMItem, error)
 	// SearchRawMaterials returns raw material options for the create form autocomplete.
 	SearchRawMaterials(ctx context.Context, q string, limit int) ([]outModels.FormOptionItem, error)
 }
@@ -103,8 +109,29 @@ func (s *service) Create(ctx context.Context, req outModels.CreateOutgoingRMRequ
 	if err := s.repo.ProcessTx(ctx, &orm); err != nil {
 		return nil, err
 	}
-	s.appendMovementLog(ctx, orm)
 	item := modelToItem(orm)
+	return &item, nil
+}
+
+func (s *service) Update(ctx context.Context, id int64, req outModels.UpdateOutgoingRMRequest, updatedBy string) (*outModels.OutgoingRMItem, error) {
+	orm, err := s.repo.UpdateTx(ctx, id, req, updatedBy)
+	if err != nil {
+		return nil, err
+	}
+	item := modelToItem(*orm)
+	return &item, nil
+}
+
+func (s *service) Delete(ctx context.Context, id int64, deletedBy string) error {
+	return s.repo.SoftDelete(ctx, id, deletedBy)
+}
+
+func (s *service) RestoreStock(ctx context.Context, id int64, updatedBy string) (*outModels.OutgoingRMItem, error) {
+	orm, err := s.repo.RestoreStockTx(ctx, id, updatedBy)
+	if err != nil {
+		return nil, err
+	}
+	item := modelToItem(*orm)
 	return &item, nil
 }
 
@@ -128,29 +155,7 @@ func (s *service) SearchRawMaterials(ctx context.Context, q string, limit int) (
 	return items, nil
 }
 
-// appendMovementLog writes one row to inventory_movement_logs. Non-fatal — errors are swallowed.
-func (s *service) appendMovementLog(ctx context.Context, orm outModels.OutgoingRawMaterial) {
-	notes := "reason: " + orm.Reason
-	if orm.Purpose != nil {
-		notes += ", purpose: " + *orm.Purpose
-	}
-	if orm.DestinationLocation != nil {
-		notes += ", destination: " + *orm.DestinationLocation
-	}
-	sf := "outgoing_raw_material"
-	_ = s.db.WithContext(ctx).Create(&invModels.InventoryMovementLog{
-		MovementCategory: "raw_material",
-		MovementType:     "outgoing",
-		UniqCode:         orm.Uniq,
-		EntityID:         orm.RawMaterialID,
-		QtyChange:        -orm.QuantityOut,
-		SourceFlag:       &sf,
-		ReferenceID:      orm.WorkOrderNo,
-		Notes:            &notes,
-		LoggedBy:         orm.CreatedBy,
-		LoggedAt:         time.Now(),
-	}).Error
-}
+
 
 // ---------------------------------------------------------------------------
 // Mappers
@@ -174,6 +179,7 @@ func rowToItem(r repository.OutgoingRow) outModels.OutgoingRMItem {
 		DestinationLocation: r.DestinationLocation,
 		RequestedBy:         r.RequestedBy,
 		Remarks:             r.Remarks,
+		StockRestoredAt:     r.StockRestoredAt,
 		CreatedBy:           r.CreatedBy,
 		CreatedAt:           r.CreatedAt,
 	}
@@ -197,6 +203,7 @@ func modelToItem(m outModels.OutgoingRawMaterial) outModels.OutgoingRMItem {
 		DestinationLocation: m.DestinationLocation,
 		RequestedBy:         m.RequestedBy,
 		Remarks:             m.Remarks,
+		StockRestoredAt:     m.StockRestoredAt,
 		CreatedBy:           m.CreatedBy,
 		CreatedAt:           m.CreatedAt,
 	}
