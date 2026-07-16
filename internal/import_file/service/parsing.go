@@ -70,7 +70,6 @@ func (s *importService) ParsingPRL(ctx context.Context, filePath string) ([]mode
 		if err != nil {
 			return nil, fmt.Errorf("row %d: quantity tidak valid (%s)", i+2, qtyStr)
 		}
-
 		item.Quantity = qty
 
 		if item.CustomerName == "" {
