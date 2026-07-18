@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/ganasa18/go-template/internal/delivery_note/models"
 	"gorm.io/gorm"
@@ -92,7 +93,9 @@ func (r *repository) GetKanbanByItemCode(ctx context.Context, code string) (*mod
 	var k models.KanbanParameter
 
 	err := r.db.WithContext(ctx).
-		Where("item_uniq_code = ?", code).
+		Where("LOWER(item_uniq_code) = LOWER(?)", strings.TrimSpace(code)).
+		Where("status ILIKE ?", "active").
+		Order("id ASC").
 		First(&k).Error
 
 	return &k, err
