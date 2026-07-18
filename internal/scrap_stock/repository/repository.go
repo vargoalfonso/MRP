@@ -210,8 +210,7 @@ func deductInventoryForScrap(tx *gorm.DB, s *scrapModels.ScrapStock) error {
 		}
 		return apperror.UnprocessableEntity("Stok tidak mencukupi atau barang tidak ditemukan di WIP/RM/FG")
 	default:
-		// Fallback: mencoba cari di raw_materials
-		_ = deductTable(tx, "raw_materials", "quantity", "uniq_code", s.UniqCode, packing, s.Quantity)
+		// For other types like Customer Return Scrap, we don't deduct internal inventory
 		return nil
 	}
 }
@@ -433,22 +432,19 @@ func (r *repository) ListItemOptions(ctx context.Context, q string, limit int) (
 			MAX(uom) AS uom,
 			material_type
 		FROM (
-			SELECT uniq_code, part_number, part_name, model, uom, material_type
-			  FROM items                  WHERE deleted_at IS NULL
-			UNION ALL
-			SELECT uniq_code, part_number, part_name, model, uom, 'Finished Good'::text
+			SELECT uniq_code, part_number, part_name, model, uom, 'Finished Good'::text AS material_type
 			  FROM finished_goods         WHERE deleted_at IS NULL
 			UNION ALL
-			SELECT uniq_code, part_number, part_name, NULL::text, uom, raw_material_type
+			SELECT uniq_code, part_number, part_name, NULL::text, uom, raw_material_type AS material_type
 			  FROM raw_materials          WHERE deleted_at IS NULL
 			UNION ALL
-			SELECT uniq_code, part_number, part_name, NULL::text, uom, 'Indirect Material'::text
+			SELECT uniq_code, part_number, part_name, NULL::text, uom, 'Indirect Material'::text AS material_type
 			  FROM indirect_raw_materials WHERE deleted_at IS NULL
 			UNION ALL
-			SELECT uniq_code, part_number, part_name, NULL::text, NULL::text, 'Subcon'::text
+			SELECT uniq_code, part_number, part_name, NULL::text, NULL::text, 'Subcon'::text AS material_type
 			  FROM subcon_inventories     WHERE deleted_at IS NULL
 			UNION ALL
-			SELECT uniq, NULL::text, NULL::text, NULL::text, NULL::text, 'Product Return'::text
+			SELECT uniq, NULL::text, NULL::text, NULL::text, NULL::text, 'Product Return'::text AS material_type
 			  FROM product_returns
 		) t
 		WHERE ($1 = ''

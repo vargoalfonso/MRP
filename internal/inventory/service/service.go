@@ -1233,7 +1233,8 @@ func sourceFlagToReason(sourceFlag *string, movementType string) string {
 	if sourceFlag != nil {
 		switch *sourceFlag {
 		case string(inventoryconst.SourceQCApprove):
-			return "Delivery Notes"
+			// Incoming yang di-approve dari QC Incoming (action-ui) ditampilkan sebagai "Scan".
+			return "Scan"
 		case string(inventoryconst.SourceWOApprove):
 			return "WO Approved"
 		case string(inventoryconst.SourceWOReserve):

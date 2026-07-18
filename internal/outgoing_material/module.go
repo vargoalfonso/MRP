@@ -44,9 +44,12 @@ func NewHTTPModule(
 
 // RegisterRoutes registers all Outgoing Raw Material endpoints.
 //
-//	GET    /api/v1/outgoing-raw-materials        list transactions
-//	POST   /api/v1/outgoing-raw-materials        create (process) outgoing transaction
-//	GET    /api/v1/outgoing-raw-materials/:id    detail
+//	GET    /api/v1/outgoing-raw-materials                 list transactions
+//	POST   /api/v1/outgoing-raw-materials                 create (process) outgoing transaction
+//	GET    /api/v1/outgoing-raw-materials/:id             detail
+//	PUT    /api/v1/outgoing-raw-materials/:id             update (auto re-calculates stock)
+//	DELETE /api/v1/outgoing-raw-materials/:id             soft delete (stock is NOT restored)
+//	POST   /api/v1/outgoing-raw-materials/:id/restore-stock  manually return the quantity back to stock
 func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	auth := authMiddleware.JWTMiddleware(m.authenticator)
 	perm := func(resource, action string) gin.HandlerFunc {
@@ -59,4 +62,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	g.POST("", perm("outgoing_raw_material", "create"), m.base.RunAction(m.handler.CreateOutgoingRM))
 	g.GET("/:id", perm("outgoing_raw_material", "view"), m.base.RunAction(m.handler.GetOutgoingRMByID))
 	g.GET("/form-options", perm("outgoing_raw_material", "view"), m.base.RunAction(m.handler.GetFormOptions))
+	g.PUT("/:id", perm("outgoing_raw_material", "update"), m.base.RunAction(m.handler.UpdateOutgoingRM))
+	g.DELETE("/:id", perm("outgoing_raw_material", "delete"), m.base.RunAction(m.handler.DeleteOutgoingRM))
+	g.POST("/:id/restore-stock", perm("outgoing_raw_material", "update"), m.base.RunAction(m.handler.RestoreStock))
 }

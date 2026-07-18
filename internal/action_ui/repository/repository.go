@@ -190,10 +190,10 @@ func (r *repo) CreateIncomingScan(ctx context.Context, req models.IncomingScanRe
 			return err
 		}
 
-		// Write incoming_scan movement log — audit trail before QC approval
-		if err := r.writeScanMovementLogTx(tx, dnItem, req, scannedBy); err != nil {
-			return err
-		}
+		// NOTE: history log intentionally NOT written at submit-to-QC time.
+		// The raw-material history log is created only when QC Incoming is approved
+		// (see qc/repository upsertRawMaterial, source_flag=qc_approve).
+		// Scan audit trail is still preserved in incoming_receiving_scans.
 
 		dnItemResp, err := r.buildIncomingScanDNItem(ctx, tx, dnItem)
 		if err != nil {

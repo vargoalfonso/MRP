@@ -22,7 +22,7 @@ type inventoryHelper struct {
 }
 
 // postToInventoryByDNType routes to the appropriate inventory table based on DN type.
-func (r *repo) postToInventoryByDNType(tx *gorm.DB, dnType string, itemUniqCode string, approvedQty int, weightKg *float64, uom *string, warehouseLocation *string, createdBy string, DNID int64) error {
+func (r *repo) postToInventoryByDNType(tx *gorm.DB, dnType string, itemUniqCode string, approvedQty int, weightKg *float64, uom *string, warehouseLocation *string, createdBy string, DNID int64, packingNumber *string) error {
 	createdBy = normalizeActor(createdBy)
 
 	var dnNumber string
@@ -39,11 +39,11 @@ func (r *repo) postToInventoryByDNType(tx *gorm.DB, dnType string, itemUniqCode 
 
 	switch strings.ToUpper(strings.TrimSpace(dnType)) {
 	case "RM", "RAW MATERIAL":
-		return r.upsertRawMaterial(tx, itemUniqCode, float64(approvedQty), weightKg, uom, warehouseLocation, createdBy, dnNumber)
+		return r.upsertRawMaterial(tx, itemUniqCode, float64(approvedQty), weightKg, uom, warehouseLocation, createdBy, dnNumber, packingNumber)
 	case "IRM", "IB", "INDIRECT", "INDIRECT RAW MATERIAL":
-		return r.upsertIndirectRawMaterial(tx, itemUniqCode, float64(approvedQty), weightKg, uom, warehouseLocation, createdBy)
+		return r.upsertIndirectRawMaterial(tx, itemUniqCode, float64(approvedQty), weightKg, uom, warehouseLocation, createdBy, packingNumber)
 	case "SC", "SUBCON", "SUBCON MATERIAL", "SUBCON RAW MATERIAL", "SUB CON", "SUB-CON":
-		return r.upsertSubconInventory(tx, itemUniqCode, float64(approvedQty), weightKg, uom, createdBy)
+		return r.upsertSubconInventory(tx, itemUniqCode, float64(approvedQty), weightKg, uom, createdBy, packingNumber)
 	default:
 		return nil
 	}
@@ -131,6 +131,7 @@ func (r *repo) upsertRawMaterial(
 	warehouseLocation *string,
 	createdBy string,
 	dnNumber string,
+	packingNumber *string,
 ) error {
 
 	payload := map[string]string{
@@ -252,6 +253,7 @@ func (r *repo) upsertRawMaterial(
 			QtyChange:    approvedQty,
 			WeightChange: weightKg,
 			SourceFlag:   strPtr("qc_approve"),
+			ReferenceID:  packingNumber,
 			LoggedBy:     &createdBy,
 			LoggedAt:     now,
 		}); err != nil {
@@ -297,6 +299,7 @@ func (r *repo) upsertRawMaterial(
 		QtyChange:    approvedQty,
 		WeightChange: weightKg,
 		SourceFlag:   strPtr("qc_approve"),
+		ReferenceID:  packingNumber,
 		LoggedBy:     &createdBy,
 		LoggedAt:     now,
 	}); err != nil {
@@ -315,6 +318,7 @@ func (r *repo) upsertIndirectRawMaterial(
 	uom *string,
 	warehouseLocation *string,
 	createdBy string,
+	packingNumber *string,
 ) error {
 
 	var irm invModels.IndirectRawMaterial
@@ -413,6 +417,7 @@ func (r *repo) upsertIndirectRawMaterial(
 			QtyChange:    approvedQty,
 			WeightChange: weightKg,
 			SourceFlag:   strPtr("qc_approve"),
+			ReferenceID:  packingNumber,
 			LoggedBy:     &createdBy,
 			LoggedAt:     now,
 		}); err != nil {
@@ -457,6 +462,7 @@ func (r *repo) upsertIndirectRawMaterial(
 		QtyChange:    approvedQty,
 		WeightChange: weightKg,
 		SourceFlag:   strPtr("qc_approve"),
+		ReferenceID:  packingNumber,
 		LoggedBy:     &createdBy,
 		LoggedAt:     now,
 	}); err != nil {
@@ -467,7 +473,7 @@ func (r *repo) upsertIndirectRawMaterial(
 }
 
 // upsertSubconInventory creates or updates subcon inventory entry.
-func (r *repo) upsertSubconInventory(tx *gorm.DB, itemUniqCode string, approvedQty float64, weightKg *float64, uom *string, createdBy string) error {
+func (r *repo) upsertSubconInventory(tx *gorm.DB, itemUniqCode string, approvedQty float64, weightKg *float64, uom *string, createdBy string, packingNumber *string) error {
 	var si invModels.SubconInventory
 
 	result := tx.Where("uniq_code = ? AND deleted_at IS NULL", itemUniqCode).
@@ -502,6 +508,7 @@ func (r *repo) upsertSubconInventory(tx *gorm.DB, itemUniqCode string, approvedQ
 			QtyChange:    approvedQty,
 			WeightChange: nil,
 			SourceFlag:   strPtr("qc_approve"),
+			ReferenceID:  packingNumber,
 			LoggedBy:     &createdBy,
 			LoggedAt:     now,
 		}); err != nil {
@@ -541,6 +548,7 @@ func (r *repo) upsertSubconInventory(tx *gorm.DB, itemUniqCode string, approvedQ
 		QtyChange:    approvedQty,
 		WeightChange: nil,
 		SourceFlag:   strPtr("qc_approve"),
+		ReferenceID:  packingNumber,
 		LoggedBy:     &createdBy,
 		LoggedAt:     now,
 	}); err != nil {
