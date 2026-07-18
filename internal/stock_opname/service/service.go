@@ -73,7 +73,7 @@ func (s *service) ListUniqOptions(ctx context.Context, q stockModels.FormOptions
 	}
 	items := make([]stockModels.UniqOption, 0, len(rows))
 	for i := range rows {
-		items = append(items, stockModels.UniqOption{UniqCode: rows[i].UniqCode, PartNumber: rows[i].PartNumber, PartName: rows[i].PartName, UOM: rows[i].UOM, SystemQty: rows[i].SystemQty, WeightKg: rows[i].WeightKg})
+		items = append(items, stockModels.UniqOption{UniqCode: rows[i].UniqCode, PartNumber: rows[i].PartNumber, PartName: rows[i].PartName, UOM: rows[i].UOM, SystemQty: rows[i].SystemQty, WeightKg: rows[i].WeightKg, RawMaterialType: rows[i].RawMaterialType})
 	}
 	return items, nil
 }

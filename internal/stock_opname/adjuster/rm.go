@@ -25,7 +25,7 @@ func (a *RMAdjuster) ResolveUniq(ctx context.Context, tx *gorm.DB, uniqCode stri
 	if err != nil {
 		return nil, apperror.Internal("resolve RM uniq: " + err.Error())
 	}
-	return &UniqSnapshot{EntityID: &row.ID, PartNumber: row.PartNumber, PartName: row.PartName, UOM: row.UOM, SystemQty: row.StockQty, WeightKg: row.StockWeightKg}, nil
+	return &UniqSnapshot{EntityID: &row.ID, PartNumber: row.PartNumber, PartName: row.PartName, UOM: row.UOM, SystemQty: row.StockQty, WeightKg: row.StockWeightKg, RawMaterialType: row.RawMaterialType}, nil
 }
 
 func (a *RMAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q string, limit int) ([]UniqSnapshotResult, error) {
@@ -42,7 +42,7 @@ func (a *RMAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q string, lim
 	}
 	items := make([]UniqSnapshotResult, 0, len(rows))
 	for i := range rows {
-		items = append(items, UniqSnapshotResult{UniqCode: rows[i].UniqCode, UniqSnapshot: UniqSnapshot{EntityID: &rows[i].ID, PartNumber: rows[i].PartNumber, PartName: rows[i].PartName, UOM: rows[i].UOM, SystemQty: rows[i].StockQty, WeightKg: rows[i].StockWeightKg}})
+		items = append(items, UniqSnapshotResult{UniqCode: rows[i].UniqCode, UniqSnapshot: UniqSnapshot{EntityID: &rows[i].ID, PartNumber: rows[i].PartNumber, PartName: rows[i].PartName, UOM: rows[i].UOM, SystemQty: rows[i].StockQty, WeightKg: rows[i].StockWeightKg, RawMaterialType: rows[i].RawMaterialType}})
 	}
 	return items, nil
 }
