@@ -48,6 +48,13 @@ func New(repo deliveryNoteRepo.IDeliveryNoteRepository, db *gorm.DB, approvalRep
 	}
 }
 
+func resolveSupplierItemUniqCode(poItem models.PurchaseOrderItem) string {
+	if childUniqCode := strings.TrimSpace(poItem.ChildUniqCode); childUniqCode != "" {
+		return childUniqCode
+	}
+	return strings.TrimSpace(poItem.ItemUniqCode)
+}
+
 // =========================
 // CRUD
 // =========================
@@ -187,10 +194,30 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 				return fmt.Errorf("qty over %s", it.ItemUniqCode)
 			}
 
+			supplierItemUniqCode := resolveSupplierItemUniqCode(poItem)
+			pcsPerKanban, err := s.repo.GetSupplierItemPcsPerKanban(ctx, po.SupplierID, supplierItemUniqCode)
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return fmt.Errorf(
+						"Pcs/Kanban Supplier Item %s untuk UNIQ PO %s belum tersedia",
+						supplierItemUniqCode,
+						it.ItemUniqCode,
+					)
+				}
+				return fmt.Errorf("gagal mengambil Supplier Item %s untuk UNIQ PO %s: %w", supplierItemUniqCode, it.ItemUniqCode, err)
+			}
+			if pcsPerKanban <= 0 {
+				return fmt.Errorf(
+					"Pcs/Kanban Supplier Item %s untuk UNIQ PO %s harus lebih dari 0",
+					supplierItemUniqCode,
+					it.ItemUniqCode,
+				)
+			}
+
 			kanban, err := s.repo.GetKanbanByItemCode(ctx, it.ItemUniqCode)
 			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
-					// Buat Kanban baru
+					// Preserve the existing DN relation by creating its kanban record when absent.
 					totalKanban, err := s.repo.CountKanban(ctx)
 					if err != nil {
 						return err
@@ -203,10 +230,10 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 					data := models.KanbanParameter{
 						KanbanNumber: kanbanNumber,
 						ItemUniqCode: it.ItemUniqCode,
-						KanbanQty:    0, // isi default
+						KanbanQty:    0,
 						MinStock:     0,
-						MaxStock:     int(it.Qty), // sesuaikan dengan qty DN
-						Status:       "ACTIVE",    // sesuaikan
+						MaxStock:     int(it.Qty),
+						Status:       "ACTIVE",
 					}
 
 					if err := s.repo.CreateKanban(ctx, &data); err != nil {
@@ -218,9 +245,6 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 					return err
 				}
 			}
-
-			// lanjut proses
-			fmt.Println(kanban.KanbanNumber)
 
 			date, err := time.Parse("02/01/2006", it.IncomingDate)
 			if err != nil {
@@ -243,7 +267,7 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 				UOM:           poItem.UOM,
 				Weight:        int64(poItem.WeightKg),
 				KanbanID:      kanban.ID,
-				PcsPerKanban:  poItem.PcsPerKanban,
+				PcsPerKanban:  pcsPerKanban,
 				PackingNumber: packing,
 				DateIncoming:  &date,
 				Check:         "progress",
@@ -728,6 +752,19 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.PreviewD
 	items := make([]models.PreviewDNItemResponse, 0, len(poItems))
 
 	for i, poItem := range poItems {
+		supplierItemUniqCode := resolveSupplierItemUniqCode(poItem)
+		pcsPerKanban, supplierItemErr := s.repo.GetSupplierItemPcsPerKanban(ctx, po.SupplierID, supplierItemUniqCode)
+		switch {
+		case errors.Is(supplierItemErr, gorm.ErrRecordNotFound):
+			pcsPerKanban = 0
+		case supplierItemErr != nil:
+			return nil, fmt.Errorf(
+				"gagal mengambil Supplier Item %s untuk UNIQ PO %s: %w",
+				supplierItemUniqCode,
+				poItem.ItemUniqCode,
+				supplierItemErr,
+			)
+		}
 
 		seq := fmt.Sprintf("%04d", i+1)
 		packingNumber := fmt.Sprintf("%s-PKG-%s", dnNumber, seq)
@@ -739,7 +776,7 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.PreviewD
 			RemainingQty:  int64(poItem.OrderedQty), // lebih masuk akal daripada 0
 			UOM:           poItem.UOM,
 			OrderQty:      int64(poItem.OrderedQty),
-			PcsPerKanban:  poItem.PcsPerKanban,
+			PcsPerKanban:  pcsPerKanban,
 			PackingNumber: packingNumber,
 			DateIncoming:  time.Now().Format("02/01/2006"),
 		})

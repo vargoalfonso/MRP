@@ -126,6 +126,7 @@ type PurchaseOrderItem struct {
 	PoID            int64     `json:"po_id" db:"po_id"`
 	LineNo          int64     `json:"line_no" db:"line_no"`
 	ItemUniqCode    string    `json:"item_uniq_code" db:"item_uniq_code"`
+	ChildUniqCode   string    `json:"child_uniq_code" db:"child_uniq_code"`
 	ProductModel    string    `json:"product_model" db:"product_model"`
 	MaterialType    string    `json:"material_type" db:"material_type"`
 	PartName        string    `json:"part_name" db:"part_name"`
