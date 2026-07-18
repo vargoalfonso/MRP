@@ -187,21 +187,53 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 				return fmt.Errorf("qty over %s", it.ItemUniqCode)
 			}
 
-			kanban, err := s.repo.GetKanbanByItemCode(ctx, it.ItemUniqCode)
+			pcsPerKanban, err := s.repo.GetSupplierItemPcsPerKanban(ctx, po.SupplierID, it.ItemUniqCode)
 			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
 					return fmt.Errorf(
-						"konfigurasi Pcs/Kanban untuk UNIQ %s belum tersedia; lengkapi Kanban Parameter aktif terlebih dahulu",
+						"Pcs/Kanban Supplier Item untuk supplier PO dan UNIQ %s belum tersedia",
 						it.ItemUniqCode,
 					)
 				}
-				return fmt.Errorf("gagal mengambil Kanban Parameter untuk UNIQ %s: %w", it.ItemUniqCode, err)
+				return fmt.Errorf("gagal mengambil Supplier Item untuk UNIQ %s: %w", it.ItemUniqCode, err)
 			}
-			if kanban.KanbanQty <= 0 {
+			if pcsPerKanban <= 0 {
 				return fmt.Errorf(
-					"konfigurasi Pcs/Kanban untuk UNIQ %s harus lebih dari 0",
+					"Pcs/Kanban Supplier Item untuk supplier PO dan UNIQ %s harus lebih dari 0",
 					it.ItemUniqCode,
 				)
+			}
+
+			kanban, err := s.repo.GetKanbanByItemCode(ctx, it.ItemUniqCode)
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					// Preserve the existing DN relation by creating its kanban record when absent.
+					totalKanban, err := s.repo.CountKanban(ctx)
+					if err != nil {
+						return err
+					}
+
+					totalPO := totalKanban + 1
+					formatted := fmt.Sprintf("%04d", totalPO)
+					kanbanNumber := fmt.Sprintf("KBN-%d-%s", time.Now().Year(), formatted)
+
+					data := models.KanbanParameter{
+						KanbanNumber: kanbanNumber,
+						ItemUniqCode: it.ItemUniqCode,
+						KanbanQty:    0,
+						MinStock:     0,
+						MaxStock:     int(it.Qty),
+						Status:       "ACTIVE",
+					}
+
+					if err := s.repo.CreateKanban(ctx, &data); err != nil {
+						return err
+					}
+
+					kanban = &data
+				} else {
+					return err
+				}
 			}
 
 			date, err := time.Parse("02/01/2006", it.IncomingDate)
@@ -225,7 +257,7 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 				UOM:           poItem.UOM,
 				Weight:        int64(poItem.WeightKg),
 				KanbanID:      kanban.ID,
-				PcsPerKanban:  int64(kanban.KanbanQty),
+				PcsPerKanban:  pcsPerKanban,
 				PackingNumber: packing,
 				DateIncoming:  &date,
 				Check:         "progress",
@@ -710,16 +742,15 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.PreviewD
 	items := make([]models.PreviewDNItemResponse, 0, len(poItems))
 
 	for i, poItem := range poItems {
-		pcsPerKanban := int64(0)
-		kanban, kanbanErr := s.repo.GetKanbanByItemCode(ctx, poItem.ItemUniqCode)
+		pcsPerKanban, supplierItemErr := s.repo.GetSupplierItemPcsPerKanban(ctx, po.SupplierID, poItem.ItemUniqCode)
 		switch {
-		case kanbanErr == nil && kanban.KanbanQty > 0:
-			pcsPerKanban = int64(kanban.KanbanQty)
-		case kanbanErr != nil && !errors.Is(kanbanErr, gorm.ErrRecordNotFound):
+		case errors.Is(supplierItemErr, gorm.ErrRecordNotFound):
+			pcsPerKanban = 0
+		case supplierItemErr != nil:
 			return nil, fmt.Errorf(
-				"gagal mengambil Kanban Parameter untuk UNIQ %s: %w",
+				"gagal mengambil Supplier Item untuk UNIQ %s: %w",
 				poItem.ItemUniqCode,
-				kanbanErr,
+				supplierItemErr,
 			)
 		}
 

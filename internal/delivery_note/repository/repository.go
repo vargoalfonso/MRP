@@ -30,6 +30,7 @@ type IDeliveryNoteRepository interface {
 	GetDNSummaryByPO(ctx context.Context, poNumber string) (*DNCountSummary, error)
 	GetUsedQtyByItem(ctx context.Context, itemCode string) (int64, error)
 	GetKanbanByItemCode(ctx context.Context, code string) (*models.KanbanParameter, error)
+	GetSupplierItemPcsPerKanban(ctx context.Context, supplierID int64, itemCode string) (int64, error)
 
 	GetPOItemByPackingNumber(ctx context.Context, packing string) (*models.DeliveryNoteItem, error)
 	GetDNByID(ctx context.Context, id int64) (*models.DeliveryNote, error)
@@ -93,12 +94,35 @@ func (r *repository) GetKanbanByItemCode(ctx context.Context, code string) (*mod
 	var k models.KanbanParameter
 
 	err := r.db.WithContext(ctx).
-		Where("LOWER(item_uniq_code) = LOWER(?)", strings.TrimSpace(code)).
-		Where("status ILIKE ?", "active").
-		Order("id ASC").
+		Where("item_uniq_code = ?", code).
 		First(&k).Error
 
 	return &k, err
+}
+
+func (r *repository) GetSupplierItemPcsPerKanban(ctx context.Context, supplierID int64, itemCode string) (int64, error) {
+	var result struct {
+		PcsPerKanban *int64 `gorm:"column:pcs_per_kanban"`
+	}
+
+	err := r.db.WithContext(ctx).
+		Table("supplier_item AS si").
+		Select("si.pcs_per_kanban").
+		Joins("JOIN suppliers AS s ON s.uuid = si.supplier_uuid AND s.deleted_at IS NULL").
+		Where("s.id = ?", supplierID).
+		Where("LOWER(si.uniq_code) = LOWER(?)", strings.TrimSpace(itemCode)).
+		Where("si.status ILIKE ?", "active").
+		Where("si.deleted_at IS NULL").
+		Order("si.id ASC").
+		Take(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	if result.PcsPerKanban == nil {
+		return 0, nil
+	}
+
+	return *result.PcsPerKanban, nil
 }
 
 func (r *repository) GetDNSummaryByPO(ctx context.Context, poNumber string) (*DNCountSummary, error) {
