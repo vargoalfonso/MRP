@@ -445,6 +445,22 @@ func buildHistoryQuery(inventoryType, uniqCode, from, to string) (string, string
 		}
 		w := joinWhere(where)
 		return `SELECT COUNT(*)` + base + w, `SELECT iml.uniq_code, COALESCE(iml.reference_id, NULL)::varchar AS packing, iml.qty_change, iml.movement_type AS reason, irm.stock_qty AS qty, iml.logged_at AS last_update` + base + w + ` ORDER BY iml.logged_at DESC LIMIT ? OFFSET ?`, args
+	case stockModels.InventoryTypeSubcon:
+		base := ` FROM inventory_movement_logs iml LEFT JOIN subcon_inventories si ON si.id = iml.entity_id WHERE iml.movement_category = 'subcon' AND iml.movement_type = 'stock_opname' `
+		if uniqCode != "" {
+			where = append(where, "iml.uniq_code = ?")
+			args = append(args, uniqCode)
+		}
+		if from != "" {
+			where = append(where, "iml.logged_at >= ?")
+			args = append(args, from)
+		}
+		if to != "" {
+			where = append(where, "iml.logged_at <= ?")
+			args = append(args, to+" 23:59:59")
+		}
+		w := joinWhere(where)
+		return `SELECT COUNT(*)` + base + w, `SELECT iml.uniq_code, COALESCE(iml.reference_id, NULL)::varchar AS packing, iml.qty_change, iml.movement_type AS reason, si.stock_at_vendor_qty AS qty, iml.logged_at AS last_update` + base + w + ` ORDER BY iml.logged_at DESC LIMIT ? OFFSET ?`, args
 	default:
 		base := ` FROM wip_logs wl JOIN wip_items wi ON wi.id = wl.wip_item_id WHERE wl.action = 'stock_opname' `
 		if uniqCode != "" {
