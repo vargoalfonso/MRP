@@ -98,6 +98,11 @@ type CreateSubconInventoryRequest struct {
 	DateDelivery     *time.Time `json:"date_delivery"`
 }
 
+// ApproveSubconInventoryRequest carries the optional note for a status-only approval/rejection.
+type ApproveSubconInventoryRequest struct {
+	Notes *string `json:"notes"`
+}
+
 type UpdateSubconInventoryRequest struct {
 	PartNumber       *string    `json:"part_number"`
 	PartName         *string    `json:"part_name"`

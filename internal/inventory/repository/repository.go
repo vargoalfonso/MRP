@@ -124,6 +124,11 @@ type SubconRow struct {
 	SafetyStockQty   *float64   `gorm:"column:safety_stock_qty"`
 	DateDelivery     *time.Time `gorm:"column:date_delivery"`
 	Status           string     `gorm:"column:status"`
+	ApprovalStatus   string     `gorm:"column:approval_status"`
+	ApprovedBy       *string    `gorm:"column:approved_by"`
+	ApprovedAt       *time.Time `gorm:"column:approved_at"`
+	SourceType       *string    `gorm:"column:source_type"`
+	SourceRef        *string    `gorm:"column:source_ref"`
 	CreatedBy        *string    `gorm:"column:created_by"`
 	CreatedAt        time.Time  `gorm:"column:created_at"`
 	UpdatedBy        *string    `gorm:"column:updated_by"`
@@ -222,6 +227,12 @@ type IRepository interface {
 	CreateSubconInventory(ctx context.Context, si *invModels.SubconInventory) error
 	UpdateSubconInventory(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.SubconInventory, error)
 	SoftDeleteSubconInventory(ctx context.Context, id int64, deletedBy string) error
+	ApproveSubconInventory(ctx context.Context, id int64, approvedBy, status string) (*invModels.SubconInventory, error)
+	// UpsertSubconFromSource inserts/updates an auto-generated subcon row keyed by (source_type, source_ref).
+	// It never overwrites approval_status/approved_by/approved_at on existing rows.
+	UpsertSubconFromSource(ctx context.Context, si *invModels.SubconInventory) error
+	// ListSubconPOSources reads subcon purchase-order lines (po_type = 'SUBCON') to auto-populate Stock In Vendor.
+	ListSubconPOSources(ctx context.Context) ([]SubconSourceRow, error)
 
 	// Incoming scans (cross-type tab view)
 	ListIncoming(ctx context.Context, f IncomingListFilter) ([]IncomingRow, int64, error)
@@ -680,6 +691,88 @@ func (r *repo) SoftDeleteSubconInventory(ctx context.Context, id int64, deletedB
 		return apperror.New(http.StatusNotFound, apperror.CodeNotFound, "subcon inventory tidak ditemukan")
 	}
 	return nil
+}
+
+// ApproveSubconInventory sets approval_status (approved | rejected) without touching stock.
+func (r *repo) ApproveSubconInventory(ctx context.Context, id int64, approvedBy, status string) (*invModels.SubconInventory, error) {
+	now := time.Now()
+	result := r.db.WithContext(ctx).Model(&invModels.SubconInventory{}).
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(map[string]interface{}{
+			"approval_status": status,
+			"approved_by":     &approvedBy,
+			"approved_at":     &now,
+			"updated_by":      &approvedBy,
+			"updated_at":      now,
+		})
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "subcon inventory tidak ditemukan")
+	}
+	return r.GetSubconByID(ctx, id)
+}
+
+// SubconSourceRow is a flattened subcon purchase-order line used to auto-populate Stock In Vendor.
+type SubconSourceRow struct {
+	PONumber     string     `gorm:"column:po_number"`
+	Period       string     `gorm:"column:period"`
+	SupplierID   *int64     `gorm:"column:supplier_id"`
+	SupplierName *string    `gorm:"column:supplier_name"`
+	ItemUniqCode string     `gorm:"column:item_uniq_code"`
+	PartName     *string    `gorm:"column:part_name"`
+	PartNumber   *string    `gorm:"column:part_number"`
+	UOM          *string    `gorm:"column:uom"`
+	OrderedQty   float64    `gorm:"column:ordered_qty"`
+	PODate       *time.Time `gorm:"column:po_date"`
+}
+
+// ListSubconPOSources reads all subcon PO lines (po_type = 'SUBCON') joined with supplier names.
+func (r *repo) ListSubconPOSources(ctx context.Context) ([]SubconSourceRow, error) {
+	var rows []SubconSourceRow
+	err := r.db.WithContext(ctx).
+		Table("purchase_orders po").
+		Joins("JOIN purchase_order_items poi ON poi.po_id = po.po_id").
+		Joins("LEFT JOIN suppliers s ON s.id = po.supplier_id").
+		Where("po.po_type = ?", "SUBCON").
+		Select(`po.po_number AS po_number, po.period AS period, po.supplier_id AS supplier_id,
+			s.supplier_name AS supplier_name, poi.item_uniq_code AS item_uniq_code,
+			poi.part_name AS part_name, poi.part_number AS part_number, poi.uom AS uom,
+			poi.ordered_qty AS ordered_qty, po.po_date AS po_date`).
+		Scan(&rows).Error
+	return rows, err
+}
+
+// UpsertSubconFromSource inserts a new auto-synced subcon row (approval_status = 'pending')
+// or refreshes source-derived fields on an existing one. Approval fields are never overwritten.
+func (r *repo) UpsertSubconFromSource(ctx context.Context, si *invModels.SubconInventory) error {
+	if si.SourceType == nil || si.SourceRef == nil {
+		return fmt.Errorf("UpsertSubconFromSource: source_type and source_ref are required")
+	}
+	var existing invModels.SubconInventory
+	err := r.db.WithContext(ctx).
+		Where("source_type = ? AND source_ref = ? AND deleted_at IS NULL", *si.SourceType, *si.SourceRef).
+		First(&existing).Error
+	if err == gorm.ErrRecordNotFound {
+		return r.db.WithContext(ctx).Create(si).Error
+	}
+	if err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Model(&invModels.SubconInventory{}).
+		Where("id = ?", existing.ID).
+		Updates(map[string]interface{}{
+			"part_number":        si.PartNumber,
+			"part_name":          si.PartName,
+			"po_number":          si.PONumber,
+			"po_period":          si.POPeriod,
+			"subcon_vendor_id":   si.SubconVendorID,
+			"subcon_vendor_name": si.SubconVendorName,
+			"total_po_qty":       si.TotalPOQty,
+			"date_delivery":      si.DateDelivery,
+			"updated_at":         time.Now(),
+		}).Error
 }
 
 // ---------------------------------------------------------------------------

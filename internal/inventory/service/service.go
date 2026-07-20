@@ -48,6 +48,11 @@ type IService interface {
 	UpdateSubconInventory(ctx context.Context, id int64, req invModels.UpdateSubconInventoryRequest, updatedBy string) (*invModels.SubconInventory, error)
 	DeleteSubconInventory(ctx context.Context, id int64, deletedBy string) error
 	GetSubconHistory(ctx context.Context, id int64, p pagination.PaginationInput) (*invModels.HistoryLogResponse, error)
+	// ApproveSubconInventory / RejectSubconInventory only change approval_status (no stock movement).
+	ApproveSubconInventory(ctx context.Context, id int64, approvedBy string) (*invModels.SubconInventory, error)
+	RejectSubconInventory(ctx context.Context, id int64, approvedBy string) (*invModels.SubconInventory, error)
+	// SyncSubconInVendor auto-generates Stock In Vendor rows from subcon PO lines (idempotent).
+	SyncSubconInVendor(ctx context.Context) error
 
 	// Incoming scans (tab view - shared)
 	ListIncoming(ctx context.Context, dnType string, p pagination.InventoryIncomingPaginationInput) (*invModels.IncomingListResponse, error)
@@ -579,6 +584,10 @@ func (s *service) GetIndirectHistory(ctx context.Context, id int64, p pagination
 // ---------------------------------------------------------------------------
 
 func (s *service) ListSubconInventory(ctx context.Context, p pagination.InventorySubconPaginationInput) (*invModels.SubconInventoryListResponse, error) {
+	// Auto-populate Stock In Vendor from subcon PO lines before listing ("auto muncul").
+	// Best-effort: a sync failure must not block reading existing rows.
+	_ = s.SyncSubconInVendor(ctx)
+
 	f := repository.SubconListFilter{
 		Search:         p.Search,
 		PONumber:       p.PONumber,
@@ -620,6 +629,60 @@ func (s *service) ListSubconInventory(ctx context.Context, p pagination.Inventor
 
 func (s *service) GetSubconByID(ctx context.Context, id int64) (*invModels.SubconInventory, error) {
 	return s.repo.GetSubconByID(ctx, id)
+}
+
+// ApproveSubconInventory marks a subcon row as approved (status-only; no stock movement).
+func (s *service) ApproveSubconInventory(ctx context.Context, id int64, approvedBy string) (*invModels.SubconInventory, error) {
+	return s.repo.ApproveSubconInventory(ctx, id, approvedBy, "approved")
+}
+
+// RejectSubconInventory marks a subcon row as rejected (status-only; no stock movement).
+func (s *service) RejectSubconInventory(ctx context.Context, id int64, approvedBy string) (*invModels.SubconInventory, error) {
+	return s.repo.ApproveSubconInventory(ctx, id, approvedBy, "rejected")
+}
+
+// SyncSubconInVendor reads subcon PO lines and upserts one auto-generated Stock In Vendor row
+// per PO line. New rows start as approval_status = 'pending'; existing rows keep their approval.
+func (s *service) SyncSubconInVendor(ctx context.Context) error {
+	sources, err := s.repo.ListSubconPOSources(ctx)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	for i := range sources {
+		src := sources[i]
+		if strings.TrimSpace(src.ItemUniqCode) == "" || strings.TrimSpace(src.PONumber) == "" {
+			continue
+		}
+		sourceType := "po_subcon"
+		sourceRef := src.PONumber + ":" + src.ItemUniqCode
+		poNumber := src.PONumber
+		period := src.Period
+		totalPO := src.OrderedQty
+		si := invModels.SubconInventory{
+			UUID:             uuid.New(),
+			UniqCode:         sourceRef, // composite keeps uniq_code unique per PO line
+			PartNumber:       src.PartNumber,
+			PartName:         src.PartName,
+			PONumber:         &poNumber,
+			POPeriod:         &period,
+			SubconVendorID:   src.SupplierID,
+			SubconVendorName: src.SupplierName,
+			StockAtVendorQty: 0,
+			TotalPOQty:       &totalPO,
+			DateDelivery:     src.PODate,
+			Status:           "normal",
+			ApprovalStatus:   "pending",
+			SourceType:       &sourceType,
+			SourceRef:        &sourceRef,
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}
+		if err := s.repo.UpsertSubconFromSource(ctx, &si); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *service) CreateSubconInventory(ctx context.Context, req invModels.CreateSubconInventoryRequest, createdBy string) (*invModels.SubconInventoryItem, error) {
@@ -1112,6 +1175,11 @@ func subconRowToItem(r repository.SubconRow) invModels.SubconInventoryItem {
 		SafetyStockQty:   r.SafetyStockQty,
 		DateDelivery:     r.DateDelivery,
 		Status:           r.Status,
+		ApprovalStatus:   r.ApprovalStatus,
+		ApprovedBy:       r.ApprovedBy,
+		ApprovedAt:       r.ApprovedAt,
+		SourceType:       r.SourceType,
+		SourceRef:        r.SourceRef,
 		CreatedBy:        r.CreatedBy,
 		CreatedAt:        r.CreatedAt,
 		UpdatedBy:        r.UpdatedBy,
@@ -1187,6 +1255,11 @@ func subconModelToItem(m invModels.SubconInventory) invModels.SubconInventoryIte
 		SafetyStockQty:   m.SafetyStockQty,
 		DateDelivery:     m.DateDelivery,
 		Status:           m.Status,
+		ApprovalStatus:   m.ApprovalStatus,
+		ApprovedBy:       m.ApprovedBy,
+		ApprovedAt:       m.ApprovedAt,
+		SourceType:       m.SourceType,
+		SourceRef:        m.SourceRef,
 		CreatedBy:        m.CreatedBy,
 		CreatedAt:        m.CreatedAt,
 		UpdatedBy:        m.UpdatedBy,

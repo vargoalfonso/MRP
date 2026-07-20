@@ -32,6 +32,9 @@ type IService interface {
 	CreateFinishedGoods(ctx context.Context, req fgModels.CreateFinishedGoodsRequest, createdBy string) (*fgModels.FinishedGoodsItem, error)
 	BulkCreateFinishedGoods(ctx context.Context, req fgModels.BulkCreateFinishedGoodsRequest, createdBy string) (*fgModels.FGBulkCreateResponse, error)
 	UpdateFinishedGoods(ctx context.Context, id int64, req fgModels.UpdateFinishedGoodsRequest, updatedBy string) (*fgModels.FinishedGoodsItem, error)
+
+	// History Logs tab (In-Out Activity Log)
+	GetHistory(ctx context.Context, uniqCode string, page, limit int) (*fgModels.FGHistoryResponse, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -45,6 +48,88 @@ type service struct {
 
 func New(repo repository.IRepository, db *gorm.DB) IService {
 	return &service{repo: repo, db: db}
+}
+
+// movementReasonLabel maps a raw movement_type to a human-friendly reason
+// shown in the In-Out Activity Log.
+func movementReasonLabel(movementType string) string {
+	switch movementType {
+	case "incoming_production":
+		return "Incoming Production"
+	case "delivery_scan":
+		return "Delivery Notes"
+	case "manual_add":
+		return "Manual Add"
+	case "manual_deduct":
+		return "Manual Deduct"
+	case "stock_opname":
+		return "Stock Opname"
+	case "wo_complete":
+		return "WO Complete"
+	case "delete":
+		return "Delete"
+	default:
+		cleaned := strings.ReplaceAll(movementType, "_", " ")
+		if cleaned == "" {
+			return "-"
+		}
+		return strings.ToUpper(cleaned[:1]) + cleaned[1:]
+	}
+}
+
+// GetHistory returns the In-Out Activity Log for one uniq_code, newest first.
+func (s *service) GetHistory(ctx context.Context, uniqCode string, page, limit int) (*fgModels.FGHistoryResponse, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	offset := (page - 1) * limit
+
+	rows, total, err := s.repo.ListMovementLogs(ctx, uniqCode, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]fgModels.FGMovementLogItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, fgModels.FGMovementLogItem{
+			ID:           row.ID,
+			UniqCode:     row.UniqCode,
+			MovementType: row.MovementType,
+			Reason:       movementReasonLabel(row.MovementType),
+			QtyChange:    row.QtyChange,
+			QtyBefore:    row.QtyBefore,
+			QtyAfter:     row.QtyAfter,
+			WONumber:     row.WONumber,
+			DNNumber:     row.DNNumber,
+			ReferenceID:  row.ReferenceID,
+			Notes:        row.Notes,
+			LoggedBy:     row.LoggedBy,
+			LoggedAt:     row.LoggedAt,
+		})
+	}
+
+	totalPages := 1
+	if limit > 0 {
+		totalPages = int((total + int64(limit) - 1) / int64(limit))
+		if totalPages < 1 {
+			totalPages = 1
+		}
+	}
+
+	return &fgModels.FGHistoryResponse{
+		UniqCode: uniqCode,
+		Items:    items,
+		Pagination: fgModels.FGPagination{
+			Total:      total,
+			Page:       page,
+			Limit:      limit,
+			TotalPages: totalPages,
+		},
+	}, nil
 }
 
 // ---------------------------------------------------------------------------

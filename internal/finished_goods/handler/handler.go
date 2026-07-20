@@ -140,6 +140,33 @@ func (h *HTTPHandler) GetParameterizedSummary(ctx *app.Context) *app.CostumeResp
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/v1/finished-goods/history?uniq_code=...
+// ---------------------------------------------------------------------------
+
+func (h *HTTPHandler) GetHistory(ctx *app.Context) *app.CostumeResponse {
+	uniqCode := strings.TrimSpace(ctx.Query("uniq_code"))
+	if uniqCode == "" {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "uniq_code is required",
+		}
+	}
+
+	p := pagination.Pagination(ctx)
+	data, err := h.svc.GetHistory(ctx.Request.Context(), uniqCode, p.Page, p.Limit)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/v1/finished-goods/form-options/uniq
 // ---------------------------------------------------------------------------
 
