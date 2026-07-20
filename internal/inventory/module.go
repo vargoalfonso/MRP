@@ -76,6 +76,8 @@ func NewHTTPModule(
 //	PUT    /subcon-materials/:id                     update
 //	DELETE /subcon-materials/:id                     soft delete
 //	GET    /subcon-materials/:id/history             movement logs
+//	POST   /subcon-materials/:id/approve             approve (status-only)
+//	POST   /subcon-materials/:id/reject              reject (status-only)
 func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	auth := authMiddleware.JWTMiddleware(m.authenticator)
 	perm := func(resource, action string) gin.HandlerFunc {
@@ -119,6 +121,8 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	sc.PUT("/:id", perm("inventory", "update"), m.base.RunAction(m.handler.UpdateSubconInventory))
 	sc.DELETE("/:id", perm("inventory", "delete"), m.base.RunAction(m.handler.DeleteSubconInventory))
 	sc.GET("/:id/history", perm("inventory", "view"), m.base.RunAction(m.handler.GetSubconHistory))
+	sc.POST("/:id/approve", perm("inventory", "update"), m.base.RunAction(m.handler.ApproveSubconInventory))
+	sc.POST("/:id/reject", perm("inventory", "update"), m.base.RunAction(m.handler.RejectSubconInventory))
 
 	// --- Kanban Summary (async per-row, used by DN list UI) ---
 	g.GET("/kanban-summary", perm("inventory", "view"), m.base.RunAction(m.handler.GetKanbanSummary))

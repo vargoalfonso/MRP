@@ -162,6 +162,11 @@ type SubconInventoryItem struct {
 	SafetyStockQty   *float64   `json:"safety_stock_qty"`
 	DateDelivery     *time.Time `json:"date_delivery"`
 	Status           string     `json:"status"`
+	ApprovalStatus   string     `json:"approval_status"`
+	ApprovedBy       *string    `json:"approved_by"`
+	ApprovedAt       *time.Time `json:"approved_at"`
+	SourceType       *string    `json:"source_type"`
+	SourceRef        *string    `json:"source_ref"`
 	CreatedBy        *string    `json:"created_by"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedBy        *string    `json:"updated_by"`

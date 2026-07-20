@@ -170,3 +170,33 @@ type FGParameterizedSummary struct {
 	Status              string   `json:"status"`
 	ParameterSource     string   `json:"parameter_source"`
 }
+
+// ---------------------------------------------------------------------------
+// History Log (In-Out Activity Log on the FG detail view)
+// ---------------------------------------------------------------------------
+
+// FGMovementLogItem is one row of the In-Out Activity Log, derived from
+// fg_movement_logs. qty_change is the signed stock delta (positive = in,
+// negative = out); qty_after is the resulting balance.
+type FGMovementLogItem struct {
+	ID           int64     `json:"id"`
+	UniqCode     string    `json:"uniq_code"`
+	MovementType string    `json:"movement_type"`
+	Reason       string    `json:"reason"`
+	QtyChange    float64   `json:"qty_change"`
+	QtyBefore    float64   `json:"qty_before"`
+	QtyAfter     float64   `json:"qty_after"`
+	WONumber     *string   `json:"wo_number"`
+	DNNumber     *string   `json:"dn_number"`
+	ReferenceID  *string   `json:"reference_id"` // kanban / packing list reference
+	Notes        *string   `json:"notes"`
+	LoggedBy     *string   `json:"logged_by"`
+	LoggedAt     time.Time `json:"logged_at"`
+}
+
+// FGHistoryResponse is returned by GET /api/v1/finished-goods/history?uniq_code=...
+type FGHistoryResponse struct {
+	UniqCode   string              `json:"uniq_code"`
+	Items      []FGMovementLogItem `json:"items"`
+	Pagination FGPagination        `json:"pagination"`
+}

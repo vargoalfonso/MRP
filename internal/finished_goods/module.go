@@ -51,6 +51,7 @@ func NewHTTPModule(
 //	GET    /api/v1/finished-goods/form-options/uniq      uniq autocomplete for create form
 //	GET    /api/v1/finished-goods/summary                4 dashboard cards
 //	GET    /api/v1/finished-goods/status-monitoring      status monitoring + alerts tab
+//	GET    /api/v1/finished-goods/history                in-out activity log by uniq_code
 //	GET    /api/v1/finished-goods/:id                    detail
 //	PUT    /api/v1/finished-goods/:id                    update (stock, warehouse, wo)
 func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
@@ -67,6 +68,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	fg.GET("/parameterized-summary", perm("finished_goods", "view"), m.base.RunAction(m.handler.GetParameterizedSummary))
 	fg.GET("/summary", perm("finished_goods", "view"), m.base.RunAction(m.handler.GetSummary))
 	fg.GET("/status-monitoring", perm("finished_goods", "view"), m.base.RunAction(m.handler.GetStatusMonitoring))
+	fg.GET("/history", perm("finished_goods", "view"), m.base.RunAction(m.handler.GetHistory))
 
 	fg.GET("", perm("finished_goods", "view"), m.base.RunAction(m.handler.ListFinishedGoods))
 	fg.POST("", perm("finished_goods", "create"), m.base.RunAction(m.handler.CreateFinishedGoods))
