@@ -8,10 +8,11 @@ import (
 )
 
 const (
-	InventoryTypeFG  = "FG"
-	InventoryTypeRM  = "RM"
-	InventoryTypeIDR = "IDR"
-	InventoryTypeWIP = "WIP"
+	InventoryTypeFG     = "FG"
+	InventoryTypeRM     = "RM"
+	InventoryTypeIDR    = "IDR"
+	InventoryTypeWIP    = "WIP"
+	InventoryTypeSubcon = "SUBCON"
 
 	MethodManual = "manual"
 	MethodBulk   = "bulk"
@@ -48,10 +49,11 @@ const (
 )
 
 var ValidInventoryTypes = map[string]struct{}{
-	InventoryTypeFG:  {},
-	InventoryTypeRM:  {},
-	InventoryTypeIDR: {},
-	InventoryTypeWIP: {},
+	InventoryTypeFG:     {},
+	InventoryTypeRM:     {},
+	InventoryTypeIDR:    {},
+	InventoryTypeWIP:    {},
+	InventoryTypeSubcon: {},
 }
 
 type StockOpnameSession struct {
