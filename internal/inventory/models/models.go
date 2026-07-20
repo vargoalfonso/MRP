@@ -126,6 +126,17 @@ type SubconInventory struct {
 	// Status
 	Status string `gorm:"size:32"` // low_on_stock | normal | overstock | above_po
 
+	// Approval workflow (status-only; does not post/move stock).
+	// approval_status: pending | approved | rejected
+	ApprovalStatus string     `gorm:"size:32;default:approved"`
+	ApprovedBy     *string    `gorm:"size:255"`
+	ApprovedAt     *time.Time `gorm:"column:approved_at"`
+
+	// Auto-source tracking (set for rows auto-generated from PO/DN/SO).
+	// source_type: po_subcon | co_po | co_dn | co_so ; source_ref: unique key of the origin line.
+	SourceType *string `gorm:"size:32"`
+	SourceRef  *string `gorm:"size:255"`
+
 	// Audit
 	CreatedBy *string    `gorm:"size:255"`
 	CreatedAt time.Time  `gorm:"not null;default:now()"`

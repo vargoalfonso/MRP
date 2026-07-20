@@ -517,6 +517,48 @@ func (h *HTTPHandler) UpdateSubconInventory(ctx *app.Context) *app.CostumeRespon
 	}
 }
 
+// ApproveSubconInventory approves a subcon row (status-only; no stock movement).
+//
+//	POST /api/v1/inventory/subcon-materials/:id/approve
+func (h *HTTPHandler) ApproveSubconInventory(ctx *app.Context) *app.CostumeResponse {
+	id, ok := parseID(ctx)
+	if !ok {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	data, err := h.svc.ApproveSubconInventory(ctx.Request.Context(), id, userCtx.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
+// RejectSubconInventory rejects a subcon row (status-only; no stock movement).
+//
+//	POST /api/v1/inventory/subcon-materials/:id/reject
+func (h *HTTPHandler) RejectSubconInventory(ctx *app.Context) *app.CostumeResponse {
+	id, ok := parseID(ctx)
+	if !ok {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
+	}
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	data, err := h.svc.RejectSubconInventory(ctx.Request.Context(), id, userCtx.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
 // DeleteSubconInventory soft-deletes a subcon inventory record.
 //
 //	DELETE /api/v1/inventory/subcon-materials/:id

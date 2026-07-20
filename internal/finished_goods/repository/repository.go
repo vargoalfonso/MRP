@@ -49,6 +49,7 @@ type IRepository interface {
 	UpdateFinishedGoods(ctx context.Context, id int64, updates map[string]interface{}) error
 
 	AppendMovementLog(ctx context.Context, log *fgModels.FGMovementLog) error
+	ListMovementLogs(ctx context.Context, uniqCode string, limit, offset int) ([]fgModels.FGMovementLog, int64, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -272,4 +273,27 @@ func (r *repository) AppendMovementLog(ctx context.Context, log *fgModels.FGMove
 		return apperror.Internal("fg movement log: " + err.Error())
 	}
 	return nil
+}
+
+// ListMovementLogs returns the In-Out Activity Log rows for one uniq_code,
+// newest first, with total count for pagination.
+func (r *repository) ListMovementLogs(ctx context.Context, uniqCode string, limit, offset int) ([]fgModels.FGMovementLog, int64, error) {
+	var (
+		rows  []fgModels.FGMovementLog
+		total int64
+	)
+	base := r.db.WithContext(ctx).Model(&fgModels.FGMovementLog{}).
+		Where("uniq_code = ?", uniqCode)
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, apperror.Internal("fg list movement logs count: " + err.Error())
+	}
+	if err := base.
+		Order("logged_at DESC").
+		Order("id DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&rows).Error; err != nil {
+		return nil, 0, apperror.Internal("fg list movement logs: " + err.Error())
+	}
+	return rows, total, nil
 }
