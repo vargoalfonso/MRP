@@ -25,6 +25,7 @@ type DeliveryNote struct {
 	CreatedAt       time.Time          `json:"created_at"`
 	UpdatedAt       time.Time          `json:"updated_at"`
 	MaterialGrade   string             `json:"material_grade" gorm:"column:material_grade"`
+	WONumber        string             `json:"wo_number" gorm:"column:wo_number"` //request, diisi untuk DN Subcon; work order terkait
 	Items           []DeliveryNoteItem `json:"items" gorm:"foreignKey:DNID;references:ID"`
 }
 
@@ -171,6 +172,8 @@ type DeliveryNoteSupplier struct {
 
 	ScannedBy string     `gorm:"column:scanned_by"`
 	ScannedAt *time.Time `gorm:"column:scanned_at"`
+
+	WONumber string `gorm:"column:wo_number"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

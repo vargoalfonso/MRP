@@ -1136,6 +1136,11 @@ func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, perform
 					stringPtr("Create FG from QC Finish"), stringPtr(performedBy)); err != nil {
 					return err
 				}
+				if err := s.appendFGMovementLog(tx, fg.ID, item.ItemUniqCode, "incoming_production",
+					req.TotalProductionQty, 0, req.TotalProductionQty,
+					&wo.WONumber, nil, stringPtr("Masuk FG dari QC Finish (buat baru)"), stringPtr(performedBy)); err != nil {
+					return err
+				}
 			} else if err == nil {
 				beforeQty := fg.StockQty
 				afterQty := beforeQty + req.TotalProductionQty
@@ -1148,6 +1153,11 @@ func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, perform
 					item.ItemUniqCode, &fg.ID, beforeQty, req.TotalProductionQty, afterQty,
 					&wo.WONumber, stringPtr("QC_FINISH"),
 					stringPtr("Add FG stock from QC Finish"), stringPtr(performedBy)); err != nil {
+					return err
+				}
+				if err := s.appendFGMovementLog(tx, fg.ID, item.ItemUniqCode, "incoming_production",
+					req.TotalProductionQty, beforeQty, afterQty,
+					&wo.WONumber, nil, stringPtr("Masuk FG dari QC Finish (tambah stok)"), stringPtr(performedBy)); err != nil {
 					return err
 				}
 			} else {

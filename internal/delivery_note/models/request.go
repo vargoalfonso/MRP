@@ -7,6 +7,7 @@ type CreateDNRequest struct {
 	PONumber string `json:"po_number" validate:"required"`
 	Period   string `json:"period" validate:"required"`
 	Type     string `json:"type" validate:"required"`
+	WONumber string `json:"wo_number"` // optional, diisi untuk DN Subcon
 
 	Items []CreateDNItemRequest `json:"items" validate:"required,dive"`
 }
@@ -77,6 +78,28 @@ type ScanDeliveryRequest struct {
 	KanbanNumber string  `json:"kanban_number"`
 	Qty          float64 `json:"qty"`
 	ScannedBy    string  `json:"scanned_by"`
+	WONumber     string  `json:"wo_number"` // optional, work order untuk DN Subcon OUT
+}
+
+// ScanDeliveryInRequest is used by action-ui "DN Subcon IN" to record goods
+// returning from an external (subcon) process. Based on the work order's
+// poka-yoke process flow, the scanned quantity is routed either to WIP (when a
+// process still remains after subcon) or to Finished Goods (when subcon is the
+// last process).
+type ScanDeliveryInRequest struct {
+	DNNumber     string  `json:"dn_number"`
+	KanbanNumber string  `json:"kanban_number"`
+	Qty          float64 `json:"qty"`
+	ScannedBy    string  `json:"scanned_by"`
+	WONumber     string  `json:"wo_number"`
+}
+
+// ScanDeliveryInResult reports where the returned goods were placed.
+type ScanDeliveryInResult struct {
+	Destination string `json:"destination"` // "WIP" | "Finished Goods"
+	NextProcess string `json:"next_process"`
+	ItemUniq    string `json:"item_uniq_code"`
+	Qty         float64 `json:"qty"`
 }
 
 type SubmitDeliveryRequest struct {
