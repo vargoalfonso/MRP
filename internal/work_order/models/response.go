@@ -252,6 +252,9 @@ type RMProcessingWorkOrderCreateResponse struct {
 	DateIssued         string  `json:"date_issued"`
 	Remarks            *string `json:"remarks"`
 	QRDataURL          *string `json:"qr_data_url"`
+	PreProcessing      bool    `json:"pre_processing"`
+	KanbanNumber       *string `json:"kanban_number"`
+	SizeBreakdown      *string `json:"size_breakdown"`
 }
 
 type RMProcessingWorkOrderListItem struct {

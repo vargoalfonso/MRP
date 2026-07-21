@@ -44,12 +44,13 @@ type RawMaterial struct {
 	StockToCompleteKanban *float64 `gorm:"type:numeric(15,4)"`
 
 	// Audit
-	CreatedBy *string    `gorm:"size:255"`
-	CreatedAt time.Time  `gorm:"not null;default:now()"`
-	UpdatedBy *string    `gorm:"size:255"`
-	UpdatedAt time.Time  `gorm:"not null;default:now()"`
-	DeletedAt *time.Time `gorm:"index"`
-	QR        *string
+	CreatedBy     *string    `gorm:"size:255"`
+	CreatedAt     time.Time  `gorm:"not null;default:now()"`
+	UpdatedBy     *string    `gorm:"size:255"`
+	UpdatedAt     time.Time  `gorm:"not null;default:now()"`
+	DeletedAt     *time.Time `gorm:"index"`
+	QR            *string
+	PreProcessing bool `gorm:"column:pre_processing;not null;default:false"`
 }
 
 func (RawMaterial) TableName() string { return "raw_materials" }

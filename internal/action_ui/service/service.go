@@ -234,15 +234,15 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 	}
 
 	if item.ScanInCount > item.ScanOutCount {
-	now := time.Now()
-	if err := s.repoProduction.DeleteRawMaterialLogsByWOItemID(ctx, item.ID); err != nil {
-		return err
+		now := time.Now()
+		if err := s.repoProduction.DeleteRawMaterialLogsByWOItemID(ctx, item.ID); err != nil {
+			return err
+		}
+		if err := s.saveRawMaterialLogs(ctx, item, req.RawMaterials, req.ScannedBy, now); err != nil {
+			return err
+		}
+		return nil
 	}
-	if err := s.saveRawMaterialLogs(ctx, item, req.RawMaterials, req.ScannedBy, now); err != nil {
-		return err
-	}
-	return nil
-}
 
 	// =====================================
 	// MACHINE
@@ -633,7 +633,86 @@ func (s *service) CompleteProduction(ctx context.Context, woID int64) error {
 		return err
 	}
 
+	// Pre-processing: when a flagged RM processing WO completes, reduce source RM
+	// stock and register the processed target uniq into raw material inventory.
+	if err := s.applyRMPreProcessing(ctx, woID); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+func (s *service) applyRMPreProcessing(ctx context.Context, woID int64) error {
+	var hdr struct {
+		WOKind        string   `gorm:"column:wo_kind"`
+		PreProcessing bool     `gorm:"column:pre_processing"`
+		SourceUniq    *string  `gorm:"column:source_material_uniq"`
+		TargetUniq    *string  `gorm:"column:target_material_uniq"`
+		InputQty      *float64 `gorm:"column:input_qty"`
+		OutputQty     *float64 `gorm:"column:output_qty"`
+		OutputUOM     *string  `gorm:"column:output_uom"`
+	}
+	if err := s.db.WithContext(ctx).Table("work_orders").
+		Select("wo_kind, pre_processing, source_material_uniq, target_material_uniq, input_qty, output_qty, output_uom").
+		Where("id = ?", woID).Take(&hdr).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if !strings.EqualFold(strings.TrimSpace(hdr.WOKind), "rm_processing") || !hdr.PreProcessing {
+		return nil
+	}
+	now := time.Now()
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if hdr.SourceUniq != nil && strings.TrimSpace(*hdr.SourceUniq) != "" && hdr.InputQty != nil && *hdr.InputQty > 0 {
+			if err := tx.Table("raw_materials").
+				Where("uniq_code = ? AND deleted_at IS NULL", strings.TrimSpace(*hdr.SourceUniq)).
+				Updates(map[string]interface{}{
+					"stock_qty":  gorm.Expr("stock_qty - ?", *hdr.InputQty),
+					"updated_at": now,
+				}).Error; err != nil {
+				return err
+			}
+		}
+		if hdr.TargetUniq == nil || strings.TrimSpace(*hdr.TargetUniq) == "" {
+			return nil
+		}
+		target := strings.TrimSpace(*hdr.TargetUniq)
+		outQty := 0.0
+		if hdr.OutputQty != nil {
+			outQty = *hdr.OutputQty
+		}
+		var existingID int64
+		if err := tx.Table("raw_materials").Select("id").
+			Where("uniq_code = ? AND deleted_at IS NULL", target).
+			Limit(1).Scan(&existingID).Error; err != nil {
+			return err
+		}
+		if existingID > 0 {
+			return tx.Table("raw_materials").
+				Where("id = ?", existingID).
+				Updates(map[string]interface{}{
+					"stock_qty":      gorm.Expr("stock_qty + ?", outQty),
+					"pre_processing": true,
+					"rm_source":      "process",
+					"updated_at":     now,
+				}).Error
+		}
+		return tx.Table("raw_materials").Create(map[string]interface{}{
+			"uuid":              uuid.New(),
+			"uniq_code":         target,
+			"raw_material_type": "others",
+			"rm_source":         "process",
+			"stock_qty":         outQty,
+			"status":            "normal",
+			"buy_not_buy":       "not_buy",
+			"pre_processing":    true,
+			"uom":               hdr.OutputUOM,
+			"created_at":        now,
+			"updated_at":        now,
+		}).Error
+	})
 }
 
 func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, performedBy string) error {
@@ -786,7 +865,7 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 			}).Error; err != nil {
 				return err
 			}
-}
+		}
 
 		return nil
 	})
@@ -866,7 +945,7 @@ func (s *service) advanceProcessAfterScanOut(ctx context.Context, tx *gorm.DB, i
 
 			UOM: item.UOM,
 
-			Stock: int(qtyPass),
+			Stock:        int(qtyPass),
 			QtyIn:        int(qtyPass),
 			QtyOut:       0,
 			QtyRemaining: int(qtyPass),
@@ -1108,7 +1187,7 @@ func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, perform
 		}
 
 		return nil
-})
+	})
 }
 
 func (s *service) insertIncomingScrap(tx *gorm.DB, item models.WorkOrderItem, woNumber string, qty float64, performedBy string, now time.Time) (int64, error) {
@@ -1555,33 +1634,33 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 
 		machineNumber := ""
 		productionLine := ""
-	if item.MachineID != 0 {
-		if m, e := s.repoProduction.FindMachineByID(ctx, item.MachineID); e == nil {
-			machineNumber = m.MachineNumber
-			productionLine = m.ProductionLine
+		if item.MachineID != 0 {
+			if m, e := s.repoProduction.FindMachineByID(ctx, item.MachineID); e == nil {
+				machineNumber = m.MachineNumber
+				productionLine = m.ProductionLine
+			}
 		}
-	}
 
-	var savedQty float64
-	dandori := ""
-	setupQC := ""
-	if lastIn, e := s.repoProduction.FindLatestScanInLog(ctx, item.ID); e == nil {
-		savedQty = lastIn.QtyInput
-		dandori = lastIn.DandoriTime
-		setupQC = lastIn.SetupQCTime
-	}
+		var savedQty float64
+		dandori := ""
+		setupQC := ""
+		if lastIn, e := s.repoProduction.FindLatestScanInLog(ctx, item.ID); e == nil {
+			savedQty = lastIn.QtyInput
+			dandori = lastIn.DandoriTime
+			setupQC = lastIn.SetupQCTime
+		}
 
-	rmList, e := s.buildItemRawMaterials(ctx, item)
-	if e != nil {
-		return nil, e
-	}
+		rmList, e := s.buildItemRawMaterials(ctx, item)
+		if e != nil {
+			return nil, e
+		}
 
-	bomList, e := s.buildBomMaterials(ctx, item.ItemUniqCode)
-	if e != nil {
-		return nil, e
-	}
+		bomList, e := s.buildBomMaterials(ctx, item.ItemUniqCode)
+		if e != nil {
+			return nil, e
+		}
 
-	uniqs = append(uniqs, dto.WODetailUniq{
+		uniqs = append(uniqs, dto.WODetailUniq{
 			WOItemID:       item.ID,
 			Uniq:           item.ItemUniqCode,
 			PartName:       item.PartName,
@@ -1594,9 +1673,9 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 			MachineNumber:  machineNumber,
 			ProductionLine: productionLine,
 			ProcessName:    currentProcess,
-			NextProcess:    nextProcess,     
-			CurrentStep:    currentIndex + 1,           
-			TotalStep:      totalStep,   
+			NextProcess:    nextProcess,
+			CurrentStep:    currentIndex + 1,
+			TotalStep:      totalStep,
 			ScanInCount:    item.ScanInCount,
 			ScanOutCount:   item.ScanOutCount,
 			MachineScanned: item.MachineID != 0,
@@ -1675,7 +1754,7 @@ func rawMaterialTypeLabel(t string) string {
 // NEW — helper simpan pemakaian RM (scan in: planned)
 // =====================================
 func (s *service) saveRawMaterialLogs(ctx context.Context, item models.WorkOrderItem, rms []dto.RawMaterialInput, scannedBy string, now time.Time) error {
-	
+
 	if err := s.repoProduction.DeleteRawMaterialLogsByWOItemID(ctx, item.ID); err != nil {
 		return err
 	}
@@ -1712,7 +1791,6 @@ func (s *service) saveRawMaterialLogs(ctx context.Context, item models.WorkOrder
 	}
 	return nil
 }
-
 
 func sumScanOutRM(rms []dto.ScanOutRawMaterial) float64 {
 	var t float64
@@ -2369,17 +2447,17 @@ func parseReturnDate(raw string) *time.Time {
 // PendingReturnTasks lists product returns awaiting QC validation.
 func (s *service) PendingReturnTasks(ctx context.Context) ([]models.PendingReturnTask, error) {
 	var rows []struct {
-		ID           uint
-		Uniq         string
-		DNNumber     string
-		QuantityScrap int
+		ID             uint
+		Uniq           string
+		DNNumber       string
+		QuantityScrap  int
 		QuantityRework int
-		Weight       float64
-		Uom          string
-		ScrapType    string
-		PartNumber   string
-		PartName     string
-		Model        string
+		Weight         float64
+		Uom            string
+		ScrapType      string
+		PartNumber     string
+		PartName       string
+		Model          string
 	}
 
 	err := s.db.WithContext(ctx).
@@ -2510,7 +2588,7 @@ func (s *service) SubmitReturnValidation(ctx context.Context, req models.SubmitR
 				scrap.CreatedBy = &v
 			}
 
-				// Cek apakah sudah ada scrap AKTIF dgn uniq_code + tipe yang sama.
+			// Cek apakah sudah ada scrap AKTIF dgn uniq_code + tipe yang sama.
 			addQty := float64(pr.QuantityScrap)
 
 			var scrapID int64

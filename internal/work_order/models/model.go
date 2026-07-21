@@ -49,6 +49,7 @@ type WorkOrder struct {
 	CreatedByName *string    `gorm:"column:created_by_name;size:255"`
 	Notes         *string    `gorm:"column:notes"`
 	QRImageBase64 *string    `gorm:"column:qr_image_base64"`
+	PreProcessing bool       `gorm:"column:pre_processing;not null;default:false"`
 
 	CreatedAt time.Time `gorm:"column:created_at;not null;default:now()"`
 	UpdatedAt time.Time `gorm:"column:updated_at;not null;default:now()"`
