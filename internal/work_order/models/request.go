@@ -60,9 +60,10 @@ type CreateRMProcessingWorkOrderRequest struct {
 	Model              *string `json:"model"`
 	GradeSize          *string `json:"grade_size"`
 	InputQty           float64 `json:"input_qty" validate:"required,gt=0"`
-	InputUOM           string  `json:"input_uom" validate:"required"`
+	InputUOM           string  `json:"input_uom"`
 	OutputQty          float64 `json:"output_qty" validate:"required,gt=0"`
 	OutputUOM          string  `json:"output_uom" validate:"required"`
+	PreProcessing      bool    `json:"pre_processing"`
 	DateIssued         *string `json:"date_issued"`
 	Remarks            *string `json:"remarks"`
 }

@@ -383,6 +383,23 @@ func (s *service) CreateRMProcessing(ctx context.Context, req woModels.CreateRMP
 		return nil, apperror.BadRequest("source_material_uniq and target_material_uniq must be different")
 	}
 
+	inputUOM := strings.TrimSpace(req.InputUOM)
+	if inputUOM == "" {
+		inputUOM = strings.TrimSpace(req.OutputUOM)
+	}
+	if inputUOM == "" {
+		inputUOM = "pcs"
+	}
+	outputUOM := strings.TrimSpace(req.OutputUOM)
+	if outputUOM == "" {
+		outputUOM = "pcs"
+	}
+	perUnit := 0.0
+	if req.OutputQty > 0 {
+		perUnit = round4(req.InputQty / req.OutputQty)
+	}
+	sizeBreakdown := fmt.Sprintf("%s x %s", strconv.FormatFloat(perUnit, 'g', -1, 64), strconv.FormatFloat(round4(req.OutputQty), 'g', -1, 64))
+
 	dateIssued := time.Now()
 	if req.DateIssued != nil && strings.TrimSpace(*req.DateIssued) != "" {
 		t, err := time.Parse("2006-01-02", strings.TrimSpace(*req.DateIssued))
@@ -428,14 +445,45 @@ func (s *service) CreateRMProcessing(ctx context.Context, req woModels.CreateRMP
 			Model:              req.Model,
 			GradeSize:          req.GradeSize,
 			InputQty:           floatPtr(round4(req.InputQty)),
-			InputUOM:           strPtr(strings.TrimSpace(req.InputUOM)),
+			InputUOM:           strPtr(inputUOM),
 			OutputQty:          floatPtr(round4(req.OutputQty)),
-			OutputUOM:          strPtr(strings.TrimSpace(req.OutputUOM)),
+			OutputUOM:          strPtr(outputUOM),
 			Remarks:            req.Remarks,
 			QRImageBase64:      &woQR,
+			PreProcessing:      req.PreProcessing,
 		}
 		if err := s.repo.CreateWorkOrder(ctx, tx, wo); err != nil {
 			return err
+		}
+
+		// Generate one kanban/packing item + QR for the processed target uniq (1 uniq = 1 QR).
+		targetUniq := strings.TrimSpace(req.TargetMaterialUniq)
+		kanbanNumber := fmt.Sprintf("KBN-RM-%s-%s", targetUniq, woNumber)
+		if kp, kpErr := s.getKanbanParam(ctx, tx, targetUniq); kpErr == nil && kp != nil && strings.TrimSpace(kp.KanbanNumber) != "" {
+			kanbanNumber = fmt.Sprintf("%s-%s-%s", strings.TrimSpace(kp.KanbanNumber), targetUniq, woNumber)
+		}
+		itemPayload := fmt.Sprintf(`{"t":"wo_item","kb":%s,"uniq":%s,"size":%s}`, strconv.Quote(kanbanNumber), strconv.Quote(targetUniq), strconv.Quote(sizeBreakdown))
+		itemQR, err := generateQRDataURL(itemPayload)
+		if err != nil {
+			return apperror.InternalWrap("failed to generate RM processing item QR", err)
+		}
+		processName := workOrderTypeRMProcessing
+		woItem := &woModels.WorkOrderItem{
+			UUID:            uuid.New(),
+			WoID:            wo.ID,
+			ItemUniqCode:    targetUniq,
+			Model:           req.Model,
+			UOM:             strPtr(outputUOM),
+			Quantity:        round4(req.OutputQty),
+			ProcessName:     &processName,
+			KanbanNumber:    kanbanNumber,
+			ProcessFlowJSON: datatypes.JSON([]byte("[]")),
+			CurrentStepSeq:  1,
+			Status:          "Draft",
+			QRImageBase64:   &itemQR,
+		}
+		if err := tx.WithContext(ctx).Create(woItem).Error; err != nil {
+			return apperror.InternalWrap("failed to create RM processing item", err)
 		}
 
 		out = &woModels.RMProcessingWorkOrderCreateResponse{
@@ -457,6 +505,9 @@ func (s *service) CreateRMProcessing(ctx context.Context, req woModels.CreateRMP
 			DateIssued:         dateIssued.Format("2006-01-02"),
 			Remarks:            req.Remarks,
 			QRDataURL:          &woQR,
+			PreProcessing:      req.PreProcessing,
+			KanbanNumber:       &kanbanNumber,
+			SizeBreakdown:      &sizeBreakdown,
 		}
 		return nil
 	})
