@@ -83,6 +83,8 @@ type RawMaterialRow struct {
 	UpdatedBy             *string   `gorm:"column:updated_by"`
 	UpdatedAt             time.Time `gorm:"column:updated_at"`
 	QR                    *string   `gorm:"column:qr"`
+	Model                 string    `gorm:"column:model"`
+	Grade                 string    `gorm:"column:material_grade"`
 }
 
 type IndirectRow struct {
@@ -314,7 +316,11 @@ func New(db *gorm.DB) IRepository { return &repo{db: db} }
 // ---------------------------------------------------------------------------
 
 func (r *repo) ListRawMaterials(ctx context.Context, f ListFilter) ([]RawMaterialRow, int64, error) {
-	q := r.db.WithContext(ctx).Table("raw_materials rm").Where("rm.deleted_at IS NULL")
+	q := r.db.WithContext(ctx).
+		Table("raw_materials rm").
+		Joins("LEFT JOIN items i ON i.uniq_code = rm.uniq_code").
+		Joins("LEFT JOIN item_material_specs ims ON i.id = ims.item_revision_id").
+		Where("rm.deleted_at IS NULL")
 
 	if f.Search != "" {
 		s := "%" + f.Search + "%"
@@ -339,7 +345,11 @@ func (r *repo) ListRawMaterials(ctx context.Context, f ListFilter) ([]RawMateria
 	}
 
 	var rows []RawMaterialRow
-	err := q.Select("rm.*").
+	err := q.Select(`
+	rm.*,
+	i.model,
+	ims.material_grade
+`).
 		Order(safeOrderDir("rm", f.OrderBy, f.OrderDirection, []string{"uniq_code", "stock_qty", "status", "stock_days", "created_at", "updated_at"})).
 		Limit(f.Limit).Offset(f.Offset).
 		Scan(&rows).Error
@@ -794,8 +804,8 @@ func (r *repo) GetMovementHistory(ctx context.Context, category, uniqCode string
 
 	var rows []HistoryRow
 	err := q.Select(`
-		id, uniq_code, qty_change, weight_change, movement_type, source_flag, 
-		COALESCE(NULLIF(TRIM(dn_number), ''), NULLIF(TRIM(reference_id), '')) AS dn_number, 
+		id, uniq_code, qty_change, weight_change, movement_type, source_flag,
+		COALESCE(NULLIF(TRIM(dn_number), ''), NULLIF(TRIM(reference_id), '')) AS dn_number,
 		notes, logged_by, logged_at,
 		CASE WHEN source_flag = 'incoming_scan' THEN 'incoming' ELSE 'confirmed' END AS log_status
 	`).
