@@ -286,6 +286,10 @@ type IRepository interface {
 	GetCyclePengiriman(ctx context.Context, uniqCode string) (int, error)
 
 	FindDNByItemUniqCode(ctx context.Context, uniqCode string) (*string, error)
+	// FindDNQRByItemUniqCode returns the QR image (base64 data URL) that was
+	// already generated and stored per item in DN management (delivery_note_items.qr).
+	// One uniq resolves to exactly one QR.
+	FindDNQRByItemUniqCode(ctx context.Context, uniqCode string) (qr string, err error)
 	UpdateRawMaterialQR(ctx context.Context, uniqCode, qr string) error
 }
 
@@ -1439,6 +1443,27 @@ func (r *repo) FindDNByItemUniqCode(ctx context.Context, uniqCode string) (*stri
 	}
 
 	return &packingNumber, nil
+}
+
+// FindDNQRByItemUniqCode returns the QR image (base64 data URL) that DN
+// management already generated and stored for the item (delivery_note_items.qr).
+// The QR is specific per uniq. Progress rows are preferred, and among rows we
+// prefer one that actually has a stored QR, then the most recent, so a single
+// uniq always resolves to a single, deterministic QR.
+func (r *repo) FindDNQRByItemUniqCode(ctx context.Context, uniqCode string) (string, error) {
+	var qr string
+	err := r.db.WithContext(ctx).
+		Table("delivery_note_items AS dni").
+		Select("dni.qr").
+		Where("dni.item_uniq_code = ?", uniqCode).
+		Order(`CASE WHEN COALESCE(dni.qr, '') <> '' THEN 0 ELSE 1 END, CASE WHEN dni."check" = 'progress' THEN 0 ELSE 1 END, dni.id DESC`).
+		Limit(1).
+		Scan(&qr).Error
+	if err != nil {
+		return "", err
+	}
+
+	return qr, nil
 }
 
 func (r *repo) UpdateRawMaterialQR(ctx context.Context, uniqCode, qr string) error {

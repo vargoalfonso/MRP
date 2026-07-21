@@ -110,6 +110,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	ind.PUT("/:id", perm("inventory", "update"), m.base.RunAction(m.handler.UpdateIndirectMaterial))
 	ind.DELETE("/:id", perm("inventory", "delete"), m.base.RunAction(m.handler.DeleteIndirectMaterial))
 	ind.GET("/:id/history", perm("inventory", "view"), m.base.RunAction(m.handler.GetIndirectHistory))
+	ind.GET("/:id/create-qr", m.base.RunAction(m.handler.CreateQRIndirect))
 
 	// --- Subcon Inventory ---
 	sc := g.Group("/subcon-materials")
@@ -123,6 +124,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	sc.GET("/:id/history", perm("inventory", "view"), m.base.RunAction(m.handler.GetSubconHistory))
 	sc.POST("/:id/approve", perm("inventory", "update"), m.base.RunAction(m.handler.ApproveSubconInventory))
 	sc.POST("/:id/reject", perm("inventory", "update"), m.base.RunAction(m.handler.RejectSubconInventory))
+	sc.GET("/:id/create-qr", m.base.RunAction(m.handler.CreateQRSubcon))
 
 	// --- Kanban Summary (async per-row, used by DN list UI) ---
 	g.GET("/kanban-summary", perm("inventory", "view"), m.base.RunAction(m.handler.GetKanbanSummary))

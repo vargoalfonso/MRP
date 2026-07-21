@@ -658,3 +658,43 @@ func (h *HTTPHandler) CreateQR(ctx *app.Context) *app.CostumeResponse {
 		},
 	}
 }
+
+// CreateQRIndirect generates the QR for an indirect raw material item. The QR
+// carries the packing list / kanban list from DN management (1 uniq = 1 QR).
+func (h *HTTPHandler) CreateQRIndirect(ctx *app.Context) *app.CostumeResponse {
+	code := ctx.Param("id")
+
+	qr, err := h.svc.GenerateQRIndirect(ctx.Request.Context(), code)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "Success",
+		Data: map[string]interface{}{
+			"qr": qr,
+		},
+	}
+}
+
+// CreateQRSubcon generates the QR for a subcon inventory item. The QR carries
+// the packing list / kanban list from DN management (1 uniq = 1 QR).
+func (h *HTTPHandler) CreateQRSubcon(ctx *app.Context) *app.CostumeResponse {
+	code := ctx.Param("id")
+
+	qr, err := h.svc.GenerateQRSubcon(ctx.Request.Context(), code)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "Success",
+		Data: map[string]interface{}{
+			"qr": qr,
+		},
+	}
+}
