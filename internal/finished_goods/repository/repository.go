@@ -50,6 +50,11 @@ type IRepository interface {
 
 	AppendMovementLog(ctx context.Context, log *fgModels.FGMovementLog) error
 	ListMovementLogs(ctx context.Context, uniqCode string, limit, offset int) ([]fgModels.FGMovementLog, int64, error)
+
+	// FindWOQRByUniqCode returns the QR image (base64 data URL) that the work
+	// order already generated and stored per item (work_order_items.qr_image_base64)
+	// for the given finished-good uniq code. One uniq resolves to exactly one QR.
+	FindWOQRByUniqCode(ctx context.Context, uniqCode string) (qr string, err error)
 }
 
 // ---------------------------------------------------------------------------
@@ -296,4 +301,23 @@ func (r *repository) ListMovementLogs(ctx context.Context, uniqCode string, limi
 		return nil, 0, apperror.Internal("fg list movement logs: " + err.Error())
 	}
 	return rows, total, nil
+}
+
+// FindWOQRByUniqCode returns the QR image (base64 data URL) that the work order
+// already generated and stored for the item (work_order_items.qr_image_base64).
+// The QR is specific per uniq. Among the item's rows we prefer one that has a
+// stored QR, then the most recent, so one uniq always maps to exactly one QR.
+func (r *repository) FindWOQRByUniqCode(ctx context.Context, uniqCode string) (string, error) {
+	var qr string
+	if err := r.db.WithContext(ctx).
+		Table("work_order_items").
+		Select("qr_image_base64").
+		Where("item_uniq_code = ?", uniqCode).
+		Order("CASE WHEN COALESCE(qr_image_base64, '') <> '' THEN 0 ELSE 1 END, id DESC").
+		Limit(1).
+		Scan(&qr).Error; err != nil {
+		return "", apperror.Internal("fg find wo qr: " + err.Error())
+	}
+
+	return qr, nil
 }

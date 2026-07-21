@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"math"
 	"strings"
@@ -14,7 +12,6 @@ import (
 	"github.com/ganasa18/go-template/pkg/inventoryconst"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/google/uuid"
-	"github.com/skip2/go-qrcode"
 	"gorm.io/gorm"
 )
 
@@ -65,6 +62,8 @@ type IService interface {
 	AppendMovementLog(ctx context.Context, tx *gorm.DB, input MovementLogInput) error
 
 	GenerateQR(ctx context.Context, uniqCode string) (*string, error)
+	GenerateQRIndirect(ctx context.Context, uniqCode string) (*string, error)
+	GenerateQRSubcon(ctx context.Context, uniqCode string) (*string, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -1488,48 +1487,59 @@ func (s *service) AppendMovementLog(ctx context.Context, tx *gorm.DB, input Move
 	return nil
 }
 
-func (s *service) GenerateQR(ctx context.Context, uniqCode string) (*string, error) {
-	packingNumber, err := s.repo.FindDNByItemUniqCode(ctx, uniqCode)
-	if err != nil {
-		return nil, err
+// fetchStoredDNQR returns the specific QR that DN management already generated
+// and stored for the given uniq code (delivery_note_items.qr). We do NOT
+// generate a new QR here — the QR is taken as-is from DN management so that one
+// uniq always maps to exactly one QR. Returns "delivery note not found" when no
+// QR has been stored for the uniq yet.
+func (s *service) fetchStoredDNQR(ctx context.Context, uniqCode string) (string, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return "", errors.New("uniq code is required")
 	}
 
-	if packingNumber == nil {
-		return nil, errors.New("delivery note not found")
-	}
-
-	payload := map[string]string{
-		"packing": *packingNumber,
-	}
-
-	qrBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	qrBase64, err := generateQRBase64(string(qrBytes))
-	if err != nil {
-		return nil, err
-	}
-
-	// Simpan QR ke raw_material
-	if err := s.repo.UpdateRawMaterialQR(ctx, uniqCode, qrBase64); err != nil {
-		return nil, err
-	}
-
-	return &qrBase64, nil
-}
-
-func generateQRBase64(value string) (string, error) {
-	// generate PNG QR (256x256)
-	png, err := qrcode.Encode(value, qrcode.Medium, 256)
+	qr, err := s.repo.FindDNQRByItemUniqCode(ctx, uniqCode)
 	if err != nil {
 		return "", err
 	}
 
-	// encode ke base64
-	base64Str := base64.StdEncoding.EncodeToString(png)
+	if strings.TrimSpace(qr) == "" {
+		return "", errors.New("delivery note not found")
+	}
 
-	// optional: prefix biar langsung bisa dipakai di frontend
-	return "data:image/png;base64," + base64Str, nil
+	return qr, nil
+}
+
+func (s *service) GenerateQR(ctx context.Context, uniqCode string) (*string, error) {
+	qr, err := s.fetchStoredDNQR(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	// Persist the DN QR on the raw material so 1 uniq keeps 1 QR.
+	if err := s.repo.UpdateRawMaterialQR(ctx, uniqCode, qr); err != nil {
+		return nil, err
+	}
+
+	return &qr, nil
+}
+
+// GenerateQRIndirect returns the QR for an indirect raw material, taken from the
+// stored DN management QR for the uniq (1 uniq = 1 QR).
+func (s *service) GenerateQRIndirect(ctx context.Context, uniqCode string) (*string, error) {
+	qr, err := s.fetchStoredDNQR(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+	return &qr, nil
+}
+
+// GenerateQRSubcon returns the QR for a subcon inventory item, taken from the
+// stored DN management QR for the uniq (1 uniq = 1 QR).
+func (s *service) GenerateQRSubcon(ctx context.Context, uniqCode string) (*string, error) {
+	qr, err := s.fetchStoredDNQR(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+	return &qr, nil
 }

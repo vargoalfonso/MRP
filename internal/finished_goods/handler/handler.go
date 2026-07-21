@@ -64,6 +64,27 @@ func buildStatusMonitoringFilter(ctx *app.Context) repository.StatusMonitoringFi
 // GET /api/v1/finished-goods/summary
 // ---------------------------------------------------------------------------
 
+// CreateQR generates the QR for a finished good. The path param is the item
+// uniq code. The QR carries the kanban list / packing list resolved from the
+// work order (1 uniq = 1 QR).
+func (h *HTTPHandler) CreateQR(ctx *app.Context) *app.CostumeResponse {
+	code := strings.TrimSpace(ctx.Param("id"))
+
+	qr, err := h.svc.GenerateQR(ctx.Request.Context(), code)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "Success",
+		Data: map[string]interface{}{
+			"qr": qr,
+		},
+	}
+}
+
 func (h *HTTPHandler) GetSummary(ctx *app.Context) *app.CostumeResponse {
 	data, err := h.svc.GetSummary(ctx.Request.Context())
 	if err != nil {

@@ -73,6 +73,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	fg.GET("", perm("finished_goods", "view"), m.base.RunAction(m.handler.ListFinishedGoods))
 	fg.POST("", perm("finished_goods", "create"), m.base.RunAction(m.handler.CreateFinishedGoods))
 	fg.POST("/bulk", perm("finished_goods", "create"), m.base.RunAction(m.handler.BulkCreateFinishedGoods))
+	fg.GET("/:id/create-qr", perm("finished_goods", "view"), m.base.RunAction(m.handler.CreateQR))
 	fg.GET("/:id", perm("finished_goods", "view"), m.base.RunAction(m.handler.GetFinishedGoodsByID))
 	fg.PUT("/:id", perm("finished_goods", "update"), m.base.RunAction(m.handler.UpdateFinishedGoods))
 }
