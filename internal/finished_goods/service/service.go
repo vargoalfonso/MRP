@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"math"
 	"strings"
 	"time"
@@ -35,6 +36,10 @@ type IService interface {
 
 	// History Logs tab (In-Out Activity Log)
 	GetHistory(ctx context.Context, uniqCode string, page, limit int) (*fgModels.FGHistoryResponse, error)
+
+	// GenerateQR builds the QR for a finished good. The QR carries the kanban
+	// list / packing list resolved from the work order (1 uniq = 1 QR).
+	GenerateQR(ctx context.Context, uniqCode string) (*string, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +135,29 @@ func (s *service) GetHistory(ctx context.Context, uniqCode string, page, limit i
 			TotalPages: totalPages,
 		},
 	}, nil
+}
+
+// GenerateQR returns the QR for a finished good, taken directly from the QR that
+// the work order already generated and stored per item
+// (work_order_items.qr_image_base64). We do NOT generate a new QR here — the
+// work order QR is already split per uniq, so one uniq always maps to exactly
+// one QR. Returns "work order not found" when no QR has been stored yet.
+func (s *service) GenerateQR(ctx context.Context, uniqCode string) (*string, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return nil, apperror.BadRequest("uniq_code is required")
+	}
+
+	qr, err := s.repo.FindWOQRByUniqCode(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.TrimSpace(qr) == "" {
+		return nil, errors.New("work order not found")
+	}
+
+	return &qr, nil
 }
 
 // ---------------------------------------------------------------------------
