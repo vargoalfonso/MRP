@@ -68,6 +68,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	deliverySupplier := actionUI.Group("/delivery-supplier")
 	{
 		deliverySupplier.POST("/scan", m.base.RunAction(m.handler.ScanDelivery))
+		deliverySupplier.POST("/scan-in", m.base.RunAction(m.handler.ScanDeliveryIn))
 	}
 
 	deliveryCustomer := actionUI.Group("/delivery-customer")

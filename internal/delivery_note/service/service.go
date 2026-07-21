@@ -29,6 +29,7 @@ type IDeliveryNoteService interface {
 	PreviewDN(ctx context.Context, req models.PreviewDNRequest) (*models.PreviewDNResponse, error)
 	PreviewItem(ctx context.Context, req models.PreviewDNItem) (*models.PreviewDNItemRespons, error)
 	ScanDelivery(ctx context.Context, req models.ScanDeliveryRequest) error
+	ScanDeliveryIn(ctx context.Context, req models.ScanDeliveryInRequest) (*models.ScanDeliveryInResult, error)
 	SubmitDelivery(ctx context.Context, req models.SubmitDeliveryRequest) error
 	GetHistory(ctx context.Context, dnID int64) ([]DNHistoryLog, error)
 }
@@ -119,6 +120,7 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 			PONumber:        po.PoNumber,
 			Period:          req.Period,
 			Type:            req.Type,
+			WONumber:        req.WONumber,
 			Status:          "active",
 			SupplierID:      po.SupplierID,
 			TotalPOQty:      totalQty,
@@ -922,6 +924,7 @@ func (s *deliveryNoteService) ScanDelivery(ctx context.Context, req models.ScanD
 				ScannedBy:    req.ScannedBy,
 				ScannedAt:    &now,
 				TotalQty:     req.Qty,
+				WONumber:     req.WONumber,
 			}
 
 			if err := s.repo.CreateDN(ctx, tx, &newDN); err != nil {
@@ -1056,4 +1059,168 @@ func (s *deliveryNoteService) SubmitDelivery(ctx context.Context, req models.Sub
 
 func generateScheduleNumber() string {
 	return "SCH-" + time.Now().Format("20060102150405")
+}
+
+// =========================
+// DN SUBCON IN (action-ui)
+// =========================
+
+// dnProcessFlowStep mirrors the entries stored in
+// work_order_items.process_flow_json (poka-yoke routing snapshot).
+type dnProcessFlowStep struct {
+	OpSeq       int    `json:"op_seq"`
+	ProcessName string `json:"process_name"`
+	// SubCon / IsAssembly mirror the checkboxes configured in System Settings >
+	// Process (process_parameters). They are snapshotted into the WO process
+	// flow so routing does not depend on the process name text.
+	SubCon     bool `json:"sub_con"`
+	IsAssembly bool `json:"is_assembly"`
+}
+
+func parseDNProcessFlow(js string) ([]dnProcessFlowStep, error) {
+	steps := []dnProcessFlowStep{}
+	if strings.TrimSpace(js) == "" {
+		return steps, nil
+	}
+	if err := json.Unmarshal([]byte(js), &steps); err != nil {
+		return nil, err
+	}
+	return steps, nil
+}
+
+// findSubconStep returns the op_seq of the subcon step. A step counts as a
+// subcon step when its snapshotted sub_con flag is true, or (for older work
+// orders whose snapshot predates the flag) when its process name is flagged
+// as sub_con in the process_parameters master (subconNames). Detection is by
+// flag, not by the process name text.
+func findSubconStep(steps []dnProcessFlowStep, subconNames map[string]bool) (int, bool) {
+	for _, st := range steps {
+		if st.SubCon || subconNames[strings.ToLower(strings.TrimSpace(st.ProcessName))] {
+			return st.OpSeq, true
+		}
+	}
+	return 0, false
+}
+
+// subconStepInfo returns the process name and op_seq of the subcon step, so
+// stock returning from subcon is recorded in WIP under the subcon process name
+// (not the following process).
+func subconStepInfo(steps []dnProcessFlowStep, subconNames map[string]bool) (string, int, bool) {
+	for _, st := range steps {
+		if st.SubCon || subconNames[strings.ToLower(strings.TrimSpace(st.ProcessName))] {
+			return st.ProcessName, st.OpSeq, true
+		}
+	}
+	return "", 0, false
+}
+
+// nextProcessAfterSubcon returns the name and op_seq of the earliest process
+// after the subcon step. ok is false when subcon is the last (or only) step.
+func nextProcessAfterSubcon(steps []dnProcessFlowStep, subconNames map[string]bool) (string, int, bool) {
+	subconSeq, ok := findSubconStep(steps, subconNames)
+	if !ok {
+		return "", 0, false
+	}
+	bestSeq := -1
+	bestName := ""
+	for _, st := range steps {
+		if st.OpSeq > subconSeq {
+			if bestSeq == -1 || st.OpSeq < bestSeq {
+				bestSeq = st.OpSeq
+				bestName = st.ProcessName
+			}
+		}
+	}
+	if bestSeq == -1 {
+		return "", 0, false
+	}
+	return bestName, bestSeq, true
+}
+
+// ScanDeliveryIn records goods returning from a subcon (external) process. It
+// reads the work order's process flow to decide the destination inventory:
+//   - a process still remains after subcon  -> Work In Progress (WIP)
+//   - subcon is the last process            -> Finished Goods (FG)
+func (s *deliveryNoteService) ScanDeliveryIn(ctx context.Context, req models.ScanDeliveryInRequest) (*models.ScanDeliveryInResult, error) {
+	if req.DNNumber == "" {
+		return nil, errors.New("DN wajib diisi")
+	}
+	if req.WONumber == "" {
+		return nil, errors.New("WO wajib diisi")
+	}
+	if req.KanbanNumber == "" {
+		return nil, errors.New("kanban wajib diisi")
+	}
+	if req.Qty <= 0 {
+		return nil, errors.New("qty harus > 0")
+	}
+
+	result := &models.ScanDeliveryInResult{
+		Qty: req.Qty,
+	}
+
+	err := s.repo.WithTx(ctx, func(tx *gorm.DB) error {
+		// Resolve the item uniq code from the scanned kanban/packing number.
+		poItem, err := s.repo.GetPOItemByPackingNumber(ctx, req.KanbanNumber)
+		if err != nil {
+			return errors.New("item tidak ditemukan untuk kanban tersebut")
+		}
+		uniq := poItem.ItemUniqCode
+		result.ItemUniq = uniq
+
+		// Read the poka-yoke process flow for this WO + item.
+		flowJSON, found, err := s.repo.GetWorkOrderItemProcessFlow(ctx, req.WONumber, uniq)
+		if err != nil {
+			return err
+		}
+
+		var nextName string
+		var subName string
+		var subSeq int
+		hasNext := false
+		if found {
+			steps, perr := parseDNProcessFlow(flowJSON)
+			if perr != nil {
+				return errors.New("gagal membaca process flow work order")
+			}
+			// Identify the subcon step by the sub_con flag configured in
+			// System Settings > Process (process_parameters), not by name.
+			subconNames, snErr := s.repo.GetSubconProcessNameSet(ctx)
+			if snErr != nil {
+				return snErr
+			}
+			subName, subSeq, _ = subconStepInfo(steps, subconNames)
+			nextName, _, hasNext = nextProcessAfterSubcon(steps, subconNames)
+		}
+
+		// Mark the outgoing subcon DN as received (best-effort).
+		if dn, derr := s.repo.FindDNByNumber(ctx, tx, req.DNNumber); derr == nil && dn != nil && dn.ID != 0 {
+			_ = s.repo.MarkDNSupplierReceived(ctx, tx, dn.ID, req.ScannedBy)
+		}
+
+		if hasNext {
+			// Still has a process to run -> back into WIP for the next process.
+			if err := s.repo.AddWIPStock(ctx, tx, req.WONumber, uniq, subName, subSeq, req.Qty); err != nil {
+				return err
+			}
+			result.Destination = "WIP"
+			result.NextProcess = nextName
+			return nil
+		}
+
+		// No remaining process -> goods are finished.
+		rows, err := s.repo.IncreaseFinishedGoodsStockByUniqTx(ctx, tx, uniq, req.Qty)
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return errors.New("finished goods tidak ditemukan untuk item " + uniq)
+		}
+		result.Destination = "Finished Goods"
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }

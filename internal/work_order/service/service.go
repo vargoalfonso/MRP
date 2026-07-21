@@ -1720,6 +1720,8 @@ func (s *service) fetchPartMeta(ctx context.Context, tx *gorm.DB, uniqCodes []st
 type processFlowStep struct {
 	OpSeq        int      `json:"op_seq"`
 	ProcessName  string   `json:"process_name"`
+	SubCon       bool     `json:"sub_con"`
+	IsAssembly   bool     `json:"is_assembly"`
 	MachineName  *string  `json:"machine_name"`
 	CycleTimeSec *float64 `json:"cycle_time_sec"`
 	SetupTimeMin *float64 `json:"setup_time_min"`
@@ -1741,6 +1743,8 @@ func (s *service) fetchProcessFlows(ctx context.Context, tx *gorm.DB, uniqCodes 
 		UniqCode     string   `gorm:"column:uniq_code"`
 		OpSeq        int      `gorm:"column:op_seq"`
 		ProcessName  string   `gorm:"column:process_name"`
+		SubCon       bool     `gorm:"column:sub_con"`
+		IsAssembly   bool     `gorm:"column:is_assembly"`
 		MachineName  *string  `gorm:"column:machine_name"`
 		CycleTimeSec *float64 `gorm:"column:cycle_time_sec"`
 		SetupTimeMin *float64 `gorm:"column:setup_time_min"`
@@ -1751,6 +1755,8 @@ func (s *service) fetchProcessFlows(ctx context.Context, tx *gorm.DB, uniqCodes 
 		       i.uniq_code,
 		       ro.op_seq,
 		       pp.process_name,
+		       pp.sub_con,
+		       pp.is_assembly,
 		       mm.machine_name     AS machine_name,
 		       ro.cycle_time_sec,
 		       ro.setup_time_min
@@ -1777,6 +1783,8 @@ func (s *service) fetchProcessFlows(ctx context.Context, tx *gorm.DB, uniqCodes 
 		grouped[r.UniqCode] = append(grouped[r.UniqCode], processFlowStep{
 			OpSeq:        r.OpSeq,
 			ProcessName:  r.ProcessName,
+			SubCon:       r.SubCon,
+			IsAssembly:   r.IsAssembly,
 			MachineName:  r.MachineName,
 			CycleTimeSec: r.CycleTimeSec,
 			SetupTimeMin: r.SetupTimeMin,

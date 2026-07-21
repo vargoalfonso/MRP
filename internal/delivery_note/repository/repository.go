@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/ganasa18/go-template/internal/delivery_note/models"
 	"gorm.io/gorm"
@@ -49,6 +50,13 @@ type IDeliveryNoteRepository interface {
 	// STOCK
 	GetFinishedGoodsForUpdate(ctx context.Context, tx *gorm.DB, uniq_code string) (*models.FinishedGoods, error)
 	ReduceStockTx(ctx context.Context, tx *gorm.DB, fgID int64, qty float64) error
+
+	// DN SUBCON IN (routing WIP / Finished Goods)
+	GetWorkOrderItemProcessFlow(ctx context.Context, woNumber, uniq string) (string, bool, error)
+	GetSubconProcessNameSet(ctx context.Context) (map[string]bool, error)
+	IncreaseFinishedGoodsStockByUniqTx(ctx context.Context, tx *gorm.DB, uniq string, qty float64) (int64, error)
+	AddWIPStock(ctx context.Context, tx *gorm.DB, woNumber, uniq, processName string, opSeq int, qty float64) error
+	MarkDNSupplierReceived(ctx context.Context, tx *gorm.DB, dnID int64, scannedBy string) error
 
 	// OPTIONAL
 	IsDNItemDuplicate(ctx context.Context, tx *gorm.DB, dnID int64, kanban string) (bool, error)
@@ -437,4 +445,180 @@ func (r *repository) CountKanban(ctx context.Context) (int64, error) {
 
 func (r *repository) CreateKanban(ctx context.Context, data *models.KanbanParameter) error {
 	return r.db.WithContext(ctx).Create(data).Error
+}
+
+// GetWorkOrderItemProcessFlow returns the process_flow_json (poka-yoke routing)
+// stored on the work_order_items row matching the given WO number + item uniq.
+// found is false when there is no such WO item.
+func (r *repository) GetWorkOrderItemProcessFlow(ctx context.Context, woNumber, uniq string) (string, bool, error) {
+	var row struct {
+		ProcessFlowJSON string `gorm:"column:process_flow_json"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("work_order_items AS wi").
+		Select("wi.process_flow_json").
+		Joins("JOIN work_orders wo ON wo.id = wi.wo_id").
+		Where("wo.wo_number = ? AND wi.item_uniq_code = ?", woNumber, uniq).
+		Order("wi.id DESC").
+		Limit(1).
+		Scan(&row).Error
+	if err != nil {
+		return "", false, err
+	}
+	if strings.TrimSpace(row.ProcessFlowJSON) == "" {
+		return "", false, nil
+	}
+	return row.ProcessFlowJSON, true, nil
+}
+
+// GetSubconProcessNameSet returns the set of process names (lower-cased) that
+// are flagged as sub_con in the process_parameters master (configured via
+// System Settings > Process). Used to detect the subcon step in a work order
+// process flow by flag rather than by matching the process name text.
+func (r *repository) GetSubconProcessNameSet(ctx context.Context) (map[string]bool, error) {
+	var rows []struct {
+		ProcessName string `gorm:"column:process_name"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("process_parameters").
+		Select("process_name").
+		Where("sub_con = ?", true).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		name := strings.ToLower(strings.TrimSpace(row.ProcessName))
+		if name != "" {
+			set[name] = true
+		}
+	}
+	return set, nil
+}
+
+// IncreaseFinishedGoodsStockByUniqTx adds qty to an existing finished_goods row
+// (matched by uniq_code). It returns the number of rows affected; 0 means no FG
+// record exists for that uniq.
+func (r *repository) IncreaseFinishedGoodsStockByUniqTx(ctx context.Context, tx *gorm.DB, uniq string, qty float64) (int64, error) {
+	res := tx.WithContext(ctx).
+		Table("finished_goods").
+		Where("uniq_code = ? AND deleted_at IS NULL", uniq).
+		Updates(map[string]interface{}{
+			"stock_qty":  gorm.Expr("stock_qty + ?", qty),
+			"updated_at": time.Now(),
+		})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
+// AddWIPStock puts qty back into WIP for the next process of a work order. It
+// finds (or creates) the wips row for the WO, then increments the matching
+// wip_items.stock for (uniq, opSeq) or inserts a new wip_items line.
+func (r *repository) AddWIPStock(ctx context.Context, tx *gorm.DB, woNumber, uniq, processName string, opSeq int, qty float64) error {
+	db := tx.WithContext(ctx)
+
+	// 1. Resolve work order id.
+	var woID int64
+	if err := db.Table("work_orders").
+		Select("id").
+		Where("wo_number = ?", woNumber).
+		Limit(1).
+		Scan(&woID).Error; err != nil {
+		return err
+	}
+	if woID == 0 {
+		return errors.New("work order tidak ditemukan: " + woNumber)
+	}
+
+	// 2. Find or create the wips header for this WO.
+	var wipID int64
+	if err := db.Table("wips").
+		Select("id").
+		Where("wo_id = ?", woID).
+		Order("id DESC").
+		Limit(1).
+		Scan(&wipID).Error; err != nil {
+		return err
+	}
+	if wipID == 0 {
+		now := time.Now()
+		if err := db.Table("wips").Create(map[string]interface{}{
+			"wo_id":      woID,
+			"status":     "active",
+			"created_at": now,
+			"updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		if err := db.Table("wips").
+			Select("id").
+			Where("wo_id = ?", woID).
+			Order("id DESC").
+			Limit(1).
+			Scan(&wipID).Error; err != nil {
+			return err
+		}
+	}
+
+	// 3. Increment existing wip_items line for (uniq, op_seq) if present.
+	var itemID int64
+	if err := db.Table("wip_items").
+		Select("id").
+		Where("wip_id = ? AND uniq = ? AND op_seq = ?", wipID, uniq, opSeq).
+		Order("id DESC").
+		Limit(1).
+		Scan(&itemID).Error; err != nil {
+		return err
+	}
+
+	qtyInt := int(qty)
+	now := time.Now()
+	if itemID != 0 {
+		return db.Table("wip_items").
+			Where("id = ?", itemID).
+			Updates(map[string]interface{}{
+				"stock":         gorm.Expr("stock + ?", qtyInt),
+				"qty_in":        gorm.Expr("qty_in + ?", qtyInt),
+				"qty_remaining": gorm.Expr("qty_remaining + ?", qtyInt),
+				"updated_at":    now,
+			}).Error
+	}
+
+	// 4. Otherwise insert a new wip_items line for the next process.
+	return db.Table("wip_items").Create(map[string]interface{}{
+		"wip_id":         wipID,
+		"uniq":           uniq,
+		"packing_number": "",
+		"wip_type":       "subcon_in",
+		"process_name":   processName,
+		"machine_name":   "",
+		"op_seq":         opSeq,
+		"seq":            opSeq,
+		"uom":            "",
+		"stock":          qtyInt,
+		"qty_in":         qtyInt,
+		"qty_out":        0,
+		"qty_remaining":  qtyInt,
+		"status":         "queue",
+		"created_at":     now,
+		"updated_at":     now,
+	}).Error
+}
+
+// MarkDNSupplierReceived flags an outgoing subcon DN as received on the IN scan.
+func (r *repository) MarkDNSupplierReceived(ctx context.Context, tx *gorm.DB, dnID int64, scannedBy string) error {
+	updates := map[string]interface{}{
+		"status":     "received",
+		"updated_at": time.Now(),
+	}
+	if scannedBy != "" {
+		updates["scanned_by"] = scannedBy
+	}
+	return tx.WithContext(ctx).
+		Table("delivery_note_suppliers").
+		Where("id = ?", dnID).
+		Updates(updates).Error
 }

@@ -288,6 +288,39 @@ func (h *HTTPHandler) ScanDelivery(appCtx *app.Context) *app.CostumeResponse {
 	}
 }
 
+func (h *HTTPHandler) ScanDeliveryIn(appCtx *app.Context) *app.CostumeResponse {
+	var req models.ScanDeliveryInRequest
+
+	// =============================
+	// 📥 BIND JSON
+	// =============================
+	if err := appCtx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body",
+		}
+	}
+
+	// =============================
+	// 🚀 CALL SERVICE
+	// =============================
+	result, err := h.service.ScanDeliveryIn(appCtx.Request.Context(), req)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	// =============================
+	// ✅ RESPONSE
+	// =============================
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "scan delivery subcon in success",
+		Data:      result,
+	}
+}
+
 func (h *HTTPHandler) SubmitDelivery(appCtx *app.Context) *app.CostumeResponse {
 	var req models.SubmitDeliveryRequest
 
