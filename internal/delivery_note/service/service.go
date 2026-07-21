@@ -1051,6 +1051,14 @@ func (s *deliveryNoteService) SubmitDelivery(ctx context.Context, req models.Sub
 			if err := s.repo.ReduceFGStock(tx, fg.ID, item.Qty); err != nil {
 				return err
 			}
+
+			// FIX: catat pergerakan Finished Goods (OUT) ke fg_movement_logs supaya
+			// muncul di History Log detail Finished Goods (ERP).
+			if err := s.appendFGMovementLog(tx, fg.ID, item.ItemUniqCode, "delivery_scan",
+				-item.Qty, fg.StockQty, fg.StockQty-item.Qty,
+				header.ScheduleNumber, "Pengiriman ke customer (DN customer action-ui)", req.CreatedBy); err != nil {
+				return err
+			}
 		}
 
 		return nil
