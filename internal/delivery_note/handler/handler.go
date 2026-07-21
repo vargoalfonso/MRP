@@ -119,6 +119,31 @@ func (h *HTTPHandler) GetDeliveryNoteByID(appCtx *app.Context) *app.CostumeRespo
 	}
 }
 
+func (h *HTTPHandler) GetDeliveryNoteHistory(appCtx *app.Context) *app.CostumeResponse {
+	idParam := appCtx.Param("id")
+
+	id, err := strconv.ParseInt(idParam, 10, 64)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid id",
+		}
+	}
+
+	data, err := h.service.GetHistory(appCtx.Request.Context(), id)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}
+
 func (h *HTTPHandler) ScanDeliveryNoteItem(appCtx *app.Context) *app.CostumeResponse {
 	var req models.QRPayload
 

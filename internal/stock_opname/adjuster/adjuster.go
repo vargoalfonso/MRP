@@ -14,6 +14,9 @@ type UniqSnapshot struct {
 	UOM        *string
 	SystemQty  float64
 	WeightKg   *float64
+	// RawMaterialType is only populated for Raw Materials (e.g. "wire",
+	// "sheet_plate", "ssp", "others"); empty for other inventory types.
+	RawMaterialType string
 }
 
 type InventoryAdjuster interface {

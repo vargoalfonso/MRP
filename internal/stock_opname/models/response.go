@@ -114,6 +114,10 @@ type UniqOption struct {
 	UOM        *string  `json:"uom"`
 	SystemQty  float64  `json:"system_qty"`
 	WeightKg   *float64 `json:"weight_kg"`
+	// RawMaterialType is only populated for Raw Material uniqs (e.g. "wire",
+	// "sheet_plate", "ssp", "others") and is empty for other inventory types.
+	// The frontend uses it to show the Weight input for "wire".
+	RawMaterialType string `json:"raw_material_type"`
 }
 
 type BulkCreateEntryError struct {

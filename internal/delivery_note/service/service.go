@@ -30,6 +30,7 @@ type IDeliveryNoteService interface {
 	PreviewItem(ctx context.Context, req models.PreviewDNItem) (*models.PreviewDNItemRespons, error)
 	ScanDelivery(ctx context.Context, req models.ScanDeliveryRequest) error
 	SubmitDelivery(ctx context.Context, req models.SubmitDeliveryRequest) error
+	GetHistory(ctx context.Context, dnID int64) ([]DNHistoryLog, error)
 }
 
 // implementation
@@ -45,6 +46,13 @@ func New(repo deliveryNoteRepo.IDeliveryNoteRepository, db *gorm.DB, approvalRep
 		db:           db,
 		approvalRepo: approvalRepo,
 	}
+}
+
+func resolveSupplierItemUniqCode(poItem models.PurchaseOrderItem) string {
+	if childUniqCode := strings.TrimSpace(poItem.ChildUniqCode); childUniqCode != "" {
+		return childUniqCode
+	}
+	return strings.TrimSpace(poItem.ItemUniqCode)
 }
 
 // =========================
@@ -186,10 +194,30 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 				return fmt.Errorf("qty over %s", it.ItemUniqCode)
 			}
 
+			supplierItemUniqCode := resolveSupplierItemUniqCode(poItem)
+			pcsPerKanban, err := s.repo.GetSupplierItemPcsPerKanban(ctx, po.SupplierID, supplierItemUniqCode)
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return fmt.Errorf(
+						"Pcs/Kanban Supplier Item %s untuk UNIQ PO %s belum tersedia",
+						supplierItemUniqCode,
+						it.ItemUniqCode,
+					)
+				}
+				return fmt.Errorf("gagal mengambil Supplier Item %s untuk UNIQ PO %s: %w", supplierItemUniqCode, it.ItemUniqCode, err)
+			}
+			if pcsPerKanban <= 0 {
+				return fmt.Errorf(
+					"Pcs/Kanban Supplier Item %s untuk UNIQ PO %s harus lebih dari 0",
+					supplierItemUniqCode,
+					it.ItemUniqCode,
+				)
+			}
+
 			kanban, err := s.repo.GetKanbanByItemCode(ctx, it.ItemUniqCode)
 			if err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
-					// Buat Kanban baru
+					// Preserve the existing DN relation by creating its kanban record when absent.
 					totalKanban, err := s.repo.CountKanban(ctx)
 					if err != nil {
 						return err
@@ -202,10 +230,10 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 					data := models.KanbanParameter{
 						KanbanNumber: kanbanNumber,
 						ItemUniqCode: it.ItemUniqCode,
-						KanbanQty:    0, // isi default
+						KanbanQty:    0,
 						MinStock:     0,
-						MaxStock:     int(it.Qty), // sesuaikan dengan qty DN
-						Status:       "ACTIVE",    // sesuaikan
+						MaxStock:     int(it.Qty),
+						Status:       "ACTIVE",
 					}
 
 					if err := s.repo.CreateKanban(ctx, &data); err != nil {
@@ -217,9 +245,6 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 					return err
 				}
 			}
-
-			// lanjut proses
-			fmt.Println(kanban.KanbanNumber)
 
 			date, err := time.Parse("02/01/2006", it.IncomingDate)
 			if err != nil {
@@ -242,7 +267,7 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 				UOM:           poItem.UOM,
 				Weight:        int64(poItem.WeightKg),
 				KanbanID:      kanban.ID,
-				PcsPerKanban:  poItem.PcsPerKanban,
+				PcsPerKanban:  pcsPerKanban,
 				PackingNumber: packing,
 				DateIncoming:  &date,
 				Check:         "progress",
@@ -393,6 +418,50 @@ func (s *deliveryNoteService) GetByID(ctx context.Context, id int64) (*models.De
 	}
 
 	return &data, nil
+}
+
+// DNHistoryLog represents a stock-movement history entry for a delivery note.
+// These are recorded when QC Incoming is approved (source_flag=qc_approve),
+// supporting partial incoming across multiple approvals for one DN.
+type DNHistoryLog struct {
+	ID            int64     `json:"id" gorm:"column:id"`
+	UniqCode      string    `json:"uniq_code" gorm:"column:uniq_code"`
+	QtyChange     float64   `json:"qty_change" gorm:"column:qty_change"`
+	WeightChange  *float64  `json:"weight_change" gorm:"column:weight_change"`
+	MovementType  string    `json:"movement_type" gorm:"column:movement_type"`
+	SourceFlag    *string   `json:"source_flag" gorm:"column:source_flag"`
+	PackingNumber *string   `json:"packing_number" gorm:"column:packing_number"`
+	LoggedBy      *string   `json:"logged_by" gorm:"column:logged_by"`
+	LoggedAt      time.Time `json:"logged_at" gorm:"column:logged_at"`
+}
+
+// GetHistory returns the stock-movement history for a delivery note, sourced from
+// inventory_movement_logs written at QC Incoming approval. It links movement logs
+// to the DN via the delivery note item's packing_number + item_uniq_code, so partial
+// incoming (multiple approvals under one DN) is captured chronologically.
+func (s *deliveryNoteService) GetHistory(ctx context.Context, dnID int64) ([]DNHistoryLog, error) {
+	var rows []DNHistoryLog
+	err := s.db.WithContext(ctx).
+		Table("inventory_movement_logs iml").
+		Joins("JOIN delivery_note_items dni ON dni.packing_number = iml.reference_id AND dni.item_uniq_code = iml.uniq_code").
+		Where("dni.dn_id = ? AND iml.movement_type = ? AND iml.source_flag = ?", dnID, "incoming", "qc_approve").
+		Select(`
+			iml.id,
+			iml.uniq_code,
+			iml.qty_change,
+			iml.weight_change,
+			iml.movement_type,
+			iml.source_flag,
+			iml.reference_id AS packing_number,
+			iml.logged_by,
+			iml.logged_at
+		`).
+		Order("iml.logged_at DESC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func generateDNNumber(last string, prefix string) string {
@@ -683,6 +752,19 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.PreviewD
 	items := make([]models.PreviewDNItemResponse, 0, len(poItems))
 
 	for i, poItem := range poItems {
+		supplierItemUniqCode := resolveSupplierItemUniqCode(poItem)
+		pcsPerKanban, supplierItemErr := s.repo.GetSupplierItemPcsPerKanban(ctx, po.SupplierID, supplierItemUniqCode)
+		switch {
+		case errors.Is(supplierItemErr, gorm.ErrRecordNotFound):
+			pcsPerKanban = 0
+		case supplierItemErr != nil:
+			return nil, fmt.Errorf(
+				"gagal mengambil Supplier Item %s untuk UNIQ PO %s: %w",
+				supplierItemUniqCode,
+				poItem.ItemUniqCode,
+				supplierItemErr,
+			)
+		}
 
 		seq := fmt.Sprintf("%04d", i+1)
 		packingNumber := fmt.Sprintf("%s-PKG-%s", dnNumber, seq)
@@ -694,7 +776,7 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.PreviewD
 			RemainingQty:  int64(poItem.OrderedQty), // lebih masuk akal daripada 0
 			UOM:           poItem.UOM,
 			OrderQty:      int64(poItem.OrderedQty),
-			PcsPerKanban:  poItem.PcsPerKanban,
+			PcsPerKanban:  pcsPerKanban,
 			PackingNumber: packingNumber,
 			DateIncoming:  time.Now().Format("02/01/2006"),
 		})

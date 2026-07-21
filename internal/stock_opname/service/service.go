@@ -47,10 +47,11 @@ type service struct {
 
 func New(repo repository.IRepository, db *gorm.DB, invSvc invService.IService) IService {
 	return &service{repo: repo, db: db, invSvc: invSvc, adjusters: map[string]adjuster.InventoryAdjuster{
-		stockModels.InventoryTypeFG:  adjuster.NewFGAdjuster(),
-		stockModels.InventoryTypeRM:  adjuster.NewRMAdjuster(),
-		stockModels.InventoryTypeIDR: adjuster.NewIndirectAdjuster(),
-		stockModels.InventoryTypeWIP: adjuster.NewWIPAdjuster(),
+		stockModels.InventoryTypeFG:     adjuster.NewFGAdjuster(),
+		stockModels.InventoryTypeRM:     adjuster.NewRMAdjuster(),
+		stockModels.InventoryTypeIDR:    adjuster.NewIndirectAdjuster(),
+		stockModels.InventoryTypeWIP:    adjuster.NewWIPAdjuster(),
+		stockModels.InventoryTypeSubcon: adjuster.NewSubconAdjuster(),
 	}}
 }
 
@@ -73,7 +74,7 @@ func (s *service) ListUniqOptions(ctx context.Context, q stockModels.FormOptions
 	}
 	items := make([]stockModels.UniqOption, 0, len(rows))
 	for i := range rows {
-		items = append(items, stockModels.UniqOption{UniqCode: rows[i].UniqCode, PartNumber: rows[i].PartNumber, PartName: rows[i].PartName, UOM: rows[i].UOM, SystemQty: rows[i].SystemQty, WeightKg: rows[i].WeightKg})
+		items = append(items, stockModels.UniqOption{UniqCode: rows[i].UniqCode, PartNumber: rows[i].PartNumber, PartName: rows[i].PartName, UOM: rows[i].UOM, SystemQty: rows[i].SystemQty, WeightKg: rows[i].WeightKg, RawMaterialType: rows[i].RawMaterialType})
 	}
 	return items, nil
 }
@@ -503,6 +504,14 @@ func (s *service) ApproveSession(ctx context.Context, id int64, req stockModels.
 		if err := validateAction(action); err != nil {
 			return err
 		}
+		// Self-heal: sessions still in draft/in_progress (or created before the
+		// approval instance was provisioned) may not have an approval instance yet.
+		// Ensure one exists before loading the approval context so approving
+		// directly from the list/detail table works instead of returning
+		// "approval instance for stock opname session tidak ditemukan".
+		if err := s.ensureApprovalInstance(ctx, tx, session.ID, actor); err != nil {
+			return err
+		}
 		instance, workflow, err := s.getApprovalContext(ctx, tx, session.ID)
 		if err != nil {
 			return err
@@ -635,6 +644,14 @@ func (s *service) ApproveEntry(ctx context.Context, sessionID, entryID int64, re
 		}
 		action := normalizeAction(req.Action)
 		if err := validateAction(action); err != nil {
+			return err
+		}
+		// Self-heal: sessions still in draft/in_progress (or created before the
+		// approval instance was provisioned) may not have an approval instance yet.
+		// Ensure one exists before loading the approval context so approving
+		// directly from the list/detail table works instead of returning
+		// "approval instance for stock opname session tidak ditemukan".
+		if err := s.ensureApprovalInstance(ctx, tx, session.ID, actor); err != nil {
 			return err
 		}
 		instance, workflow, err := s.getApprovalContext(ctx, tx, session.ID)
@@ -893,6 +910,10 @@ func (s *service) appendInventoryLog(ctx context.Context, tx *gorm.DB, inventory
 		if err := s.invSvc.AppendMovementLog(ctx, tx, invService.MovementLogInput{Category: string(inventoryconst.CategoryIndirectMaterial), MovementType: string(inventoryconst.MovementStockOpname), UniqCode: entry.UniqCode, EntityID: entry.EntityID, QtyChange: result.QtyChange, WeightChange: result.WeightChange, SourceFlag: string(inventoryconst.SourceStockOpname), ReferenceID: &sessionNumber, Notes: &notes, LoggedBy: actor}); err != nil {
 			return apperror.Internal("append indirect stock opname movement log: " + err.Error())
 		}
+	case stockModels.InventoryTypeSubcon:
+		if err := s.invSvc.AppendMovementLog(ctx, tx, invService.MovementLogInput{Category: string(inventoryconst.CategorySubcon), MovementType: string(inventoryconst.MovementStockOpname), UniqCode: entry.UniqCode, EntityID: entry.EntityID, QtyChange: result.QtyChange, WeightChange: result.WeightChange, SourceFlag: string(inventoryconst.SourceStockOpname), ReferenceID: &sessionNumber, Notes: &notes, LoggedBy: actor}); err != nil {
+			return apperror.Internal("append subcon stock opname movement log: " + err.Error())
+		}
 	}
 	return nil
 }
@@ -915,7 +936,7 @@ func (s *service) refreshSessionTotals(ctx context.Context, tx *gorm.DB, session
 func (s *service) getAdjuster(inventoryType string) (adjuster.InventoryAdjuster, error) {
 	adj, ok := s.adjusters[inventoryType]
 	if !ok {
-		return nil, apperror.UnprocessableEntity("inventory_type must be one of: FG, RM, IDR, WIP")
+		return nil, apperror.UnprocessableEntity("inventory_type must be one of: FG, RM, IDR, WIP, SUBCON")
 	}
 	return adj, nil
 }
@@ -1037,7 +1058,7 @@ func isEditableSessionStatus(status string) bool {
 
 func validateInventoryType(v string) error {
 	if _, ok := stockModels.ValidInventoryTypes[v]; !ok {
-		return apperror.UnprocessableEntity("inventory_type must be one of: FG, RM, IDR, WIP")
+		return apperror.UnprocessableEntity("inventory_type must be one of: FG, RM, IDR, WIP, SUBCON")
 	}
 	return nil
 }
