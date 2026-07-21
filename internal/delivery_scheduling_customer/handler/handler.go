@@ -108,6 +108,28 @@ func (h *HTTPHandler) GetSchedulesList(ctx *app.Context) *app.CostumeResponse {
 	return ok(ctx, data)
 }
 
+func (h *HTTPHandler) GetApprovedDNAutocomplete(ctx *app.Context) *app.CostumeResponse {
+	q := ctx.Request.URL.Query()
+	page, _ := strconv.Atoi(q.Get("page"))
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	data, err := h.service.GetApprovedDNAutocomplete(ctx.Request.Context(), models.ApprovedDNAutocompleteFilter{
+		Search: q.Get("search"),
+		Page:   page,
+		Limit:  limit,
+	})
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return ok(ctx, data)
+}
+
 func (h *HTTPHandler) GetScheduleDetail(ctx *app.Context) *app.CostumeResponse {
 	id := ctx.Param("id")
 	data, err := h.service.GetScheduleDetail(ctx.Request.Context(), id)

@@ -23,6 +23,7 @@ type IService interface {
 	CreateSchedule(ctx context.Context, req models.CreateScheduleRequest, createdBy string) (*models.CreateScheduleResponse, error)
 	GetSchedulesSummary(ctx context.Context, deliveryDate string) (*models.ScheduleSummaryResponse, error)
 	GetSchedulesList(ctx context.Context, f models.ScheduleListFilter) (*models.ScheduleListResponse, error)
+	GetApprovedDNAutocomplete(ctx context.Context, f models.ApprovedDNAutocompleteFilter) (*models.ApprovedDNAutocompleteResponse, error)
 	GetScheduleDetail(ctx context.Context, scheduleUUID string) (*models.ScheduleDetailResponse, error)
 
 	// Approve
@@ -266,6 +267,70 @@ func (s *service) GetSchedulesList(ctx context.Context, f models.ScheduleListFil
 
 	return &models.ScheduleListResponse{
 		Groups:     groups,
+		Pagination: repository.BuildPagination(total, f.Page, f.Limit),
+	}, nil
+}
+
+// GetApprovedDNAutocomplete returns complete approved DN data for read-only form auto-fill.
+func (s *service) GetApprovedDNAutocomplete(ctx context.Context, f models.ApprovedDNAutocompleteFilter) (*models.ApprovedDNAutocompleteResponse, error) {
+	if f.Page <= 0 {
+		f.Page = 1
+	}
+	if f.Limit <= 0 {
+		f.Limit = 20
+	}
+
+	schedules, dnsByScheduleID, total, err := s.repo.GetApprovedDNAutocomplete(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+
+	options := make([]models.ApprovedDNAutocompleteOption, 0, len(schedules))
+	for _, schedule := range schedules {
+		dn, ok := dnsByScheduleID[schedule.ID]
+		if !ok {
+			continue
+		}
+
+		items := make([]models.ApprovedDNAutocompleteOptionItem, 0, len(dn.Items))
+		for _, item := range dn.Items {
+			items = append(items, models.ApprovedDNAutocompleteOptionItem{
+				ItemUniqCode: item.ItemUniqCode,
+				ProductName:  item.PartName,
+				PartNumber:   item.PartNumber,
+				Model:        derefStr(item.Model),
+				FGLocation:   derefStr(item.FGLocation),
+				Quantity:     item.Quantity,
+				UOM:          item.UOM,
+			})
+		}
+
+		options = append(options, models.ApprovedDNAutocompleteOption{
+			ScheduleID:            schedule.ScheduleNumber,
+			DNID:                  dn.UUID,
+			DNNumber:              dn.DNNumber,
+			ScheduleDate:          schedule.ScheduleDate.Format("2006-01-02"),
+			DeliveryDate:          dn.DeliveryDate.Format("2006-01-02"),
+			CustomerID:            dn.CustomerID,
+			CustomerName:          derefStr(dn.CustomerNameSnapshot),
+			PONumber:              derefStr(dn.CustomerOrderReference),
+			CustomerContactPerson: derefStr(dn.CustomerContactPerson),
+			CustomerPhoneNumber:   derefStr(dn.CustomerPhoneNumber),
+			DeliveryAddress:       derefStr(dn.DeliveryAddress),
+			Priority:              dn.Priority,
+			TransportCompany:      derefStr(dn.TransportCompany),
+			VehicleNumber:         derefStr(dn.VehicleNumber),
+			DriverName:            derefStr(dn.DriverName),
+			DriverContact:         derefStr(dn.DriverContact),
+			DepartureAt:           dn.DepartureAt,
+			ArrivalAt:             dn.ArrivalAt,
+			DeliveryInstructions:  derefStr(dn.DeliveryInstructions),
+			Items:                 items,
+		})
+	}
+
+	return &models.ApprovedDNAutocompleteResponse{
+		Items:      options,
 		Pagination: repository.BuildPagination(total, f.Page, f.Limit),
 	}, nil
 }

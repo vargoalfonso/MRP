@@ -101,6 +101,8 @@ type RawMaterialItem struct {
 	UpdatedBy             *string   `json:"updated_by"`
 	UpdatedAt             time.Time `json:"updated_at"`
 	QR                    *string   `json:"qr"`
+	Model                 *string   `json:"model"`
+	Grade                 *string   `json:"material_grade"`
 }
 
 type RawMaterialListResponse struct {
