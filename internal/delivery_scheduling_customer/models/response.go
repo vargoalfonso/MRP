@@ -92,6 +92,45 @@ type ApproveScheduleResponse struct {
 	Status     string `json:"status"`
 }
 
+// ApprovedDNAutocompleteResponse is the flat source for DN form auto-fill.
+type ApprovedDNAutocompleteResponse struct {
+	Items      []ApprovedDNAutocompleteOption `json:"items"`
+	Pagination Pagination                     `json:"pagination"`
+}
+
+type ApprovedDNAutocompleteOption struct {
+	ScheduleID            string                             `json:"schedule_id"`
+	DNID                  string                             `json:"dn_id"`
+	DNNumber              string                             `json:"dn_number"`
+	ScheduleDate          string                             `json:"schedule_date"`
+	DeliveryDate          string                             `json:"delivery_date"`
+	CustomerID            int64                              `json:"customer_id"`
+	CustomerName          string                             `json:"customer_name"`
+	PONumber              string                             `json:"po_number"`
+	CustomerContactPerson string                             `json:"customer_contact_person"`
+	CustomerPhoneNumber   string                             `json:"customer_phone_number"`
+	DeliveryAddress       string                             `json:"delivery_address"`
+	Priority              string                             `json:"priority"`
+	TransportCompany      string                             `json:"transport_company"`
+	VehicleNumber         string                             `json:"vehicle_number"`
+	DriverName            string                             `json:"driver_name"`
+	DriverContact         string                             `json:"driver_contact"`
+	DepartureAt           *time.Time                         `json:"departure_at"`
+	ArrivalAt             *time.Time                         `json:"arrival_at"`
+	DeliveryInstructions  string                             `json:"delivery_instructions"`
+	Items                 []ApprovedDNAutocompleteOptionItem `json:"items"`
+}
+
+type ApprovedDNAutocompleteOptionItem struct {
+	ItemUniqCode string  `json:"item_uniq_code"`
+	ProductName  string  `json:"product_name"`
+	PartNumber   string  `json:"part_number"`
+	Model        string  `json:"model"`
+	FGLocation   string  `json:"fg_location"`
+	Quantity     float64 `json:"quantity"`
+	UOM          string  `json:"uom"`
+}
+
 type ApproveMultiResponse struct {
 	ApprovedCount  int    `json:"approved_count"`
 	DNCreatedCount int    `json:"dn_created_count"`

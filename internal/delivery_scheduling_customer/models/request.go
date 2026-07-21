@@ -118,6 +118,13 @@ type ScheduleListFilter struct {
 	Limit        int
 }
 
+// ApprovedDNAutocompleteFilter filters approved schedules that already generated a customer DN.
+type ApprovedDNAutocompleteFilter struct {
+	Search string
+	Page   int
+	Limit  int
+}
+
 type DNListFilter struct {
 	DeliveryDate string
 	CustomerID   int64
