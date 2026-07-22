@@ -14,6 +14,7 @@ const (
 	SourceWOConsumeActual  SourceFlag = "wo_consume_actual" // future: actual RM used from scan-out
 	SourceProductionReject SourceFlag = "production_reject" // reserved for future use
 	SourceStockOpname      SourceFlag = "stock_opname"
+	SourceRMProcessing     SourceFlag = "rm_processing" // RM processing: source consumed, target produced on WO complete
 
 	// Scrap Stock movements
 	SourceScrapManual       SourceFlag = "scrap_manual"
