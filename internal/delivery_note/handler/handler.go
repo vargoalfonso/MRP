@@ -352,3 +352,23 @@ func (h *HTTPHandler) SubmitDelivery(appCtx *app.Context) *app.CostumeResponse {
 		Message:   "scan delivery customer success",
 	}
 }
+
+func (h *HTTPHandler) GetDNPackingList(appCtx *app.Context) *app.CostumeResponse {
+	uniq := appCtx.Param("uniq")
+
+	data, err := h.service.GetByUniq(appCtx.Request.Context(), uniq)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusNotFound,
+			Message:   "Not Found. Delivery note does not exist",
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}

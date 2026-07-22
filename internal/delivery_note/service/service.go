@@ -32,6 +32,7 @@ type IDeliveryNoteService interface {
 	ScanDeliveryIn(ctx context.Context, req models.ScanDeliveryInRequest) (*models.ScanDeliveryInResult, error)
 	SubmitDelivery(ctx context.Context, req models.SubmitDeliveryRequest) error
 	GetHistory(ctx context.Context, dnID int64) ([]DNHistoryLog, error)
+	GetByUniq(ctx context.Context, uniq string) ([]map[string]interface{}, error)
 }
 
 // implementation
@@ -1231,4 +1232,28 @@ func (s *deliveryNoteService) ScanDeliveryIn(ctx context.Context, req models.Sca
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *deliveryNoteService) GetByUniq(ctx context.Context, uniq string) ([]map[string]interface{}, error) {
+	var data []map[string]interface{}
+
+	err := s.db.WithContext(ctx).
+		Table("delivery_notes dn").
+		Select(`
+			dn.dn_number,
+			dni.item_uniq_code,
+			dni.quantity,
+			dni.packing_number,
+			dni.check
+		`).
+		Joins("JOIN delivery_note_items dni ON dni.dn_id = dn.id").
+		Where("dni.item_uniq_code = ?", uniq).
+		Order("dn.id DESC").
+		Find(&data).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
 }

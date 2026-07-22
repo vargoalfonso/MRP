@@ -61,6 +61,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		deliveryNotePrivate.GET("/preview", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.PreviewDN))
 		deliveryNotePrivate.GET("/:id", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.GetDeliveryNoteByID))
 		deliveryNotePrivate.GET("/:id/history", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.GetDeliveryNoteHistory))
+		deliveryNotePrivate.GET("/uniq/:uniq", m.base.RunAction(m.handler.GetDNPackingList))
 	}
 
 	actionUI := v1.Group("/action-ui")
