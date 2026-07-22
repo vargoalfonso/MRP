@@ -15,6 +15,7 @@ import (
 	scrapModels "github.com/ganasa18/go-template/internal/scrap_stock/models"
 	woModels "github.com/ganasa18/go-template/internal/work_order/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/inventoryconst"
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -643,63 +644,114 @@ func (s *service) CompleteProduction(ctx context.Context, woID int64) error {
 }
 
 func (s *service) applyRMPreProcessing(ctx context.Context, woID int64) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return s.applyRMProcessingTx(ctx, tx, woID)
+	})
+}
+
+func (s *service) applyRMProcessingTx(ctx context.Context, tx *gorm.DB, woID int64) error {
 	var hdr struct {
-		WOKind        string   `gorm:"column:wo_kind"`
-		PreProcessing bool     `gorm:"column:pre_processing"`
-		SourceUniq    *string  `gorm:"column:source_material_uniq"`
-		TargetUniq    *string  `gorm:"column:target_material_uniq"`
-		InputQty      *float64 `gorm:"column:input_qty"`
-		OutputQty     *float64 `gorm:"column:output_qty"`
-		OutputUOM     *string  `gorm:"column:output_uom"`
+		WoNumber   string   `gorm:"column:wo_number"`
+		WOKind     string   `gorm:"column:wo_kind"`
+		SourceUniq *string  `gorm:"column:source_material_uniq"`
+		TargetUniq *string  `gorm:"column:target_material_uniq"`
+		InputQty   *float64 `gorm:"column:input_qty"`
+		OutputQty  *float64 `gorm:"column:output_qty"`
+		OutputUOM  *string  `gorm:"column:output_uom"`
 	}
-	if err := s.db.WithContext(ctx).Table("work_orders").
-		Select("wo_kind, pre_processing, source_material_uniq, target_material_uniq, input_qty, output_qty, output_uom").
+	if err := tx.WithContext(ctx).Table("work_orders").
+		Select("wo_number, wo_kind, source_material_uniq, target_material_uniq, input_qty, output_qty, output_uom").
 		Where("id = ?", woID).Take(&hdr).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
 		return err
 	}
-	if !strings.EqualFold(strings.TrimSpace(hdr.WOKind), "rm_processing") || !hdr.PreProcessing {
+	if !strings.EqualFold(strings.TrimSpace(hdr.WOKind), "rm_processing") {
 		return nil
 	}
 	now := time.Now()
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if hdr.SourceUniq != nil && strings.TrimSpace(*hdr.SourceUniq) != "" && hdr.InputQty != nil && *hdr.InputQty > 0 {
-			if err := tx.Table("raw_materials").
-				Where("uniq_code = ? AND deleted_at IS NULL", strings.TrimSpace(*hdr.SourceUniq)).
-				Updates(map[string]interface{}{
-					"stock_qty":  gorm.Expr("stock_qty - ?", *hdr.InputQty),
-					"updated_at": now,
-				}).Error; err != nil {
+	woNumber := strings.TrimSpace(hdr.WoNumber)
+
+	// Idempotency guard: this WO's stock conversion may be triggered from both the
+	// scan-out (last process) and the wo-complete endpoint. If we already wrote an
+	// rm_processing movement log for this WO number, the stock has been applied —
+	// skip so quantities aren't deducted/added twice.
+	if woNumber != "" {
+		var applied int64
+		if err := tx.Table("inventory_movement_logs").
+			Where("reference_id = ? AND source_flag = ?", woNumber, string(inventoryconst.SourceRMProcessing)).
+			Count(&applied).Error; err != nil {
+			return err
+		}
+		if applied > 0 {
+			return nil
+		}
+	}
+
+	// 1) Source raw material: deduct consumed qty and log the outgoing movement.
+	if hdr.SourceUniq != nil && strings.TrimSpace(*hdr.SourceUniq) != "" && hdr.InputQty != nil && *hdr.InputQty > 0 {
+		source := strings.TrimSpace(*hdr.SourceUniq)
+		var sourceID int64
+		if err := tx.Table("raw_materials").Select("id").
+			Where("uniq_code = ? AND deleted_at IS NULL", source).
+			Limit(1).Scan(&sourceID).Error; err != nil {
+			return err
+		}
+		if err := tx.Table("raw_materials").
+			Where("uniq_code = ? AND deleted_at IS NULL", source).
+			Updates(map[string]interface{}{
+				"stock_qty":  gorm.Expr("stock_qty - ?", *hdr.InputQty),
+				"updated_at": now,
+			}).Error; err != nil {
+			return err
+		}
+		if sourceID > 0 {
+			if err := s.createInventoryMovementLog(tx,
+				string(inventoryconst.CategoryRawMaterial),
+				string(inventoryconst.MovementOutgoing),
+				source, &sourceID, 0, -*hdr.InputQty, 0,
+				refString(woNumber),
+				stringPtr(string(inventoryconst.SourceRMProcessing)),
+				stringPtr("RM processing consume (source)"),
+				stringPtr("system"),
+			); err != nil {
 				return err
 			}
 		}
-		if hdr.TargetUniq == nil || strings.TrimSpace(*hdr.TargetUniq) == "" {
-			return nil
-		}
-		target := strings.TrimSpace(*hdr.TargetUniq)
-		outQty := 0.0
-		if hdr.OutputQty != nil {
-			outQty = *hdr.OutputQty
-		}
-		var existingID int64
-		if err := tx.Table("raw_materials").Select("id").
-			Where("uniq_code = ? AND deleted_at IS NULL", target).
-			Limit(1).Scan(&existingID).Error; err != nil {
+	}
+
+	if hdr.TargetUniq == nil || strings.TrimSpace(*hdr.TargetUniq) == "" {
+		return nil
+	}
+	target := strings.TrimSpace(*hdr.TargetUniq)
+	outQty := 0.0
+	if hdr.OutputQty != nil {
+		outQty = *hdr.OutputQty
+	}
+
+	// 2) Target raw material: add produced qty (create if it doesn't exist yet),
+	//    then log the incoming movement.
+	var existingID int64
+	if err := tx.Table("raw_materials").Select("id").
+		Where("uniq_code = ? AND deleted_at IS NULL", target).
+		Limit(1).Scan(&existingID).Error; err != nil {
+		return err
+	}
+	targetID := existingID
+	if existingID > 0 {
+		if err := tx.Table("raw_materials").
+			Where("id = ?", existingID).
+			Updates(map[string]interface{}{
+				"stock_qty":      gorm.Expr("stock_qty + ?", outQty),
+				"pre_processing": true,
+				"rm_source":      "process",
+				"updated_at":     now,
+			}).Error; err != nil {
 			return err
 		}
-		if existingID > 0 {
-			return tx.Table("raw_materials").
-				Where("id = ?", existingID).
-				Updates(map[string]interface{}{
-					"stock_qty":      gorm.Expr("stock_qty + ?", outQty),
-					"pre_processing": true,
-					"rm_source":      "process",
-					"updated_at":     now,
-				}).Error
-		}
-		return tx.Table("raw_materials").Create(map[string]interface{}{
+	} else {
+		row := map[string]interface{}{
 			"uuid":              uuid.New(),
 			"uniq_code":         target,
 			"raw_material_type": "others",
@@ -711,8 +763,40 @@ func (s *service) applyRMPreProcessing(ctx context.Context, woID int64) error {
 			"uom":               hdr.OutputUOM,
 			"created_at":        now,
 			"updated_at":        now,
-		}).Error
-	})
+		}
+		if err := tx.Table("raw_materials").Create(row).Error; err != nil {
+			return err
+		}
+		if err := tx.Table("raw_materials").Select("id").
+			Where("uniq_code = ? AND deleted_at IS NULL", target).
+			Limit(1).Scan(&targetID).Error; err != nil {
+			return err
+		}
+	}
+
+	if outQty > 0 && targetID > 0 {
+		if err := s.createInventoryMovementLog(tx,
+			string(inventoryconst.CategoryRawMaterial),
+			string(inventoryconst.MovementIncoming),
+			target, &targetID, 0, outQty, 0,
+			refString(woNumber),
+			stringPtr(string(inventoryconst.SourceRMProcessing)),
+			stringPtr("RM processing produce (target)"),
+			stringPtr("system"),
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// refString returns a *string for a non-empty (trimmed) value, else nil.
+func refString(v string) *string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	return &v
 }
 
 func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, performedBy string) error {
@@ -975,6 +1059,26 @@ func (s *service) advanceProcessAfterScanOut(ctx context.Context, tx *gorm.DB, i
 		item.Status = "PENDING"
 		item.LastScannedProcess = ""
 
+		return tx.Save(item).Error
+	}
+
+	// =====================================
+	// LAST PROCESS
+	// =====================================
+	// RM processing outputs a raw material, not a finished good: route the
+	// output into raw_materials (target += output, source -= input) with movement
+	// logs, and skip the finished-goods path entirely.
+	var woKind string
+	if err := tx.Table("work_orders").Select("wo_kind").
+		Where("id = ?", item.WOID).Take(&woKind).Error; err != nil {
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(woKind), "rm_processing") {
+		if err := s.applyRMProcessingTx(ctx, tx, item.WOID); err != nil {
+			return err
+		}
+		item.Status = "FINISHED"
+		item.LastScannedProcess = ""
 		return tx.Save(item).Error
 	}
 
