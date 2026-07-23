@@ -67,6 +67,7 @@ func (WIPLog) TableName() string {
 }
 
 type WIPListResponse struct {
+	ID                    int64  `json:"id"`
 	Process               string `json:"process"`
 	Uniq                  string `json:"uniq"`
 	PartNumber            string `json:"part_number"`

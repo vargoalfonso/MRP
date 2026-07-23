@@ -16,6 +16,20 @@ type subconStockRow struct {
 	StockAtVendorQty float64
 }
 
+// subconEnrichment holds best-effort metadata resolved from Finished Goods and
+// the matching SUBCON Purchase Order, so that subcon inventory rows created from
+// a DN Subcon OUT/IN scan are not left with empty vendor / PO / part fields.
+type subconEnrichment struct {
+	PartNumber     *string
+	PartName       *string
+	SafetyStockQty *float64
+	VendorID       *int64
+	VendorName     *string
+	PONumber       *string
+	POPeriod       *string
+	TotalPOQty     *float64
+}
+
 // addSubconStockOut records goods sent OUT to an external subcontractor (DN
 // Subcon OUT). It increases subcon_inventories.stock_at_vendor_qty (Inventory >
 // Subcon Material > tab "Stock In Vendor") and writes a movement log. It never
@@ -45,6 +59,10 @@ func (s *deliveryNoteService) upsertSubconStock(tx *gorm.DB, uniq, dnNumber stri
 	}
 	now := time.Now()
 
+	// Resolve metadata once; used both for auto-create and for backfilling an
+	// existing row whose vendor / PO / part fields are still empty.
+	meta := s.lookupSubconEnrichment(tx, uniq)
+
 	var row subconStockRow
 	if err := tx.Table("subcon_inventories").
 		Select("id, stock_at_vendor_qty").
@@ -55,12 +73,19 @@ func (s *deliveryNoteService) upsertSubconStock(tx *gorm.DB, uniq, dnNumber stri
 	}
 
 	if row.ID == 0 {
-		// Auto-create the subcon inventory record on first movement.
-		partNumber, partName := s.lookupSubconPartInfo(tx, uniq)
+		// Auto-create the subcon inventory record on first movement, filling in
+		// as much metadata as we can resolve.
 		newRow := map[string]interface{}{
 			"uniq_code":           uniq,
-			"part_number":         partNumber,
-			"part_name":           partName,
+			"part_number":         meta.PartNumber,
+			"part_name":           meta.PartName,
+			"po_number":           meta.PONumber,
+			"po_period":           meta.POPeriod,
+			"subcon_vendor_id":    meta.VendorID,
+			"subcon_vendor_name":  meta.VendorName,
+			"total_po_qty":        meta.TotalPOQty,
+			"safety_stock_qty":    meta.SafetyStockQty,
+			"date_delivery":       now,
 			"stock_at_vendor_qty": 0,
 			"total_received_qty":  0,
 			"status":              "normal",
@@ -90,7 +115,38 @@ func (s *deliveryNoteService) upsertSubconStock(tx *gorm.DB, uniq, dnNumber stri
 	// Goods received back leave the vendor's stock.
 	if movementType == "received_from_vendor" {
 		updates["stock_at_vendor_qty"] = gorm.Expr("GREATEST(stock_at_vendor_qty - ?, 0)", qty)
+	} else {
+		// DN Subcon OUT: refresh the delivery date to the latest shipment.
+		updates["date_delivery"] = now
 	}
+
+	// Backfill metadata still empty on an existing row (never overwrites values
+	// already set, e.g. edited by a user).
+	if meta.PartNumber != nil {
+		updates["part_number"] = gorm.Expr("COALESCE(part_number, ?)", *meta.PartNumber)
+	}
+	if meta.PartName != nil {
+		updates["part_name"] = gorm.Expr("COALESCE(part_name, ?)", *meta.PartName)
+	}
+	if meta.PONumber != nil {
+		updates["po_number"] = gorm.Expr("COALESCE(po_number, ?)", *meta.PONumber)
+	}
+	if meta.POPeriod != nil {
+		updates["po_period"] = gorm.Expr("COALESCE(po_period, ?)", *meta.POPeriod)
+	}
+	if meta.VendorID != nil {
+		updates["subcon_vendor_id"] = gorm.Expr("COALESCE(subcon_vendor_id, ?)", *meta.VendorID)
+	}
+	if meta.VendorName != nil {
+		updates["subcon_vendor_name"] = gorm.Expr("COALESCE(subcon_vendor_name, ?)", *meta.VendorName)
+	}
+	if meta.TotalPOQty != nil {
+		updates["total_po_qty"] = gorm.Expr("COALESCE(total_po_qty, ?)", *meta.TotalPOQty)
+	}
+	if meta.SafetyStockQty != nil {
+		updates["safety_stock_qty"] = gorm.Expr("COALESCE(safety_stock_qty, ?)", *meta.SafetyStockQty)
+	}
+
 	if err := tx.Table("subcon_inventories").Where("id = ?", row.ID).Updates(updates).Error; err != nil {
 		return err
 	}
@@ -115,16 +171,69 @@ func (s *deliveryNoteService) upsertSubconStock(tx *gorm.DB, uniq, dnNumber stri
 	return nil
 }
 
-// lookupSubconPartInfo best-effort resolves part number / name from PO items.
-func (s *deliveryNoteService) lookupSubconPartInfo(tx *gorm.DB, uniq string) (interface{}, interface{}) {
-	var poi struct {
-		PartNumber *string
-		PartName   *string
+// lookupSubconEnrichment resolves part / vendor / PO metadata for a subcon item
+// on a best-effort basis. Any source that is missing simply leaves its fields
+// nil so the caller can decide whether to backfill.
+func (s *deliveryNoteService) lookupSubconEnrichment(tx *gorm.DB, uniq string) subconEnrichment {
+	var meta subconEnrichment
+
+	// 1. Part identity + safety stock from Finished Goods (most reliable).
+	var fg struct {
+		PartNumber     *string
+		PartName       *string
+		SafetyStockQty *float64
 	}
-	_ = tx.Table("purchase_order_items").
-		Select("part_number, part_name").
-		Where("item_uniq_code = ?", uniq).
+	if err := tx.Table("finished_goods").
+		Select("part_number, part_name, safety_stock_qty").
+		Where("uniq_code = ? AND deleted_at IS NULL", uniq).
 		Limit(1).
-		Scan(&poi).Error
-	return poi.PartNumber, poi.PartName
+		Scan(&fg).Error; err == nil {
+		meta.PartNumber = fg.PartNumber
+		meta.PartName = fg.PartName
+		meta.SafetyStockQty = fg.SafetyStockQty
+	}
+
+	// 2. Vendor + PO info from the latest SUBCON purchase order for this item.
+	var po struct {
+		PartNumber   *string
+		PartName     *string
+		TotalPoQty   *float64
+		PoNumber     *string
+		Period       *string
+		SupplierID   *int64
+		SupplierName *string
+	}
+	_ = tx.Table("purchase_order_items poi").
+		Select("poi.part_number AS part_number, poi.part_name AS part_name, poi.ordered_qty AS total_po_qty, po.po_number AS po_number, po.period AS period, po.supplier_id AS supplier_id, sup.supplier_name AS supplier_name").
+		Joins("JOIN purchase_orders po ON po.po_id = poi.po_id").
+		Joins("LEFT JOIN suppliers sup ON sup.id = po.supplier_id").
+		Where("poi.item_uniq_code = ? AND po.po_type = ?", uniq, "SUBCON").
+		Order("po.po_date DESC NULLS LAST, po.po_id DESC").
+		Limit(1).
+		Scan(&po).Error
+
+	if po.PoNumber != nil {
+		meta.PONumber = po.PoNumber
+	}
+	if po.Period != nil {
+		meta.POPeriod = po.Period
+	}
+	if po.SupplierID != nil {
+		meta.VendorID = po.SupplierID
+	}
+	if po.SupplierName != nil {
+		meta.VendorName = po.SupplierName
+	}
+	if po.TotalPoQty != nil {
+		meta.TotalPOQty = po.TotalPoQty
+	}
+	// Fallback part identity from the PO line when Finished Goods lacked it.
+	if meta.PartNumber == nil {
+		meta.PartNumber = po.PartNumber
+	}
+	if meta.PartName == nil {
+		meta.PartName = po.PartName
+	}
+
+	return meta
 }

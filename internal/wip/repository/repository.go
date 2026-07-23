@@ -92,6 +92,7 @@ func (r *repository) FindAllWIPPaginated(ctx context.Context, page, limit int) (
 	err = db.
 		Table("wips").
 		Select(`
+			wips.id AS id,
 			wip_items.process_name AS process,
 			wip_items.uniq AS uniq,
 			items.part_number AS part_number,
