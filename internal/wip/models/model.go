@@ -67,6 +67,7 @@ func (WIPLog) TableName() string {
 }
 
 type WIPListResponse struct {
+	ID                    int64  `json:"id"`
 	Process               string `json:"process"`
 	Uniq                  string `json:"uniq"`
 	PartNumber            string `json:"part_number"`
@@ -91,6 +92,27 @@ type WIPDetailResponse struct {
 	PartNumber string       `json:"part_number"`
 	PartName   string       `json:"part_name"`
 	Processes  []WIPProcess `json:"processes"`
+}
+
+type WIPMovementLogItem struct {
+	ID           int64     `json:"id"`
+	UniqCode     string    `json:"uniq_code"`
+	MovementType string    `json:"movement_type"`
+	Reason       string    `json:"reason"`
+	QtyChange    float64   `json:"qty_change"`
+	WONumber     string    `json:"wo_number"`
+	DNNumber     string    `json:"dn_number"`
+	ReferenceID  string    `json:"reference_id"`
+	Notes        string    `json:"notes"`
+	LoggedBy     string    `json:"logged_by"`
+	LoggedAt     time.Time `json:"logged_at"`
+}
+
+type WIPHistoryResponse struct {
+	Items []WIPMovementLogItem `json:"items"`
+	Total int64                `json:"total"`
+	Page  int                  `json:"page"`
+	Limit int                  `json:"limit"`
 }
 
 type FinishedGoods struct {

@@ -365,6 +365,7 @@ type QCTaskPaginationInput struct {
 	OrderDirection string        `json:"order_direction"`
 	TaskType       string        `json:"task_type"`
 	Status         string        `json:"status"`
+	Source         string        `json:"source"`
 }
 
 type QCDashboardPaginationInput struct {
@@ -434,6 +435,7 @@ func QCTaskPagination(c *app.Context) QCTaskPaginationInput {
 		OrderDirection: base.OrderDirection,
 		TaskType:       c.Query("task_type"),
 		Status:         c.Query("status"),
+		Source:     	c.Query("source"),
 	}
 }
 
@@ -686,6 +688,7 @@ type InventorySubconPaginationInput struct {
 	SupplierID     int64
 	Period         string
 	Status         string
+	Source         string
 }
 
 func (p InventorySubconPaginationInput) Offset() int {
@@ -711,6 +714,7 @@ func InventorySubconPagination(c *app.Context) InventorySubconPaginationInput {
 		SupplierID: supplierID,
 		Period:     c.Query("period"),
 		Status:     c.Query("status"),
+		Source:     c.Query("source"),
 	}
 }
 

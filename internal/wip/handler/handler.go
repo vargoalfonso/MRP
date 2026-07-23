@@ -228,3 +228,34 @@ func (h *HTTPHandler) Scan(appCtx *app.Context) *app.CostumeResponse {
 		Message:   "Scan success",
 	}
 }
+
+func (h *HTTPHandler) GetHistory(appCtx *app.Context) *app.CostumeResponse {
+
+	uniqCode := appCtx.Query("uniq_code")
+
+	page, _ := strconv.Atoi(appCtx.Query("page"))
+	limit, _ := strconv.Atoi(appCtx.Query("limit"))
+
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+
+	data, err := h.service.GetHistory(appCtx.Request.Context(), uniqCode, page, limit)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: appCtx.APIReqID,
+			Status:    http.StatusInternalServerError,
+			Message:   err.Error(),
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: appCtx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "Success",
+		Data:      data,
+	}
+}

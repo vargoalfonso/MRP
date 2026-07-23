@@ -118,6 +118,9 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	sc.POST("", perm("inventory", "create"), m.base.RunAction(m.handler.CreateSubconInventory))
 	// NOTE: /received must be registered before /:id
 	sc.GET("/received", perm("inventory", "view"), m.base.RunAction(m.handler.ListSubconReceived))
+	// [subcon-fix] /incoming = log DN masuk (received) utk halaman detail subcon.
+	// Harus terdaftar sebelum /:id agar "incoming" tidak dianggap sebagai :id.
+	sc.GET("/incoming", perm("inventory", "view"), m.base.RunAction(m.handler.ListSubconReceived))
 	sc.GET("/:id", perm("inventory", "view"), m.base.RunAction(m.handler.GetSubconByID))
 	sc.PUT("/:id", perm("inventory", "update"), m.base.RunAction(m.handler.UpdateSubconInventory))
 	sc.DELETE("/:id", perm("inventory", "delete"), m.base.RunAction(m.handler.DeleteSubconInventory))
