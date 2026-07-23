@@ -2073,35 +2073,18 @@ func (s *service) ScanMachine(ctx context.Context, req dto.ScanMachineRequest) (
 		}
 	}
 
-	// VALIDASI: proses mesin harus == proses uniq ini
-	if !strings.EqualFold(strings.TrimSpace(scannedProcess), strings.TrimSpace(expectedProcess)) {
-		return &dto.ScanMachineResponse{
-			Valid: false,
-			Message: fmt.Sprintf(
-				"Mesin %s untuk proses \"%s\", padahal uniq ini butuh proses \"%s\". Silakan scan ulang mesin yang benar.",
-				machine.MachineNumber, fallbackDash(scannedProcess), expectedProcess,
-			),
-			MachineID:       strconv.Itoa(int(machine.ID)),
-			MachineNumber:   machine.MachineNumber,
-			MachineName:     machine.MachineName,
-			ProductionLine:  machine.ProductionLine,
-			ScannedProcess:  scannedProcess,
-			ExpectedProcess: expectedProcess,
-			CurrentStep:     currentIdx + 1,
-			TotalStep:       totalStep,
-			NextProcess:     nextProcess,
-			ProcessFlow:     steps,
-		}, nil
-	}
+	// [flex-machine] Validasi "proses mesin harus sama dengan proses uniq" DIHAPUS agar
+	// mesin apa pun bisa dipakai untuk proses ini (lebih fleksibel). scannedProcess tetap
+	// dihitung & dikembalikan sebagai informasi saja.
 
-	// COCOK → set mesin ke uniq
+	// Set mesin ke uniq (proses tetap = expectedProcess milik uniq ini).
 	if err := s.repoProduction.UpdateWOItemMachine(ctx, item.ID, int(machine.ID), expectedProcess); err != nil {
 		return nil, err
 	}
 
 	return &dto.ScanMachineResponse{
 		Valid:           true,
-		Message:         fmt.Sprintf("Mesin %s sesuai untuk proses \"%s\".", machine.MachineNumber, expectedProcess),
+		Message:         fmt.Sprintf("Mesin %s digunakan untuk proses \"%s\".", machine.MachineNumber, expectedProcess),
 		MachineID:       strconv.Itoa(int(machine.ID)),
 		MachineNumber:   machine.MachineNumber,
 		MachineName:     machine.MachineName,

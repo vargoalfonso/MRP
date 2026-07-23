@@ -593,6 +593,7 @@ func (s *service) ListSubconInventory(ctx context.Context, p pagination.Inventor
 		SupplierID:     p.SupplierID,
 		Period:         p.Period,
 		Status:         p.Status,
+		Source:         p.Source,
 		Page:           p.Page,
 		Limit:          p.Limit,
 		Offset:         p.Offset(),
@@ -1163,8 +1164,8 @@ func subconRowToItem(r repository.SubconRow) invModels.SubconInventoryItem {
 	return invModels.SubconInventoryItem{
 		ID:               r.ID,
 		UniqCode:         r.UniqCode,
-		PartNumber:       r.PartNumber,
-		PartName:         r.PartName,
+		PartNumber:       subconCoalesceStr(r.PartNumber, r.FGPartNumber),
+		PartName:         subconCoalesceStr(r.PartName, r.FGPartName),
 		PONumber:         r.PONumber,
 		POPeriod:         r.POPeriod,
 		SubconVendorID:   r.SubconVendorID,
@@ -1173,7 +1174,7 @@ func subconRowToItem(r repository.SubconRow) invModels.SubconInventoryItem {
 		TotalPOQty:       r.TotalPOQty,
 		TotalReceivedQty: r.TotalReceivedQty,
 		DeltaPO:          r.DeltaPO,
-		SafetyStockQty:   r.SafetyStockQty,
+		SafetyStockQty:   subconCoalesceFloat(r.SafetyStockQty, r.FGSafetyStockQty),
 		DateDelivery:     r.DateDelivery,
 		Status:           r.Status,
 		ApprovalStatus:   r.ApprovalStatus,
@@ -1544,4 +1545,20 @@ func (s *service) GenerateQRSubcon(ctx context.Context, uniqCode string) (*strin
 		return nil, err
 	}
 	return &qr, nil
+}
+
+
+// [subcon-fix] helper enrichment finished_goods.
+func subconCoalesceStr(primary, fallback *string) *string {
+	if primary != nil && *primary != "" {
+		return primary
+	}
+	return fallback
+}
+
+func subconCoalesceFloat(primary, fallback *float64) *float64 {
+	if primary != nil {
+		return primary
+	}
+	return fallback
 }

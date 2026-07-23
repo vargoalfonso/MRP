@@ -37,6 +37,7 @@ type SubconListFilter struct {
 	SupplierID     int64
 	Period         string
 	Status         string
+	Source         string
 	Page           int
 	Limit          int
 	Offset         int
@@ -111,6 +112,10 @@ type IndirectRow struct {
 }
 
 type SubconRow struct {
+	// [subcon-fix] enrichment finished_goods (fallback saat kolom sendiri NULL)
+	FGPartNumber     *string    `gorm:"column:fg_part_number"`
+	FGPartName       *string    `gorm:"column:fg_part_name"`
+	FGSafetyStockQty *float64   `gorm:"column:fg_safety_stock_qty"`
 	ID               int64      `gorm:"column:id"`
 	UniqCode         string     `gorm:"column:uniq_code"`
 	PartNumber       *string    `gorm:"column:part_number"`
@@ -618,7 +623,9 @@ func (r *repo) SoftDeleteIndirectMaterial(ctx context.Context, id int64, deleted
 // ---------------------------------------------------------------------------
 
 func (r *repo) ListSubconInventory(ctx context.Context, f SubconListFilter) ([]SubconRow, int64, error) {
-	q := r.db.WithContext(ctx).Table("subcon_inventories si").Where("si.deleted_at IS NULL")
+	q := r.db.WithContext(ctx).Table("subcon_inventories si").
+		Joins("LEFT JOIN finished_goods fg ON fg.uniq_code = si.uniq_code AND fg.deleted_at IS NULL").
+		Where("si.deleted_at IS NULL")
 
 	if f.Search != "" {
 		s := "%" + f.Search + "%"
@@ -637,13 +644,28 @@ func (r *repo) ListSubconInventory(ctx context.Context, f SubconListFilter) ([]S
 		q = q.Where("si.status = ?", f.Status)
 	}
 
+	// [subcon-tabs] Pemisahan tab: scan DN Subcon OUT menaikkan stock_at_vendor_qty
+	// (Stock In Vendor), scan DN Subcon IN menaikkan total_received_qty
+	// (Stock Received from Vendor). Frontend mengirim ?source=received utk tab received.
+	switch f.Source {
+	case "received", "received_from_vendor":
+		q = q.Where("COALESCE(si.total_received_qty, 0) > 0")
+	default:
+		// [subcon-fix] Stock In Vendor = baris yang BELUM diterima kembali
+		// (total_received_qty = 0). Termasuk entri manual "Add Stock Data"
+		// (stock_at_vendor_qty bisa 0) dan scan DN Subcon OUT. Baris yang sudah
+		// di-scan DN Subcon IN (total_received_qty > 0) otomatis pindah ke tab
+		// Stock Received from Vendor dan hilang dari sini.
+		q = q.Where("COALESCE(si.total_received_qty, 0) = 0")
+	}
+
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, fmt.Errorf("ListSubconInventory count: %w", err)
 	}
 
 	var rows []SubconRow
-	err := q.Select("si.*").
+	err := q.Select("si.*, fg.part_number AS fg_part_number, fg.part_name AS fg_part_name, fg.safety_stock_qty AS fg_safety_stock_qty").
 		Order(safeOrderDir("si", f.OrderBy, f.OrderDirection, []string{"uniq_code", "po_number", "status", "created_at", "updated_at"})).
 		Limit(f.Limit).Offset(f.Offset).
 		Scan(&rows).Error
@@ -656,7 +678,33 @@ func (r *repo) GetSubconByID(ctx context.Context, id int64) (*invModels.SubconIn
 	if err == gorm.ErrRecordNotFound {
 		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "subcon inventory tidak ditemukan")
 	}
-	return &si, err
+	if err != nil {
+		return &si, err
+	}
+	// [subcon-fix] Lengkapi part_number/part_name/safety_stock dari finished_goods
+	// bila kolom pada baris subcon masih NULL (mis. baris hasil scan DN).
+	if si.PartNumber == nil || si.PartName == nil || si.SafetyStockQty == nil {
+		var fg struct {
+			PartNumber     *string  `gorm:"column:part_number"`
+			PartName       *string  `gorm:"column:part_name"`
+			SafetyStockQty *float64 `gorm:"column:safety_stock_qty"`
+		}
+		if e := r.db.WithContext(ctx).Table("finished_goods").
+			Select("part_number, part_name, safety_stock_qty").
+			Where("uniq_code = ? AND deleted_at IS NULL", si.UniqCode).
+			Limit(1).Scan(&fg).Error; e == nil {
+			if si.PartNumber == nil {
+				si.PartNumber = fg.PartNumber
+			}
+			if si.PartName == nil {
+				si.PartName = fg.PartName
+			}
+			if si.SafetyStockQty == nil {
+				si.SafetyStockQty = fg.SafetyStockQty
+			}
+		}
+	}
+	return &si, nil
 }
 
 func (r *repo) CreateSubconInventory(ctx context.Context, si *invModels.SubconInventory) error {
