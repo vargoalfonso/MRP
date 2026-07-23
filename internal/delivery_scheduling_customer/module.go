@@ -57,6 +57,11 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 			roleMiddleware.RequirePermission(m.roleService, "delivery_schedule_customer", "view"),
 			m.base.RunAction(m.handler.GetSchedulesList))
 
+		// Static form-option routes must be registered before /:id.
+		schedules.GET("/form-options/dn",
+			roleMiddleware.RequirePermission(m.roleService, "delivery_schedule_customer", "view"),
+			m.base.RunAction(m.handler.GetApprovedDNAutocomplete))
+
 		// approve-all and approve-partial must be registered before /:id
 		schedules.POST("/approve-all",
 			roleMiddleware.RequirePermission(m.roleService, "delivery_schedule_customer", "approve"),

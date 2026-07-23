@@ -32,6 +32,7 @@ type IDeliveryNoteService interface {
 	ScanDeliveryIn(ctx context.Context, req models.ScanDeliveryInRequest) (*models.ScanDeliveryInResult, error)
 	SubmitDelivery(ctx context.Context, req models.SubmitDeliveryRequest) error
 	GetHistory(ctx context.Context, dnID int64) ([]DNHistoryLog, error)
+	GetByUniq(ctx context.Context, uniq string) ([]map[string]interface{}, error)
 }
 
 // implementation
@@ -1036,6 +1037,14 @@ func (s *deliveryNoteService) SubmitDelivery(ctx context.Context, req models.Sub
 			if err := s.repo.ReduceFGStock(tx, fg.ID, item.Qty); err != nil {
 				return err
 			}
+
+			// FIX: catat pergerakan Finished Goods (OUT) ke fg_movement_logs supaya
+			// muncul di History Log detail Finished Goods (ERP).
+			if err := s.appendFGMovementLog(tx, fg.ID, item.ItemUniqCode, "delivery_scan",
+				-item.Qty, fg.StockQty, fg.StockQty-item.Qty,
+				header.ScheduleNumber, "Pengiriman ke customer (DN customer action-ui)", req.CreatedBy); err != nil {
+				return err
+			}
 		}
 
 		return nil
@@ -1174,4 +1183,28 @@ func (s *deliveryNoteService) ScanDeliveryIn(ctx context.Context, req models.Sca
 		return nil, err
 	}
 	return result, nil
+}
+
+func (s *deliveryNoteService) GetByUniq(ctx context.Context, uniq string) ([]map[string]interface{}, error) {
+	var data []map[string]interface{}
+
+	err := s.db.WithContext(ctx).
+		Table("delivery_notes dn").
+		Select(`
+			dn.dn_number,
+			dni.item_uniq_code,
+			dni.quantity,
+			dni.packing_number,
+			dni.check
+		`).
+		Joins("JOIN delivery_note_items dni ON dni.dn_id = dn.id").
+		Where("dni.item_uniq_code = ?", uniq).
+		Order("dn.id DESC").
+		Find(&data).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
 }

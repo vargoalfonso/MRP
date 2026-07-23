@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"math"
+	"strings"
 
 	"github.com/ganasa18/go-template/internal/delivery_scheduling_customer/models"
 	"gorm.io/gorm"
@@ -26,6 +27,7 @@ type IRepository interface {
 	UpdateScheduleItemDNNumber(ctx context.Context, tx *gorm.DB, itemID int64, dnNumber, status string) error
 	GetSchedulesSummary(ctx context.Context, deliveryDate string) (map[string]int, error)
 	GetSchedulesList(ctx context.Context, f models.ScheduleListFilter) ([]models.ScheduleCustomer, int64, error)
+	GetApprovedDNAutocomplete(ctx context.Context, f models.ApprovedDNAutocompleteFilter) ([]models.ScheduleCustomer, map[int64]models.DNCustomer, int64, error)
 	GetSchedulesByDateAndCustomer(ctx context.Context, deliveryDate string, customerID int64) ([]models.ScheduleCustomer, error)
 	GetSchedulesByUUIDs(ctx context.Context, uuids []string) ([]models.ScheduleCustomer, error)
 
@@ -233,6 +235,67 @@ func (r *repository) GetSchedulesList(ctx context.Context, f models.ScheduleList
 		Find(&schedules).Error
 
 	return schedules, total, err
+}
+
+// GetApprovedDNAutocomplete returns only schedules approved into customer DNs.
+func (r *repository) GetApprovedDNAutocomplete(ctx context.Context, f models.ApprovedDNAutocompleteFilter) ([]models.ScheduleCustomer, map[int64]models.DNCustomer, int64, error) {
+	var schedules []models.ScheduleCustomer
+	var total int64
+
+	q := r.db.WithContext(ctx).
+		Model(&models.ScheduleCustomer{}).
+		Joins("JOIN delivery_notes_customer dn ON dn.schedule_id = delivery_schedules_customer.id").
+		Where("delivery_schedules_customer.deleted_at IS NULL").
+		Where("delivery_schedules_customer.status = ?", "dn_created").
+		Where("delivery_schedules_customer.approval_status = ?", "approved")
+
+	if search := strings.TrimSpace(f.Search); search != "" {
+		pattern := "%" + search + "%"
+		q = q.Where(`(
+			delivery_schedules_customer.schedule_number ILIKE ? OR
+			dn.dn_number ILIKE ? OR
+			delivery_schedules_customer.customer_name_snapshot ILIKE ? OR
+			delivery_schedules_customer.customer_order_reference ILIKE ?
+		)`, pattern, pattern, pattern, pattern)
+	}
+
+	if err := q.Session(&gorm.Session{}).Distinct("delivery_schedules_customer.id").Count(&total).Error; err != nil {
+		return nil, nil, 0, err
+	}
+
+	offset := (f.Page - 1) * f.Limit
+	if err := q.Preload("Items").
+		Order("delivery_schedules_customer.schedule_date ASC, delivery_schedules_customer.schedule_number ASC").
+		Offset(offset).
+		Limit(f.Limit).
+		Find(&schedules).Error; err != nil {
+		return nil, nil, 0, err
+	}
+
+	scheduleIDs := make([]int64, 0, len(schedules))
+	for _, schedule := range schedules {
+		scheduleIDs = append(scheduleIDs, schedule.ID)
+	}
+	if len(scheduleIDs) == 0 {
+		return schedules, map[int64]models.DNCustomer{}, total, nil
+	}
+
+	var dns []models.DNCustomer
+	if err := r.db.WithContext(ctx).
+		Where("schedule_id IN ?", scheduleIDs).
+		Preload("Items").
+		Find(&dns).Error; err != nil {
+		return nil, nil, 0, err
+	}
+
+	dnsByScheduleID := make(map[int64]models.DNCustomer, len(dns))
+	for _, dn := range dns {
+		if dn.ScheduleID != nil {
+			dnsByScheduleID[*dn.ScheduleID] = dn
+		}
+	}
+
+	return schedules, dnsByScheduleID, total, nil
 }
 
 func (r *repository) GetSchedulesByDateAndCustomer(ctx context.Context, deliveryDate string, customerID int64) ([]models.ScheduleCustomer, error) {

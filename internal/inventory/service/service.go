@@ -1129,6 +1129,8 @@ func rawMaterialRowToItem(r repository.RawMaterialRow) invModels.RawMaterialItem
 		UpdatedBy:             r.UpdatedBy,
 		UpdatedAt:             r.UpdatedAt,
 		QR:                    r.QR,
+		Model:                 &r.Model,
+		Grade:                 &r.Grade,
 	}
 }
 
