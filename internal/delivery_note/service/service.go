@@ -888,22 +888,6 @@ func (s *deliveryNoteService) ScanDelivery(ctx context.Context, req models.ScanD
 			return errors.New("item tidak ditemukan")
 		}
 		// =============================
-		// 🔍 GET STOCK (LOCK)
-		// =============================
-		fg, err := s.repo.GetFinishedGoodsForUpdate(ctx, tx, poItem.ItemUniqCode)
-		if err != nil {
-			return errors.New("kanban tidak ditemukan")
-		}
-
-		if fg.StockQty <= 0 {
-			return errors.New("stock kosong")
-		}
-
-		if fg.StockQty < req.Qty {
-			return errors.New("stock tidak cukup")
-		}
-
-		// =============================
 		// 🔎 CEK DN SUDAH ADA?
 		// =============================
 		dn, err := s.repo.FindDNByNumber(ctx, tx, req.DNNumber)
@@ -955,9 +939,10 @@ func (s *deliveryNoteService) ScanDelivery(ctx context.Context, req models.ScanD
 		}
 
 		// =============================
-		// 📉 REDUCE STOCK
+		// 📦 SUBCON: STOCK IN VENDOR (barang keluar utk diproses subcon di vendor)
+		// Tidak mengurangi Finished Goods / WIP; hanya mencatat stok di vendor.
 		// =============================
-		if err := s.repo.ReduceStockTx(ctx, tx, fg.ID, req.Qty); err != nil {
+		if err := s.addSubconStockOut(tx, poItem.ItemUniqCode, req.DNNumber, req.Qty, req.ScannedBy); err != nil {
 			return err
 		}
 
@@ -1168,55 +1153,21 @@ func (s *deliveryNoteService) ScanDeliveryIn(ctx context.Context, req models.Sca
 		uniq := poItem.ItemUniqCode
 		result.ItemUniq = uniq
 
-		// Read the poka-yoke process flow for this WO + item.
-		flowJSON, found, err := s.repo.GetWorkOrderItemProcessFlow(ctx, req.WONumber, uniq)
-		if err != nil {
-			return err
-		}
-
-		var nextName string
-		var subName string
-		var subSeq int
-		hasNext := false
-		if found {
-			steps, perr := parseDNProcessFlow(flowJSON)
-			if perr != nil {
-				return errors.New("gagal membaca process flow work order")
-			}
-			// Identify the subcon step by the sub_con flag configured in
-			// System Settings > Process (process_parameters), not by name.
-			subconNames, snErr := s.repo.GetSubconProcessNameSet(ctx)
-			if snErr != nil {
-				return snErr
-			}
-			subName, subSeq, _ = subconStepInfo(steps, subconNames)
-			nextName, _, hasNext = nextProcessAfterSubcon(steps, subconNames)
-		}
-
 		// Mark the outgoing subcon DN as received (best-effort).
 		if dn, derr := s.repo.FindDNByNumber(ctx, tx, req.DNNumber); derr == nil && dn != nil && dn.ID != 0 {
 			_ = s.repo.MarkDNSupplierReceived(ctx, tx, dn.ID, req.ScannedBy)
 		}
 
-		if hasNext {
-			// Still has a process to run -> back into WIP for the next process.
-			if err := s.repo.AddWIPStock(ctx, tx, req.WONumber, uniq, subName, subSeq, req.Qty); err != nil {
-				return err
-			}
-			result.Destination = "WIP"
-			result.NextProcess = nextName
-			return nil
-		}
-
-		// No remaining process -> goods are finished.
-		rows, err := s.repo.IncreaseFinishedGoodsStockByUniqTx(ctx, tx, uniq, req.Qty)
-		if err != nil {
+		// =============================
+		// 📦 SUBCON: STOCK RECEIVED FROM VENDOR (barang selesai diproses subcon)
+		// Tidak membuat WIP / Finished Goods. Barang masuk ke Inventory Subcon
+		// Material tab "Stock Received from Vendor". WIP/FG tetap dibuat lewat
+		// flow Production (Mulai Produksi) + QC Process seperti biasa.
+		// =============================
+		if err := s.addSubconStockReceived(tx, uniq, req.DNNumber, req.Qty, req.ScannedBy); err != nil {
 			return err
 		}
-		if rows == 0 {
-			return errors.New("finished goods tidak ditemukan untuk item " + uniq)
-		}
-		result.Destination = "Finished Goods"
+		result.Destination = "Subcon Material (Received from Vendor)"
 		return nil
 	})
 	if err != nil {

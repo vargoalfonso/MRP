@@ -1176,6 +1176,14 @@ func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, perform
 			}
 		}
 
+		// ===== 4. MOVE WIP -> FINISHED GOODS (kurangi WIP + tulis history) =====
+		moveWIPQty := req.TotalProductionQty + req.NGDefectQty + req.TotalScrapInBox
+		if moveWIPQty > 0 {
+			if err := s.reduceWIPToFinishedGoods(tx, req.WOID, item.ItemUniqCode, wo.WONumber, moveWIPQty, performedBy, now); err != nil {
+				return err
+			}
+		}
+
 		if err := tx.Model(&task).Updates(map[string]interface{}{
 			"status":         "done",
 			"good_quantity":  int(req.TotalProductionQty),

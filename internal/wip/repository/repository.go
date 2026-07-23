@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"strings"
+	"time"
 
 	"github.com/ganasa18/go-template/internal/wip/models"
 	"gorm.io/gorm"
@@ -39,6 +41,9 @@ type IWIPRepository interface {
 	// GET TABLE
 	GetItemInfo(ctx context.Context, uniq string) (*ItemInfo, error)
 	IsParentItem(ctx context.Context, itemID int) (bool, error)
+
+	// WIP HISTORY (MOVEMENT LOG)
+	ListWIPMovementLogs(ctx context.Context, uniqCode string, page, limit int) ([]models.WIPMovementLogItem, int64, error)
 }
 
 type repository struct {
@@ -328,4 +333,80 @@ func (r *repository) IsParentItem(ctx context.Context, itemID int) (bool, error)
 	}
 
 	return count > 0, nil
+}
+
+func (r *repository) ListWIPMovementLogs(ctx context.Context, uniqCode string, page, limit int) ([]models.WIPMovementLogItem, int64, error) {
+	var rows []struct {
+		ID           int64
+		UniqCode     string
+		MovementType string
+		QtyChange    float64
+		SourceFlag   string
+		DNNumber     string
+		ReferenceID  string
+		Notes        string
+		LoggedBy     string
+		LoggedAt     time.Time
+	}
+
+	var total int64
+
+	countDB := r.db.WithContext(ctx).
+		Table("inventory_movement_logs").
+		Where("movement_category = ?", "wip")
+	if uniqCode != "" {
+		countDB = countDB.Where("uniq_code = ?", uniqCode)
+	}
+	if err := countDB.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	q := r.db.WithContext(ctx).
+		Table("inventory_movement_logs").
+		Select(`
+			id,
+			uniq_code,
+			movement_type,
+			qty_change,
+			source_flag,
+			dn_number,
+			reference_id,
+			notes,
+			logged_by,
+			logged_at
+		`).
+		Where("movement_category = ?", "wip")
+	if uniqCode != "" {
+		q = q.Where("uniq_code = ?", uniqCode)
+	}
+	q = q.Order("logged_at DESC, id DESC")
+	if limit > 0 {
+		q = q.Offset((page - 1) * limit).Limit(limit)
+	}
+	if err := q.Scan(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+
+	items := make([]models.WIPMovementLogItem, 0, len(rows))
+	for _, row := range rows {
+		qty := row.QtyChange
+		if strings.EqualFold(row.MovementType, "outgoing") && qty > 0 {
+			qty = -qty
+		}
+		items = append(items, models.WIPMovementLogItem{
+			ID:           row.ID,
+			UniqCode:     row.UniqCode,
+			MovementType: row.MovementType,
+			Reason:       row.SourceFlag,
+			QtyChange:    qty,
+			WONumber:     row.ReferenceID,
+			DNNumber:     row.DNNumber,
+			ReferenceID:  row.ReferenceID,
+			Notes:        row.Notes,
+			LoggedBy:     row.LoggedBy,
+			LoggedAt:     row.LoggedAt,
+		})
+	}
+
+	return items, total, nil
 }

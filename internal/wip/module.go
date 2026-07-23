@@ -65,6 +65,14 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 			m.base.RunAction(m.handler.Create),
 		)
 
+		// =========================
+		// WIP HISTORY (MOVEMENT LOG)
+		// =========================
+		wipGroup.GET("/history",
+			roleMiddleware.RequirePermission(m.roleService, "wip", "view"),
+			m.base.RunAction(m.handler.GetHistory),
+		)
+
 		wipGroup.GET("/:id",
 			roleMiddleware.RequirePermission(m.roleService, "wip", "view"),
 			m.base.RunAction(m.handler.GetByID),

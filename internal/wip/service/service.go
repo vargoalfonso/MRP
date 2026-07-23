@@ -25,6 +25,9 @@ type IWIPService interface {
 
 	// SCAN
 	Scan(ctx context.Context, req models.ScanRequest) error
+
+	// WIP HISTORY
+	GetHistory(ctx context.Context, uniqCode string, page, limit int) (*models.WIPHistoryResponse, error)
 }
 
 // implementation
@@ -255,4 +258,25 @@ func isAssemblyProcess(name string) bool {
 	return name == "assembly" ||
 		name == "assy" ||
 		name == "final assembly"
+}
+
+func (s *service) GetHistory(ctx context.Context, uniqCode string, page, limit int) (*models.WIPHistoryResponse, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+
+	items, total, err := s.repo.ListWIPMovementLogs(ctx, strings.TrimSpace(uniqCode), page, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	return &models.WIPHistoryResponse{
+		Items: items,
+		Total: total,
+		Page:  page,
+		Limit: limit,
+	}, nil
 }
