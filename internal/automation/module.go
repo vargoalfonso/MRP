@@ -2,9 +2,9 @@ package automation
 
 import (
 	"github.com/ganasa18/go-template/config"
-	autoHandler "github.com/ganasa18/go-template/internal/automation/handler"
 	authMiddleware "github.com/ganasa18/go-template/internal/auth/middleware"
 	authService "github.com/ganasa18/go-template/internal/auth/service"
+	autoHandler "github.com/ganasa18/go-template/internal/automation/handler"
 	baseHandler "github.com/ganasa18/go-template/internal/base/handler"
 	appmodule "github.com/ganasa18/go-template/internal/module"
 
