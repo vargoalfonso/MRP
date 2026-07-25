@@ -209,6 +209,12 @@ import (
 	workOrderService "github.com/ganasa18/go-template/internal/work_order/service"
 	"github.com/ganasa18/go-template/pkg/concurrency"
 	forecastingclient "github.com/ganasa18/go-template/pkg/forecastingclient"
+
+	// Raigine automation integration
+	automationModule "github.com/ganasa18/go-template/internal/automation"
+	automationHandler "github.com/ganasa18/go-template/internal/automation/handler"
+	automationService "github.com/ganasa18/go-template/internal/automation/service"
+	"github.com/ganasa18/go-template/pkg/raigineclient"
 )
 
 // initHTTP wires every module inside the modular monolith and returns an HTTP server.
@@ -445,6 +451,17 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	importSvc := importService.New(importRepo)
 	importHTTPHandler := importHandler.New(importSvc, authSvc, woSvc)
 
+	// Raigine automation integration (MRP -> crp-backend)
+	raigineCfg := appconf.LoadRaigineConfig()
+	raigineClient := raigineclient.New(raigineclient.Options{
+		BaseURL:        raigineCfg.BaseURL,
+		StaticToken:    raigineCfg.Token,
+		Email:          raigineCfg.Email,
+		Password:       raigineCfg.Password,
+		TimeoutSeconds: raigineCfg.TimeoutSeconds,
+	})
+	automationSvc := automationService.New(raigineClient, raigineCfg)
+	automationHTTPHandler := automationHandler.New(automationSvc)
 	modules := []appmodule.HTTPModule{
 		baseModule.NewHTTPModule(baseHTTPHandler),
 		authModule.NewHTTPModule(cfg, baseHTTPHandler, authHTTPHandler, authSvc),
@@ -496,6 +513,8 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		productReturnModule.NewHTTPModule(cfg, baseHTTPHandler, productReturnHTTPHandler, authSvc, roleSvc, productReturnSvc),
 		demandForecastingModule.NewHTTPModule(cfg, baseHTTPHandler, dfHTTPHandler, authSvc, roleSvc),
 		importModule.NewHTTPModule(cfg, baseHTTPHandler, importHTTPHandler, authSvc, roleSvc, importSvc),
+
+		automationModule.NewHTTPModule(cfg, baseHTTPHandler, automationHTTPHandler, authSvc),
 	}
 
 	// --- Server ---
