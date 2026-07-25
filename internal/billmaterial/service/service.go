@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"mime/multipart"
 	"os"
 	"path/filepath"
@@ -529,18 +530,23 @@ func (s *service) createRouting(ctx context.Context, itemID, revID int64, routes
 		return err
 	}
 	prevSeq := -1
-	for i, pr := range routes {
+	for _, pr := range routes {
 		seq, ok := seqMap[pr.ProcessID]
 		if !ok {
 			return apperror.BadRequest(fmt.Sprintf("process_id %d tidak ditemukan (op_seq %d)", pr.ProcessID, pr.OpSeq))
 		}
 		if seq < prevSeq {
-			return apperror.BadRequest(
-				fmt.Sprintf(
-					"Urutan proses tidak valid. Routing pada indeks %d (process_id %d) memiliki sequence %d, sedangkan proses sebelumnya memiliki sequence %d. Pastikan urutan routing mengikuti sequence proses dari yang terkecil ke yang terbesar.",
-					i, pr.ProcessID, seq, prevSeq,
-				),
+			// return apperror.BadRequest(
+			// 	fmt.Sprintf(
+			// 		"Urutan proses tidak valid. Routing pada indeks %d (process_id %d) memiliki sequence %d, sedangkan proses sebelumnya memiliki sequence %d. Pastikan urutan routing mengikuti sequence proses dari yang terkecil ke yang terbesar.",
+			// 		i, pr.ProcessID, seq, prevSeq,
+			// 	),
+			// )
+			log.Printf(
+				"Skip process_id=%d, seq=%d < prevSeq=%d",
+				pr.ProcessID, seq, prevSeq,
 			)
+			continue
 		}
 		prevSeq = seq
 	}
