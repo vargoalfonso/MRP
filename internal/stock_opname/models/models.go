@@ -105,6 +105,11 @@ type StockOpnameEntry struct {
 	VariancePct       *float64  `gorm:"type:numeric(15,4)"`
 	WeightKg          *float64  `gorm:"type:numeric(15,4)"`
 	CyclePengiriman   *string   `gorm:"size:64"`
+	// [so-packing] Terisi kalau entry dibuat dari scan packing list / DN
+	// di Action UI. MaxQty = delivery_note_items.quantity saat entry dibuat.
+	PackingNumber     *string   `gorm:"size:100;index"`
+	DNNumber          *string   `gorm:"size:100"`
+	MaxQty            *float64  `gorm:"type:numeric(15,4)"`
 	UserCounter       *string   `gorm:"size:255"`
 	Remarks           *string   `gorm:"type:text"`
 	Status            string    `gorm:"size:16;index;not null"`

@@ -265,3 +265,17 @@ func (h *HTTPHandler) ApproveEntry(ctx *app.Context) *app.CostumeResponse {
 	}
 	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: resp}
 }
+
+// [so-packing] ResolvePackingOption melayani scan packing list di Action UI:
+// GET /api/v1/stock-opname-sessions/form-options/packing?packing=DN-0041-PKG-0001
+func (h *HTTPHandler) ResolvePackingOption(ctx *app.Context) *app.CostumeResponse {
+	packing := ctx.Query("packing")
+	if packing == "" {
+		packing = ctx.Query("packing_number")
+	}
+	resp, err := h.svc.ResolvePackingOption(ctx.Request.Context(), packing)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: resp}
+}
