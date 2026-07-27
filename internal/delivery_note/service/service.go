@@ -1194,6 +1194,7 @@ func (s *deliveryNoteService) GetByUniq(ctx context.Context, uniq string) ([]map
 			dn.dn_number,
 			dni.item_uniq_code,
 			dni.quantity,
+			dni.qty_opname,
 			dni.packing_number,
 			dni.check
 		`).

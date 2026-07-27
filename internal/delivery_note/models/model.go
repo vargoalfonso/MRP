@@ -85,6 +85,10 @@ type DeliveryNoteItem struct {
 	PackingNumber  string          `json:"packing_number" gorm:"column:packing_number"`   //request, diambil dari kanban number di kanban parameter bedasarkan item_uniq_code
 	Check          string          `json:"check" gorm:"check"`                            //field untuk menampung nilai check ketika menerima barang,
 	QtySent        int64           `json:"qty_sent" gorm:"qty_sent"`
+	// [so-packing] qty aktual hasil stock opname untuk packing ini.
+	// NULL berarti belum pernah diopname -> pakai quantity sebagai nilai berjalan.
+	QtyOpname      *float64        `json:"qty_opname" gorm:"column:qty_opname"`
+	QtyOpnameAt    *time.Time      `json:"qty_opname_at" gorm:"column:qty_opname_at"`
 }
 
 type KanbanParameter struct {

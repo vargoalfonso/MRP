@@ -25,7 +25,10 @@ type UpdateSessionRequest struct {
 }
 
 type CreateEntryRequest struct {
-	UniqCode        string   `json:"uniq_code" validate:"required"`
+	// [so-packing] UniqCode jadi opsional kalau PackingNumber dikirim:
+	// backend yang me-resolve uniq dari packing list / DN yang discan.
+	UniqCode        string   `json:"uniq_code"`
+	PackingNumber   string   `json:"packing_number"`
 	CountedQty      float64  `json:"counted_qty" validate:"required"`
 	WeightKg        *float64 `json:"weight_kg"`
 	CyclePengiriman *string  `json:"cycle_pengiriman"`

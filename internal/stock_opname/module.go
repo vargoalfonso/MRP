@@ -37,6 +37,8 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	g.Use(auth)
 	g.GET("/stats", perm("stock_opname", "view"), m.base.RunAction(m.handler.GetStats))
 	g.GET("/form-options/uniq", perm("stock_opname", "view"), m.base.RunAction(m.handler.ListUniqOptions))
+	// [so-packing] lookup uniq + qty maksimal dari nomor packing list / DN
+	g.GET("/form-options/packing", perm("stock_opname", "view"), m.base.RunAction(m.handler.ResolvePackingOption))
 	g.GET("/history-logs", perm("stock_opname", "view"), m.base.RunAction(m.handler.GetHistoryLogs))
 	g.GET("", perm("stock_opname", "view"), m.base.RunAction(m.handler.ListSessions))
 	g.POST("", perm("stock_opname", "create"), m.base.RunAction(m.handler.CreateSession))

@@ -22,6 +22,7 @@ import (
 type IService interface {
 	GetStats(ctx context.Context, inventoryType string) (*stockModels.StockOpnameStats, error)
 	ListUniqOptions(ctx context.Context, q stockModels.FormOptionsQuery) ([]stockModels.UniqOption, error)
+	ResolvePackingOption(ctx context.Context, packing string) (*stockModels.PackingOption, error)
 	GetHistoryLogs(ctx context.Context, q stockModels.HistoryLogsQuery) (*stockModels.HistoryLogListResponse, error)
 	GetAuditLogs(ctx context.Context, sessionID int64, page, limit int) (*stockModels.AuditLogListResponse, error)
 	ListSessions(ctx context.Context, f repository.SessionFilter) (*stockModels.StockOpnameSessionListResponse, error)
@@ -568,7 +569,18 @@ func (s *service) ApproveSession(ctx context.Context, id int64, req stockModels.
 				if entries[i].Status != stockModels.EntryStatusPending {
 					continue
 				}
-				result, err := adj.ApplyAdjustment(ctx, tx, &entries[i], session.SessionNumber, actor)
+				// [so-packing] Kalau entry berasal dari scan packing, update dulu qty
+				// packing-nya, lalu geser total stok uniq sebesar delta-nya saja
+				// (bukan overwrite total dengan hitungan 1 packing).
+				adjEntry := entries[i]
+				delta, packingApplied, err := s.applyPackingCount(ctx, tx, &entries[i])
+				if err != nil {
+					return err
+				}
+				if packingApplied {
+					adjEntry.CountedQty = entries[i].SystemQtySnapshot + delta
+				}
+				result, err := adj.ApplyAdjustment(ctx, tx, &adjEntry, session.SessionNumber, actor)
 				if err != nil {
 					return err
 				}
@@ -670,7 +682,16 @@ func (s *service) ApproveEntry(ctx context.Context, sessionID, entryID int64, re
 		}
 		now := time.Now()
 		if action == stockModels.ApprovalActionApprove {
-			result, err := adj.ApplyAdjustment(ctx, tx, entry, session.SessionNumber, actor)
+			// [so-packing] adjustment berbasis packing (lihat applyPackingCount).
+			adjEntry := *entry
+			delta, packingApplied, err := s.applyPackingCount(ctx, tx, entry)
+			if err != nil {
+				return err
+			}
+			if packingApplied {
+				adjEntry.CountedQty = entry.SystemQtySnapshot + delta
+			}
+			result, err := adj.ApplyAdjustment(ctx, tx, &adjEntry, session.SessionNumber, actor)
 			if err != nil {
 				return err
 			}
@@ -883,9 +904,27 @@ func (s *service) addEntryTx(ctx context.Context, sessionID int64, req stockMode
 }
 
 func (s *service) buildEntry(ctx context.Context, tx *gorm.DB, session *stockModels.StockOpnameSession, adj adjuster.InventoryAdjuster, req stockModels.CreateEntryRequest, actor string) (*stockModels.StockOpnameEntry, error) {
+	// [so-packing] Action UI men-scan packing list / DN dulu; dari situ backend
+	// me-resolve uniq, DN pemiliknya, dan qty maksimal packing tersebut.
 	uniqCode := strings.TrimSpace(req.UniqCode)
+	packingNumber := strings.TrimSpace(req.PackingNumber)
+	var packing *stockModels.PackingOption
+	if packingNumber != "" {
+		p, err := s.resolvePackingTx(ctx, tx, packingNumber)
+		if err != nil {
+			return nil, err
+		}
+		packing = p
+		if uniqCode != "" && !strings.EqualFold(uniqCode, p.UniqCode) {
+			return nil, apperror.BadRequest("uniq_code tidak cocok dengan packing number yang discan")
+		}
+		uniqCode = p.UniqCode
+		if req.CountedQty > p.MaxQty {
+			return nil, apperror.BadRequest(fmt.Sprintf("counted qty melebihi batas. Maksimal %.2f untuk packing %s", p.MaxQty, p.PackingNumber))
+		}
+	}
 	if uniqCode == "" {
-		return nil, apperror.BadRequest("uniq_code is required")
+		return nil, apperror.BadRequest("uniq_code atau packing_number wajib diisi")
 	}
 	snapshot, err := adj.ResolveUniq(ctx, tx, uniqCode)
 	if err != nil {
@@ -893,6 +932,13 @@ func (s *service) buildEntry(ctx context.Context, tx *gorm.DB, session *stockMod
 	}
 	now := time.Now()
 	entry := &stockModels.StockOpnameEntry{SessionID: session.ID, UniqCode: uniqCode, EntityID: snapshot.EntityID, PartNumber: snapshot.PartNumber, PartName: snapshot.PartName, UOM: snapshot.UOM, SystemQtySnapshot: snapshot.SystemQty, CountedQty: req.CountedQty, VariancePct: calcVariancePct(snapshot.SystemQty, req.CountedQty), WeightKg: req.WeightKg, CyclePengiriman: trimPtr(req.CyclePengiriman), UserCounter: trimPtr(req.UserCounter), Remarks: trimPtr(req.Remarks), Status: stockModels.EntryStatusPending, CreatedBy: strPtr(actor), UpdatedBy: strPtr(actor), CreatedAt: now, UpdatedAt: now}
+	if packing != nil {
+		entry.PackingNumber = &packing.PackingNumber
+		entry.MaxQty = &packing.MaxQty
+		if strings.TrimSpace(packing.DNNumber) != "" {
+			entry.DNNumber = &packing.DNNumber
+		}
+	}
 	return entry, nil
 }
 
@@ -954,7 +1000,7 @@ func toSessionListItem(row *repository.SessionListRow) stockModels.StockOpnameSe
 }
 
 func toEntryItem(row *stockModels.StockOpnameEntry) stockModels.StockOpnameEntryItem {
-	return stockModels.StockOpnameEntryItem{ID: row.ID, UUID: row.UUID.String(), SessionID: row.SessionID, UniqCode: row.UniqCode, EntityID: row.EntityID, PartNumber: row.PartNumber, PartName: row.PartName, UOM: row.UOM, SystemQtySnapshot: row.SystemQtySnapshot, CountedQty: row.CountedQty, VarianceQty: row.CountedQty - row.SystemQtySnapshot, VariancePct: row.VariancePct, WeightKg: row.WeightKg, CyclePengiriman: row.CyclePengiriman, UserCounter: row.UserCounter, Remarks: row.Remarks, Status: row.Status, ApprovedBy: row.ApprovedBy, ApprovedAt: row.ApprovedAt, RejectReason: row.RejectReason, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	return stockModels.StockOpnameEntryItem{ID: row.ID, UUID: row.UUID.String(), SessionID: row.SessionID, UniqCode: row.UniqCode, EntityID: row.EntityID, PartNumber: row.PartNumber, PartName: row.PartName, UOM: row.UOM, SystemQtySnapshot: row.SystemQtySnapshot, CountedQty: row.CountedQty, VarianceQty: row.CountedQty - row.SystemQtySnapshot, VariancePct: row.VariancePct, WeightKg: row.WeightKg, CyclePengiriman: row.CyclePengiriman, UserCounter: row.UserCounter, Remarks: row.Remarks, PackingNumber: row.PackingNumber, DNNumber: row.DNNumber, MaxQty: row.MaxQty, Status: row.Status, ApprovedBy: row.ApprovedBy, ApprovedAt: row.ApprovedAt, RejectReason: row.RejectReason, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 }
 
 func toAuditLogItem(row *stockModels.StockOpnameAuditLog) stockModels.AuditLogItem {
@@ -1096,4 +1142,123 @@ func validateCreateSessionRequest(req stockModels.CreateSessionRequest) error {
 		}
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// [so-packing] Stock opname berbasis packing list / DN number
+// ---------------------------------------------------------------------------
+
+// packingScanRow adalah baris delivery_note_items + dn_number pemiliknya.
+type packingScanRow struct {
+	PackingNumber string  `gorm:"column:packing_number"`
+	DNNumber      string  `gorm:"column:dn_number"`
+	UniqCode      string  `gorm:"column:item_uniq_code"`
+	Quantity      float64 `gorm:"column:quantity"`
+}
+
+// resolvePackingTx menerjemahkan nomor packing list yang discan menjadi
+// konteks delivery note (uniq, dn_number, qty maksimal) lalu memperkaya
+// dengan snapshot inventory dari uniq pemiliknya.
+func (s *service) resolvePackingTx(ctx context.Context, tx *gorm.DB, packingNumber string) (*stockModels.PackingOption, error) {
+	packingNumber = strings.TrimSpace(packingNumber)
+	if packingNumber == "" {
+		return nil, apperror.BadRequest("packing_number wajib diisi")
+	}
+	var row packingScanRow
+	if err := tx.WithContext(ctx).
+		Table("delivery_note_items dni").
+		Select("dni.packing_number, dni.item_uniq_code, dni.quantity, dn.dn_number").
+		Joins("JOIN delivery_notes dn ON dn.id = dni.dn_id").
+		Where("dni.packing_number = ?", packingNumber).
+		Order("dn.id DESC").
+		Limit(1).
+		Scan(&row).Error; err != nil {
+		return nil, apperror.Internal("resolve packing number: " + err.Error())
+	}
+	if strings.TrimSpace(row.UniqCode) == "" {
+		return nil, apperror.NotFound("packing number tidak ditemukan di delivery note")
+	}
+
+	opt := &stockModels.PackingOption{PackingNumber: row.PackingNumber, DNNumber: row.DNNumber, UniqCode: row.UniqCode, MaxQty: row.Quantity}
+	if strings.TrimSpace(opt.PackingNumber) == "" {
+		opt.PackingNumber = packingNumber
+	}
+
+	// Deteksi modul inventory pemilik uniq ini supaya Action UI tahu tipe
+	// stock opname yang harus dipakai untuk sesi barunya.
+	for _, invType := range []string{stockModels.InventoryTypeRM, stockModels.InventoryTypeFG, stockModels.InventoryTypeIDR, stockModels.InventoryTypeWIP, stockModels.InventoryTypeSubcon} {
+		adj, err := s.getAdjuster(invType)
+		if err != nil {
+			continue
+		}
+		snapshot, err := adj.ResolveUniq(ctx, tx, opt.UniqCode)
+		if err != nil || snapshot == nil {
+			continue
+		}
+		opt.InventoryType = invType
+		opt.PartNumber = snapshot.PartNumber
+		opt.PartName = snapshot.PartName
+		opt.UOM = snapshot.UOM
+		opt.SystemQty = snapshot.SystemQty
+		opt.WeightKg = snapshot.WeightKg
+		opt.RawMaterialType = snapshot.RawMaterialType
+		break
+	}
+	if opt.InventoryType == "" {
+		return nil, apperror.NotFound("uniq dari packing number ini tidak ada di inventory mana pun")
+	}
+	return opt, nil
+}
+
+func (s *service) ResolvePackingOption(ctx context.Context, packing string) (*stockModels.PackingOption, error) {
+	return s.resolvePackingTx(ctx, s.db.WithContext(ctx), packing)
+}
+
+// applyPackingCount menulis hasil hitung fisik ke baris packing di
+// delivery_note_items dan mengembalikan delta-nya, supaya pemanggil bisa
+// menggeser total stok uniq sebesar delta itu saja.
+func (s *service) applyPackingCount(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry) (float64, bool, error) {
+	if entry == nil || entry.PackingNumber == nil {
+		return 0, false, nil
+	}
+	packingNumber := strings.TrimSpace(*entry.PackingNumber)
+	if packingNumber == "" {
+		return 0, false, nil
+	}
+	var row struct {
+		ID        int64    `gorm:"column:id"`
+		Quantity  float64  `gorm:"column:quantity"`
+		QtyOpname *float64 `gorm:"column:qty_opname"`
+	}
+	if err := tx.WithContext(ctx).
+		Table("delivery_note_items").
+		Select("id, quantity, qty_opname").
+		Where("packing_number = ?", packingNumber).
+		Order("id DESC").
+		Limit(1).
+		Scan(&row).Error; err != nil {
+		return 0, false, apperror.Internal("load packing row: " + err.Error())
+	}
+	if row.ID == 0 {
+		return 0, false, apperror.NotFound("packing number tidak ditemukan saat approve")
+	}
+	if entry.MaxQty != nil && entry.CountedQty > *entry.MaxQty {
+		return 0, false, apperror.BadRequest(fmt.Sprintf("counted qty melebihi batas. Maksimal %.2f untuk packing %s", *entry.MaxQty, packingNumber))
+	}
+	// [so-packing] Nilai berjalan packing = qty_opname kalau sudah pernah
+	// diopname, kalau belum pakai quantity (rencana DN). Kolom quantity
+	// sendiri TIDAK PERNAH diubah supaya "Qty maksimal" tetap stabil.
+	previous := row.Quantity
+	if row.QtyOpname != nil {
+		previous = *row.QtyOpname
+	}
+	delta := entry.CountedQty - previous
+	opnameAt := time.Now()
+	if err := tx.WithContext(ctx).
+		Table("delivery_note_items").
+		Where("id = ?", row.ID).
+		Updates(map[string]interface{}{"qty_opname": entry.CountedQty, "qty_opname_at": opnameAt, "updated_at": opnameAt}).Error; err != nil {
+		return 0, false, apperror.Internal("update packing qty opname: " + err.Error())
+	}
+	return delta, true, nil
 }

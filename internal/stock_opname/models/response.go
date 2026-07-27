@@ -63,6 +63,9 @@ type StockOpnameEntryItem struct {
 	VariancePct       *float64   `json:"variance_pct"`
 	WeightKg          *float64   `json:"weight_kg"`
 	CyclePengiriman   *string    `json:"cycle_pengiriman"`
+	PackingNumber     *string    `json:"packing_number"`
+	DNNumber          *string    `json:"dn_number"`
+	MaxQty            *float64   `json:"max_qty"`
 	UserCounter       *string    `json:"user_counter"`
 	Remarks           *string    `json:"remarks"`
 	Status            string     `json:"status"`
@@ -118,6 +121,23 @@ type UniqOption struct {
 	// "sheet_plate", "ssp", "others") and is empty for other inventory types.
 	// The frontend uses it to show the Weight input for "wire".
 	RawMaterialType string `json:"raw_material_type"`
+}
+
+// [so-packing] PackingOption adalah hasil lookup Action UI ketika operator
+// men-scan nomor packing list / DN. Isinya uniq hasil resolve + MaxQty,
+// yaitu batas maksimal counted qty untuk packing tersebut.
+type PackingOption struct {
+	PackingNumber   string   `json:"packing_number"`
+	DNNumber        string   `json:"dn_number"`
+	InventoryType   string   `json:"inventory_type"`
+	UniqCode        string   `json:"uniq_code"`
+	PartNumber      *string  `json:"part_number"`
+	PartName        *string  `json:"part_name"`
+	UOM             *string  `json:"uom"`
+	SystemQty       float64  `json:"system_qty"`
+	WeightKg        *float64 `json:"weight_kg"`
+	MaxQty          float64  `json:"max_qty"`
+	RawMaterialType string   `json:"raw_material_type"`
 }
 
 type BulkCreateEntryError struct {
