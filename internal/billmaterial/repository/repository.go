@@ -866,7 +866,33 @@ func (r *repository) ListBomItems(ctx context.Context, f ListFilter) ([]models.B
 		q = q.Where("items.uniq_code ILIKE ?", "%"+f.UniqCode+"%")
 	}
 	if f.Search != "" {
-		q = q.Where("items.uniq_code ILIKE ? OR items.part_name ILIKE ?", "%"+f.Search+"%", "%"+f.Search+"%")
+		// [bom-search] Label dropdown UNIQ Code di ERP berbentuk:
+		//   <material_grade> - <uniq_code> - <part_name> - <model>
+		// contoh: "SP7 - M11 - STAY HEADREST FR W - 4L45W"
+		//
+		// Sebelumnya hanya uniq_code + part_name yang dicari, sehingga
+		// segmen ke-1 (material_grade) dan ke-4 (model) tidak pernah ketemu.
+		//
+		// material_grade/grade ada di item_material_specs dan diambil lewat
+		// EXISTS, bukan JOIN, supaya baris hasil tidak terduplikasi.
+		// Pemilihan revisi memakai pola COALESCE yang sama dengan filter
+		// type_material di bawah.
+		like := "%" + f.Search + "%"
+		q = q.Where(`(
+			items.uniq_code ILIKE ?
+			OR items.part_name ILIKE ?
+			OR items.part_number ILIKE ?
+			OR items.model ILIKE ?
+			OR EXISTS (
+				SELECT 1
+				FROM item_material_specs ims_s
+				WHERE ims_s.item_revision_id = COALESCE(
+						bom_item.root_item_revision_id,
+						(SELECT MAX(ir_s.id) FROM item_revisions ir_s WHERE ir_s.item_id = bom_item.item_id)
+					)
+				  AND (ims_s.material_grade ILIKE ? OR ims_s.grade ILIKE ?)
+			)
+		)`, like, like, like, like, like, like)
 	}
 	if needSpecJoin {
 		q = q.Joins(`JOIN item_revisions ON item_revisions.id = bom_item.root_item_revision_id`).
