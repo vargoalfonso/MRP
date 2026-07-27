@@ -1226,12 +1226,13 @@ func (s *service) applyPackingCount(ctx context.Context, tx *gorm.DB, entry *sto
 		return 0, false, nil
 	}
 	var row struct {
-		ID       int64   `gorm:"column:id"`
-		Quantity float64 `gorm:"column:quantity"`
+		ID        int64    `gorm:"column:id"`
+		Quantity  float64  `gorm:"column:quantity"`
+		QtyOpname *float64 `gorm:"column:qty_opname"`
 	}
 	if err := tx.WithContext(ctx).
 		Table("delivery_note_items").
-		Select("id, quantity").
+		Select("id, quantity, qty_opname").
 		Where("packing_number = ?", packingNumber).
 		Order("id DESC").
 		Limit(1).
@@ -1244,12 +1245,20 @@ func (s *service) applyPackingCount(ctx context.Context, tx *gorm.DB, entry *sto
 	if entry.MaxQty != nil && entry.CountedQty > *entry.MaxQty {
 		return 0, false, apperror.BadRequest(fmt.Sprintf("counted qty melebihi batas. Maksimal %.2f untuk packing %s", *entry.MaxQty, packingNumber))
 	}
-	delta := entry.CountedQty - row.Quantity
+	// [so-packing] Nilai berjalan packing = qty_opname kalau sudah pernah
+	// diopname, kalau belum pakai quantity (rencana DN). Kolom quantity
+	// sendiri TIDAK PERNAH diubah supaya "Qty maksimal" tetap stabil.
+	previous := row.Quantity
+	if row.QtyOpname != nil {
+		previous = *row.QtyOpname
+	}
+	delta := entry.CountedQty - previous
+	opnameAt := time.Now()
 	if err := tx.WithContext(ctx).
 		Table("delivery_note_items").
 		Where("id = ?", row.ID).
-		Updates(map[string]interface{}{"quantity": entry.CountedQty, "updated_at": time.Now()}).Error; err != nil {
-		return 0, false, apperror.Internal("update packing quantity: " + err.Error())
+		Updates(map[string]interface{}{"qty_opname": entry.CountedQty, "qty_opname_at": opnameAt, "updated_at": opnameAt}).Error; err != nil {
+		return 0, false, apperror.Internal("update packing qty opname: " + err.Error())
 	}
 	return delta, true, nil
 }
