@@ -508,27 +508,15 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	_ = currentProcess
 
 	// =====================================
-	// VALIDASI QC ROUND 2 HARUS PASSED
+	// [no-qc-round-gate] VALIDASI QC ROUND DIHILANGKAN
 	// =====================================
-	var qcCount int64
-
-	err = s.db.WithContext(ctx).
-		Model(&models.QCLog{}).
-		Where(`
-			wo_item_id = ?
-			AND process_name = ?
-			AND qc_round = ?
-			AND UPPER(status) = ?
-		`, item.ID, currentProcess, 2, "APPROVE").
-		Count(&qcCount).Error
-
-	if err != nil {
-		return err
-	}
-
-	if qcCount == 0 {
-		return errors.New("scan out blocked: QC round 2 not approved")
-	}
+	// Sebelumnya Scan Out diblokir sampai QC round 2 berstatus APPROVE
+	// (efeknya di layar: harus sampai / submit round 3 di QC Process).
+	// Atas permintaan pengguna, pembatasan itu dihapus agar Scan Out
+	// tidak lagi bergantung pada progres QC.
+	//
+	// Alur QC Process sendiri tidak diubah: task QC tetap dibuat dan
+	// round 1/2/3 tetap berjalan seperti biasa.
 
 	// =====================================
 	// CEK SUDAH PERNAH SCAN OUT BELUM
