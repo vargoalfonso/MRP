@@ -13,6 +13,28 @@ import (
 	"gorm.io/gorm"
 )
 
+// activeMasterDataFilter menyaring master data untuk sheet "Master Data" pada
+// template import BOM.
+//
+// Sengaja memakai pendekatan exclude-list, bukan `status = 'Active'`. Kolom
+// status pada process_parameters / master_machines / uom_parameters ditulis
+// mentah dari payload API tanpa normalisasi, dan migrasi 0015 membuat
+// process_parameters tanpa DEFAULT maupun CHECK constraint. Akibatnya isi kolom
+// bisa berupa NULL, string kosong, "Active", "active", "AKTIF", dan lain-lain.
+//
+// Memakai whitelist (`= 'active'`) akan diam-diam membuang baris yang sebenarnya
+// valid. Jadi baris hanya dibuang bila statusnya secara eksplisit menyatakan
+// tidak aktif; selain itu selalu ditampilkan.
+const activeMasterDataFilter = `(
+	status IS NULL
+	OR TRIM(status) = ''
+	OR LOWER(TRIM(status)) NOT IN (
+		'inactive', 'in-active', 'in active', 'not active', 'nonactive',
+		'non-active', 'non active', 'nonaktif', 'non-aktif', 'tidak aktif',
+		'disabled', 'archived', 'deleted', 'false', '0', 'n', 'no'
+	)
+)`
+
 type IRepository interface {
 	// Core writes
 	CreateItem(ctx context.Context, item *models.Item) error
@@ -732,6 +754,7 @@ func (r *repository) ListAllProcesses(ctx context.Context) ([]models.ProcessPara
 	var rows []models.ProcessParameter
 	if err := r.db.WithContext(ctx).
 		Select("id", "process_code", "process_name").
+		Where(activeMasterDataFilter).
 		Order("process_code").
 		Find(&rows).Error; err != nil {
 		return nil, apperror.InternalWrap("ListAllProcesses", err)
@@ -743,6 +766,7 @@ func (r *repository) ListAllMachines(ctx context.Context) ([]models.MasterMachin
 	var rows []models.MasterMachine
 	if err := r.db.WithContext(ctx).
 		Select("id", "machine_number", "machine_name").
+		Where(activeMasterDataFilter).
 		Order("machine_number").
 		Find(&rows).Error; err != nil {
 		return nil, apperror.InternalWrap("ListAllMachines", err)
@@ -754,6 +778,7 @@ func (r *repository) ListAllUoms(ctx context.Context) ([]models.UomParameter, er
 	var rows []models.UomParameter
 	if err := r.db.WithContext(ctx).
 		Select("id", "code", "name").
+		Where(activeMasterDataFilter).
 		Order("code").
 		Find(&rows).Error; err != nil {
 		return nil, apperror.InternalWrap("ListAllUoms", err)
@@ -765,7 +790,8 @@ func (r *repository) ListAllSuppliers(ctx context.Context) ([]models.Supplier, e
 	var suppliers []models.Supplier
 	if err := r.db.WithContext(ctx).
 		Select("id", "uuid", "supplier_code", "supplier_name").
-		Where("status = ?", "Active").
+		Where(activeMasterDataFilter).
+		Where("deleted_at IS NULL").
 		Order("supplier_name").
 		Find(&suppliers).Error; err != nil {
 		return nil, apperror.InternalWrap("ListAllSuppliers", err)

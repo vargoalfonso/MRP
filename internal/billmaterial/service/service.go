@@ -2017,7 +2017,10 @@ var bomImportItemHeaders = func() []string {
 	return h
 }()
 
-func (s *service) DownloadImportTemplate(ctx context.Context) ([]byte, error) {
+// loadTemplateMasterData membaca master data (supplier, process, machine, uom)
+// langsung dari DB setiap kali dipanggil, tanpa cache, sehingga template selalu
+// merefleksikan kondisi master data saat ini.
+func (s *service) loadTemplateMasterData(ctx context.Context) (*bulkimport.BomTemplateMasterData, error) {
 	md := &bulkimport.BomTemplateMasterData{}
 
 	suppliers, err := s.repo.ListAllSuppliers(ctx)
@@ -2052,7 +2055,18 @@ func (s *service) DownloadImportTemplate(ctx context.Context) ([]byte, error) {
 		md.Uoms = append(md.Uoms, bulkimport.RefRow{Code: u.Code, Name: u.Name})
 	}
 
-	f, err := bulkimport.BuildBomTemplate(md) // <-- sekarang menerima *BomTemplateMasterData
+	return md, nil
+}
+
+// DownloadImportTemplate selalu membangun ulang template dari master data
+// terbaru (real-time), tidak pernah menyajikan salinan yang di-cache.
+func (s *service) DownloadImportTemplate(ctx context.Context) ([]byte, error) {
+	md, err := s.loadTemplateMasterData(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	f, err := bulkimport.BuildBomTemplate(md)
 	if err != nil {
 		return nil, apperror.InternalWrap("build bom template", err)
 	}
@@ -2202,7 +2216,11 @@ func (s *service) ImportFromExcel(ctx context.Context, filePath, fileName, uploa
 	// Bangun file error (kalau ada) supaya bisa ikut disimpan di history.
 	var errorBytes []byte
 	if len(result.Errors) > 0 {
-		errFile, err := bulkimport.GenerateBomErrorExcel(result.Errors)
+		errMD, mdErr := s.loadTemplateMasterData(ctx)
+		if mdErr != nil {
+			return bulkimport.BulkResult{}, mdErr
+		}
+		errFile, err := bulkimport.GenerateBomErrorExcel(result.Errors, errMD)
 		if err != nil {
 			return bulkimport.BulkResult{}, apperror.InternalWrap("generate error excel", err)
 		}
