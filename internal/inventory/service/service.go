@@ -830,6 +830,8 @@ func (s *service) ListIncoming(ctx context.Context, dnType string, p pagination.
 			SupplierName:    r.SupplierName,
 			PONumber:        r.PONumber,
 			DNNumber:        r.DNNumber,
+			// [subcon-dnlog]
+			ScanRef:         r.ScanRef,
 			QCStatus:        r.QCStatus,
 			QCStatusDisplay: qcStatusDisplay(r.QCStatus),
 			UOM:             r.UOM,

@@ -947,6 +947,12 @@ func (s *deliveryNoteService) ScanDelivery(ctx context.Context, req models.ScanD
 			return err
 		}
 
+		// [subcon-dnlog] Catat Delivery Note Log supaya scan ini muncul di
+		// ERP > Inventory > Subcon Material > detail > tab Delivery Note Logs.
+		if err := s.logSubconDNScan(tx, poItem.ItemUniqCode, req.DNNumber, req.KanbanNumber, req.Qty, req.ScannedBy, "SUBCON-OUT"); err != nil {
+			return err
+		}
+
 		return nil
 	})
 }
@@ -1174,6 +1180,12 @@ func (s *deliveryNoteService) ScanDeliveryIn(ctx context.Context, req models.Sca
 		// flow Production (Mulai Produksi) + QC Process seperti biasa.
 		// =============================
 		if err := s.addSubconStockReceived(tx, uniq, req.DNNumber, req.Qty, req.ScannedBy); err != nil {
+			return err
+		}
+
+		// [subcon-dnlog] Catat Delivery Note Log untuk barang yang kembali
+		// dari vendor subcon.
+		if err := s.logSubconDNScan(tx, uniq, req.DNNumber, req.KanbanNumber, req.Qty, req.ScannedBy, "SUBCON-IN"); err != nil {
 			return err
 		}
 		result.Destination = "Subcon Material (Received from Vendor)"

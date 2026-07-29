@@ -171,6 +171,74 @@ func (s *deliveryNoteService) upsertSubconStock(tx *gorm.DB, uniq, dnNumber stri
 	return nil
 }
 
+// logSubconDNScan mencatat satu baris "Delivery Note Log" untuk scan
+// DN Subcon OUT / IN.
+//
+// [subcon-dnlog] Tab "Delivery Note Logs" di ERP membaca endpoint
+// GET /inventory/subcon-materials/incoming yang sumbernya tabel
+// incoming_receiving_scans (JOIN delivery_note_items + delivery_notes).
+// Scan DN Subcon sebelumnya hanya menulis subcon_inventories dan
+// inventory_movement_logs, sehingga tab tersebut selalu kosong.
+//
+// Bersifat best-effort: kalau baris DN tidak ketemu, scan tetap sukses
+// dan pencatatan log dilewati saja.
+func (s *deliveryNoteService) logSubconDNScan(tx *gorm.DB, uniq, dnNumber, packingNumber string, qty float64, scannedBy, direction string) error {
+	if qty <= 0 {
+		return nil
+	}
+	if strings.TrimSpace(scannedBy) == "" {
+		scannedBy = "system"
+	}
+
+	var dnItem struct {
+		ID int64
+	}
+
+	// Utamakan baris DN yang packing number-nya persis sama dengan yang discan.
+	q := tx.Table("delivery_note_items dni").
+		Select("dni.id").
+		Joins("JOIN delivery_notes dn ON dn.id = dni.dn_id").
+		Where("dn.dn_number = ?", strings.TrimSpace(dnNumber))
+	if p := strings.TrimSpace(packingNumber); p != "" {
+		q = q.Where("dni.packing_number = ?", p)
+	} else {
+		q = q.Where("dni.item_uniq_code = ?", uniq)
+	}
+	if err := q.Order("dni.id DESC").Limit(1).Scan(&dnItem).Error; err != nil {
+		return err
+	}
+
+	// Cadangan: cari lewat item uniq code kalau packing number tidak cocok.
+	if dnItem.ID == 0 {
+		if err := tx.Table("delivery_note_items dni").
+			Select("dni.id").
+			Joins("JOIN delivery_notes dn ON dn.id = dni.dn_id").
+			Where("dni.item_uniq_code = ?", uniq).
+			Order("dni.id DESC").Limit(1).
+			Scan(&dnItem).Error; err != nil {
+			return err
+		}
+	}
+	if dnItem.ID == 0 {
+		return nil
+	}
+
+	now := time.Now()
+	// scan_ref menyimpan arah pergerakan supaya ERP bisa memberi label,
+	// dan stempel waktu menjaga unique index (incoming_dn_item_id, scan_ref)
+	// tetap aman saat packing list yang sama discan lebih dari sekali.
+	scanRef := direction + "/" + strings.TrimSpace(packingNumber) + "/" + now.Format("20060102150405.000")
+
+	logRow := map[string]interface{}{
+		"incoming_dn_item_id": dnItem.ID,
+		"scan_ref":            scanRef,
+		"qty":                 qty,
+		"scanned_at":          now,
+		"scanned_by":          scannedBy,
+	}
+	return tx.Table("incoming_receiving_scans").Create(logRow).Error
+}
+
 // lookupSubconEnrichment resolves part / vendor / PO metadata for a subcon item
 // on a best-effort basis. Any source that is missing simply leaves its fields
 // nil so the caller can decide whether to backfill.
