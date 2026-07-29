@@ -435,7 +435,7 @@ func QCTaskPagination(c *app.Context) QCTaskPaginationInput {
 		OrderDirection: base.OrderDirection,
 		TaskType:       c.Query("task_type"),
 		Status:         c.Query("status"),
-		Source:     	c.Query("source"),
+		Source:         c.Query("source"),
 	}
 }
 
@@ -806,8 +806,9 @@ func clampLimit(n int) int {
 	if n < 1 {
 		return 20
 	}
-	if n > 200 {
-		return 200
+	// Increase allowed maximum limit to 1000 to support larger list requests
+	if n > 1000 {
+		return 1000
 	}
 	return n
 }

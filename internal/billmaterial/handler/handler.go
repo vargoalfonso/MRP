@@ -431,6 +431,11 @@ func (h *HTTPHandler) DownloadImportTemplateRaw(c *gin.Context) {
 	}
 	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	c.Header("Content-Disposition", "attachment; filename=bom_template.xlsx")
+	// Template selalu di-generate ulang dari master data terbaru, jadi jangan
+	// pernah di-cache oleh browser / proxy / CDN.
+	c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+	c.Header("Pragma", "no-cache")
+	c.Header("Expires", "0")
 	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", data)
 }
 
