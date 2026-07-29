@@ -55,6 +55,8 @@ type ScanInRequest struct {
 	ScannedBy            string  `json:"scanned_by"`    // dari user login / optional override
 	ProductIssue         bool    `json:"product_issue"`
 	ProductIssueType     string  `json:"product_issue_type"`
+	// [rm-source] detail bebas untuk jenis issue "Lainnya"
+	ProductIssueNote     string  `json:"product_issue_note"`
 	ProductIssueDuration int64   `json:"product_issue_duration"`
 	IsWIP                bool    `json:"is_wip"`
 
@@ -93,10 +95,17 @@ type QCSubmitRequest struct {
 
 	QCRound int `json:"qc_round" binding:"required"`
 
-	QtyChecked float64 `json:"qty_checked" binding:"required"`
+	// [qc-reason] binding:"required" dilepas supaya qty check 0 diterima
+	QtyChecked float64 `json:"qty_checked"`
 	QtyPass    float64 `json:"qty_pass"`
 	QtyDefect  float64 `json:"qty_defect"`
 	QtyScrap   float64 `json:"qty_scrap"`
+
+	// [qc-reason] jenis issue + keterangan bebas dari round 1 / 2
+	IssueType    string `json:"issue_type"`
+	IssueNote    string `json:"issue_note"`
+	DefectReason string `json:"defect_reason"`
+	ScrapReason  string `json:"scrap_reason"`
 
 	Status string `json:"status"`
 }
@@ -110,6 +119,10 @@ type QCFinishRequest struct {
 	TotalProductionQty float64 `json:"total_production_qty"`
 	TotalScrapInBox    float64 `json:"total_scrap_in_box"`
 	NGDefectQty        float64 `json:"ng_defect_qty"`
+
+	// [qc-reason] keterangan defect (NG) / scrap dari round 3
+	DefectReason string `json:"defect_reason"`
+	ScrapReason  string `json:"scrap_reason"`
 }
 
 type FinishedGoodsResponse struct {
@@ -231,6 +244,9 @@ type BomMaterial struct {
 	SupplierName  string   `json:"supplier_name"`
 
 	RMUUID          string  `json:"rm_uuid"`
+	// [rm-source] uniq_code master Raw Material yang benar-benar dipakai
+	// untuk stok (mis. BR50), berbeda dari Uniq item BOM (mis. M19).
+	RMUniqCode      string  `json:"rm_uniq_code"`
 	RawMaterialType string  `json:"raw_material_type"`
 	TypeLabel       string  `json:"type_label"`
 	InInventory     bool    `json:"in_inventory"`
