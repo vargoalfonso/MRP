@@ -216,6 +216,8 @@ type IncomingItem struct {
 	SupplierName    *string   `json:"supplier_name"`
 	PONumber        *string   `json:"po_number"`
 	DNNumber        string    `json:"dn_number"`
+	// [subcon-dnlog] arah pergerakan DN Subcon (SUBCON-OUT / SUBCON-IN)
+	ScanRef         string    `json:"scan_ref"`
 	QCStatus        string    `json:"qc_status"`         // pending | in_progress | approved | rejected
 	QCStatusDisplay string    `json:"qc_status_display"` // Pending Approval | Received | Rejected
 	UOM             *string   `json:"uom"`

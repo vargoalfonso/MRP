@@ -165,6 +165,8 @@ type IncomingRow struct {
 	SupplierName *string   `gorm:"column:supplier_name"`
 	PONumber     *string   `gorm:"column:po_number"`
 	DNNumber     string    `gorm:"column:dn_number"`
+	// [subcon-dnlog] arah pergerakan DN Subcon (SUBCON-OUT / SUBCON-IN)
+	ScanRef      string    `gorm:"column:scan_ref"`
 	QCStatus     string    `gorm:"column:qc_status"`
 	UOM          *string   `gorm:"column:uom"`
 	DNType       string    `gorm:"column:dn_type"`
@@ -913,6 +915,7 @@ func (r *repo) ListIncoming(ctx context.Context, f IncomingListFilter) ([]Incomi
 		s.supplier_name,
 		dn.po_number,
 		dn.dn_number,
+		COALESCE(irs.scan_ref, '')                AS scan_ref,
 		COALESCE(qt.status, 'pending')            AS qc_status,
 		dni.uom,
 		dn.type                                   AS dn_type
