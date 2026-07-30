@@ -127,6 +127,7 @@ type WorkOrderDetailResponse struct {
 	TargetDate     *string               `json:"target_date"`  // YYYY-MM-DD
 	CreatedByName  *string               `json:"created_by_name"`
 	Notes          *string               `json:"notes"`
+	DefectReason   *string               `json:"defect_reason"` // keterangan NG dari QC (khusus WO Rework)
 	QRDataURL      *string               `json:"qr_data_url"`
 	Items          []WorkOrderDetailItem `json:"items"`
 }

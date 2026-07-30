@@ -1286,6 +1286,33 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 		})
 	}
 
+	// [defect-reason] Untuk WO Rework, ambil keterangan defect (NG) dari QC
+	// Final Inspection WO sumber (reference_wo) agar tampil di ERP detail WO.
+	var defectReason *string
+	if strings.EqualFold(strings.TrimSpace(wo.WoType), "Rework") && wo.ReferenceWO != nil && strings.TrimSpace(*wo.ReferenceWO) != "" {
+		uniqCodes := make([]string, 0, len(itemRows))
+		for _, it := range itemRows {
+			if strings.TrimSpace(it.ItemUniqCode) != "" {
+				uniqCodes = append(uniqCodes, it.ItemUniqCode)
+			}
+		}
+		reasonQuery := s.db.WithContext(ctx).
+			Table("qc_defect_items AS qdi").
+			Joins("JOIN work_orders AS swo ON swo.id = qdi.wo_id").
+			Where("swo.wo_number = ?", strings.TrimSpace(*wo.ReferenceWO)).
+			Where("qdi.qty_defect > 0").
+			Where("COALESCE(qdi.defect_reason_text, '') <> ''")
+		if len(uniqCodes) > 0 {
+			reasonQuery = reasonQuery.Where("qdi.uniq_code IN ?", uniqCodes)
+		}
+		var reasons []string
+		if err := reasonQuery.Order("qdi.reported_at DESC").Limit(1).Pluck("qdi.defect_reason_text", &reasons).Error; err == nil && len(reasons) > 0 {
+			if trimmed := strings.TrimSpace(reasons[0]); trimmed != "" {
+				defectReason = &trimmed
+			}
+		}
+	}
+
 	createdDate := wo.CreatedDate.Format("2006-01-02")
 	var targetDate *string
 	if wo.TargetDate != nil {
@@ -1313,6 +1340,7 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 		TargetDate:     targetDate,
 		CreatedByName:  wo.CreatedByName,
 		Notes:          wo.Notes,
+		DefectReason:   defectReason,
 		QRDataURL:      woQR,
 		Items:          items,
 	}, nil

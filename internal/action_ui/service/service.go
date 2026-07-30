@@ -371,6 +371,8 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 			ProcessName:    currentProcess,
 			ProductionLine: productionLine,
 			IssueType:      req.ProductIssueType,
+			// [rm-source] detail bebas untuk jenis issue "Lainnya"
+			IssueNote:      strings.TrimSpace(req.ProductIssueNote),
 			IssueDuration:  req.ProductIssueDuration,
 			QtyAffected:    req.Qty,
 			ReportedBy:     req.ScannedBy,
@@ -886,6 +888,10 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 
 			Status:    strings.ToUpper(req.Status),
 			CheckedBy: performedBy,
+
+			// [qc-reason] jenis + detail issue dari round 1 / 2
+			IssueType: strings.TrimSpace(req.IssueType),
+			IssueNote: qcTrim255(req.IssueNote),
 			CheckedAt: now,
 			CreatedAt: now,
 		}
@@ -897,6 +903,11 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 		// =====================================
 		// JIKA REJECT
 		// =====================================
+		// [qc-reason] simpan keterangan defect / scrap round ini
+		if err := s.saveQCReasons(tx, qc, item, req, performedBy, now); err != nil {
+			return err
+		}
+
 		if !strings.EqualFold(req.Status, "APPROVE") &&
 			!strings.EqualFold(req.Status, "PASSED") {
 
@@ -1155,6 +1166,67 @@ func (s *service) advanceProcessAfterScanOut(ctx context.Context, tx *gorm.DB, i
 	return tx.Save(item).Error
 }
 
+// [qc-reason] jaga panjang teks supaya aman untuk kolom VARCHAR(255)
+func qcTrim255(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 255 {
+		return strings.TrimSpace(s[:255])
+	}
+	return s
+}
+
+// [qc-reason] simpan keterangan defect / scrap round 1 & 2 ke qc_defect_items
+func (s *service) saveQCReasons(
+	tx *gorm.DB,
+	qc models.QCLog,
+	item models.WorkOrderItem,
+	req dto.QCSubmitRequest,
+	performedBy string,
+	now time.Time,
+) error {
+	issueType := strings.TrimSpace(req.IssueType)
+	issueNote := qcTrim255(req.IssueNote)
+	defectNote := qcTrim255(req.DefectReason)
+	scrapNote := qcTrim255(req.ScrapReason)
+
+	if defectNote == "" && issueNote != "" {
+		defectNote = issueNote
+	}
+
+	reasonCode := issueType
+	if reasonCode == "" {
+		reasonCode = "defect"
+	}
+
+	add := func(code, text string, qtyDefect, qtyScrap float64) error {
+		if qtyDefect <= 0 && qtyScrap <= 0 && text == "" {
+			return nil
+		}
+		taskID := req.QCTaskID
+		row := models.QCDefectItem{
+			QCLogID:          qc.ID,
+			QCTaskID:         &taskID,
+			WOID:             &item.WOID,
+			WOItemID:         &item.ID,
+			UniqCode:         qc.UniqCode,
+			DefectSource:     "process",
+			DefectReasonCode: code,
+			DefectReasonText: text,
+			QtyDefect:        qtyDefect,
+			QtyScrap:         qtyScrap,
+			ProcessName:      qc.ProcessName,
+			ReportedBy:       performedBy,
+			ReportedAt:       now,
+		}
+		return tx.Create(&row).Error
+	}
+
+	if err := add(reasonCode, defectNote, req.QtyDefect, 0); err != nil {
+		return err
+	}
+	return add("scrap", scrapNote, 0, req.QtyScrap)
+}
+
 func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, performedBy string) error {
 	if req.QCTaskID == 0 {
 		return apperror.BadRequest("qc_task_id is required")
@@ -1282,6 +1354,17 @@ func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, perform
 		moveWIPQty := req.TotalProductionQty + req.NGDefectQty + req.TotalScrapInBox
 		if moveWIPQty > 0 {
 			if err := s.reduceWIPToFinishedGoods(tx, req.WOID, item.ItemUniqCode, wo.WONumber, moveWIPQty, performedBy, now); err != nil {
+				return err
+			}
+		}
+
+		// [qc-reason] keterangan defect (NG) / scrap dari Final Inspection.
+		// Hanya ditulis kalau memang diisi, supaya alur lama tetap jalan.
+		if dr, sr := qcTrim255(req.DefectReason), qcTrim255(req.ScrapReason); dr != "" || sr != "" {
+			if err := tx.Model(&task).Updates(map[string]interface{}{
+				"defect_reason": dr,
+				"scrap_reason":  sr,
+			}).Error; err != nil {
 				return err
 			}
 		}
@@ -1808,6 +1891,7 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 	return &dto.WODetailResponse{
 		WOID:           wo.ID,
 		WONumber:       wo.WONumber,
+		WOType:         wo.WOType,
 		Status:         wo.Status,
 		Model:          wo.Model,
 		PartName:       partName,
@@ -2318,6 +2402,7 @@ func (s *service) buildBomMaterials(ctx context.Context, rootUniq string) ([]dto
 			WeightKg:        row.WeightKg,
 			SupplierName:    derefStr(row.SupplierName),
 			RMUUID:          deref(row.RMUUID),
+			RMUniqCode:      derefStr(row.RMUniqCode),
 			RawMaterialType: rawType,
 			TypeLabel:       typeLabel,
 			InInventory:     inInventory,
@@ -2336,6 +2421,24 @@ func (s *service) bomByUniq(ctx context.Context, rootUniq string) map[string]dto
 	}
 	for _, b := range bom {
 		m[b.Uniq] = b
+	}
+
+	// [rm-spec] Log pemakaian RM menyimpan uniq master Raw Material
+	// (mis. BR50), sedangkan map di atas hanya berkunci uniq item BOM
+	// (mis. M19). Tanpa alias di bawah, Form / Weight / QPU dari
+	// spesifikasi BOM tidak ketemu sehingga perhitungan otomatis di
+	// scan out kehilangan berat dan menampilkan "Berat: -".
+	for _, b := range bom {
+		for _, alias := range []string{b.RMUniqCode, b.MaterialGrade} {
+			alias = strings.TrimSpace(alias)
+			if alias == "" {
+				continue
+			}
+			if _, exists := m[alias]; exists {
+				continue
+			}
+			m[alias] = b
+		}
 	}
 	return m
 }

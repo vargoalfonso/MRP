@@ -106,6 +106,9 @@ type QCLog struct {
 	Status       string
 	ProcessName  string
 	DefectSource string
+	// [qc-reason] jenis + detail issue dari round 1 / 2
+	IssueType    string
+	IssueNote    string
 	CheckedBy    string
 	CheckedAt    time.Time
 	CreatedAt    time.Time
@@ -233,6 +236,8 @@ type ProductionIssue struct {
 	ProcessName    string     `db:"process_name" json:"process_name"`
 	ProductionLine string     `db:"production_line" json:"production_line"`
 	IssueType      string     `db:"issue_type" json:"issue_type"`
+	// [rm-source] detail bebas untuk jenis issue "Lainnya"
+	IssueNote      string     `db:"issue_note" json:"issue_note"`
 	IssueDuration  int64      `db:"issue_duration" json:"issue_duration"` // menit
 	QtyAffected    float64    `db:"qty_affected" json:"qty_affected"`
 	ReportedBy     string     `db:"reported_by" json:"reported_by"`

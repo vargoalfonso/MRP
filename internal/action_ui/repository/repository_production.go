@@ -87,6 +87,7 @@ type BomMaterialRow struct {
 	WeightKg        *float64 `gorm:"column:weight_kg"`
 	SupplierName    *string  `gorm:"column:supplier_name"`
 	RMUUID          *string  `gorm:"column:rm_uuid"`
+	RMUniqCode      *string  `gorm:"column:rm_uniq_code"`
 	RawMaterialType *string  `gorm:"column:raw_material_type"`
 	RMUom           *string  `gorm:"column:rm_uom"`
 	StockQty        *float64 `gorm:"column:stock_qty"`
@@ -554,7 +555,8 @@ SELECT
 	it.uniq_code, it.part_name, it.part_number, it.uom AS item_uom,
 	ms.material_grade, ms.grade, ms.type_material, ms.form,
 	ms.width_mm, ms.diameter_mm, ms.thickness_mm, ms.length_mm, ms.weight_kg, ms.supplier_name,
-	CAST(rm.uuid AS TEXT) AS rm_uuid, rm.raw_material_type, rm.uom AS rm_uom,
+	CAST(rm.uuid AS TEXT) AS rm_uuid, rm.uniq_code AS rm_uniq_code,
+	rm.raw_material_type, rm.uom AS rm_uom,
 	rm.stock_qty, rm.stock_weight_kg
 FROM nodes n
 JOIN items it ON it.id = n.item_id
@@ -566,11 +568,19 @@ LEFT JOIN LATERAL (
 	LIMIT 1
 ) rev ON TRUE
 LEFT JOIN item_material_specs ms ON ms.item_revision_id = rev.id
+-- [rm-source] Master Raw Material dicari lewat material code pada
+-- spesifikasi BOM (mis. BR50) lebih dulu, baru fallback ke uniq item
+-- (mis. M19). Sebelumnya hanya uniq item yang dipakai, sehingga Qty
+-- Tersedia yang tampil adalah stok item WO, bukan stok raw material.
 LEFT JOIN LATERAL (
-	SELECT r.uuid, r.raw_material_type, r.uom, r.stock_qty, r.stock_weight_kg
+	SELECT r.uuid, r.uniq_code, r.raw_material_type, r.uom, r.stock_qty, r.stock_weight_kg
 	FROM raw_materials r
-	WHERE r.uniq_code = it.uniq_code AND r.deleted_at IS NULL
-	ORDER BY r.id DESC
+	WHERE r.deleted_at IS NULL
+	  AND (
+		r.uniq_code = NULLIF(TRIM(ms.material_grade), '')
+		OR r.uniq_code = it.uniq_code
+	  )
+	ORDER BY ((r.uniq_code = NULLIF(TRIM(ms.material_grade), '')) IS TRUE) DESC, r.id DESC
 	LIMIT 1
 ) rm ON TRUE
 ORDER BY n.level ASC, n.line_id ASC
