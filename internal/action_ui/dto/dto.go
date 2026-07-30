@@ -186,6 +186,7 @@ type WOListItem struct {
 type WODetailResponse struct {
 	WOID           int64          `json:"wo_id"`
 	WONumber       string         `json:"wo_number"`
+	WOType         string         `json:"wo_type"`
 	Status         string         `json:"status"`
 	Model          string         `json:"model"`
 	PartName       string         `json:"part_name"`

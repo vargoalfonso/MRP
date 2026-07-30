@@ -1891,6 +1891,7 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 	return &dto.WODetailResponse{
 		WOID:           wo.ID,
 		WONumber:       wo.WONumber,
+		WOType:         wo.WOType,
 		Status:         wo.Status,
 		Model:          wo.Model,
 		PartName:       partName,
