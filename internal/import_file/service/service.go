@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -186,14 +187,43 @@ func (s *importService) BulkInsertKanban(ctx context.Context, data []models.Crea
 	var failedRows []models.FailedImportKanban
 	success := 0
 
-	itemCache := make(map[string]*models.Item)
-
 	totalKanban, err := s.repo.CountKanban(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	counter := totalKanban
+
+	// Collect the distinct item codes from the file so we can resolve item
+	// master + existing kanban in just two queries instead of running two
+	// queries per row. For large files this avoids thousands of sequential
+	// round trips that previously exceeded the HTTP write timeout (HTTP 500).
+	codeSet := make(map[string]struct{})
+	for _, item := range data {
+		code := strings.TrimSpace(item.ItemUniqCode)
+		if code != "" {
+			codeSet[code] = struct{}{}
+		}
+	}
+	codes := make([]string, 0, len(codeSet))
+	for c := range codeSet {
+		codes = append(codes, c)
+	}
+
+	existingItems, err := s.repo.GetExistingItemUniqCodes(ctx, codes)
+	if err != nil {
+		return nil, err
+	}
+
+	existingKanban, err := s.repo.GetExistingKanbanItemCodes(ctx, codes)
+	if err != nil {
+		return nil, err
+	}
+
+	// Track codes already queued in THIS import so duplicated rows inside the
+	// same file do not generate duplicate kanban parameters.
+	queued := make(map[string]bool)
+	var toInsert []models.KanbanParameter
 
 	for i, item := range data {
 
@@ -216,25 +246,14 @@ func (s *importService) BulkInsertKanban(ctx context.Context, data []models.Crea
 			continue
 		}
 
-		// cek item master
-		if _, ok := itemCache[uniqCode]; !ok {
-			itm, err := s.repo.GetItemByUniqCode(ctx, uniqCode)
-			if err != nil || itm == nil {
-				failedRows = append(failedRows, createFailedRow("item tidak ditemukan"))
-				continue
-			}
-
-			itemCache[uniqCode] = itm
-		}
-
-		// cek duplicate
-		exist, err := s.repo.IsKanbanExist(ctx, uniqCode)
-		if err != nil {
-			failedRows = append(failedRows, createFailedRow(err.Error()))
+		// cek item master (dari hasil batch lookup)
+		if !existingItems[uniqCode] {
+			failedRows = append(failedRows, createFailedRow("item tidak ditemukan"))
 			continue
 		}
 
-		if exist {
+		// cek duplicate (di DB atau di file yang sama)
+		if existingKanban[uniqCode] || queued[uniqCode] {
 			failedRows = append(failedRows, createFailedRow("kanban sudah ada"))
 			continue
 		}
@@ -247,7 +266,7 @@ func (s *importService) BulkInsertKanban(ctx context.Context, data []models.Crea
 			counter,
 		)
 
-		kanban := models.KanbanParameter{
+		toInsert = append(toInsert, models.KanbanParameter{
 			KanbanNumber: kanbanNumber,
 			ItemUniqCode: uniqCode,
 			KanbanQty:    item.KanbanQty,
@@ -256,20 +275,24 @@ func (s *importService) BulkInsertKanban(ctx context.Context, data []models.Crea
 			Status:       item.Status,
 			CreatedAt:    time.Now(),
 			UpdatedAt:    time.Now(),
-		}
-
-		err = s.repo.CreateKanban(ctx, &kanban)
-		if err != nil {
-			failedRows = append(failedRows, createFailedRow(err.Error()))
-			continue
-		}
-
+		})
+		queued[uniqCode] = true
 		success++
+	}
+
+	// Insert semua kanban valid dalam beberapa batch (bukan satu per satu).
+	if len(toInsert) > 0 {
+		if err := s.repo.CreateKanbanBatch(ctx, toInsert); err != nil {
+			return nil, err
+		}
 	}
 
 	if len(failedRows) > 0 {
 		if err := s.appendKanbanErrorToExcel(filePath, failedRows); err != nil {
-			return nil, fmt.Errorf("gagal menulis error ke excel: %v", err)
+			// Non-fatal: data valid sudah tersimpan. Kegagalan menulis file
+			// error yang bisa diunduh tidak boleh mengubah import yang sudah
+			// sebagian berhasil menjadi HTTP 500.
+			log.Printf("appendKanbanErrorToExcel failed: %v", err)
 		}
 	}
 

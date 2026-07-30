@@ -21,6 +21,9 @@ type ImportRepository interface {
 	IsKanbanExist(ctx context.Context, uniqCode string) (bool, error)
 	CreateKanban(ctx context.Context, data *models.KanbanParameter) error
 	CountKanban(ctx context.Context) (int64, error)
+	GetExistingItemUniqCodes(ctx context.Context, codes []string) (map[string]bool, error)
+	GetExistingKanbanItemCodes(ctx context.Context, codes []string) (map[string]bool, error)
+	CreateKanbanBatch(ctx context.Context, data []models.KanbanParameter) error
 }
 
 type importRepository struct {
@@ -203,4 +206,60 @@ func (r *importRepository) CountKanban(ctx context.Context) (int64, error) {
 		Count(&total).Error
 
 	return total, err
+}
+
+// GetExistingItemUniqCodes returns a set of item uniq codes (from the given
+// list) that exist in the item master. Uses a single IN query instead of one
+// query per row, so bulk imports do not run thousands of sequential queries.
+func (r *importRepository) GetExistingItemUniqCodes(ctx context.Context, codes []string) (map[string]bool, error) {
+	result := make(map[string]bool)
+	if len(codes) == 0 {
+		return result, nil
+	}
+
+	var found []string
+	if err := r.db.WithContext(ctx).
+		Model(&models.Item{}).
+		Where("uniq_code IN ? AND deleted_at IS NULL", codes).
+		Distinct().
+		Pluck("uniq_code", &found).Error; err != nil {
+		return nil, err
+	}
+
+	for _, c := range found {
+		result[c] = true
+	}
+	return result, nil
+}
+
+// GetExistingKanbanItemCodes returns a set of item uniq codes (from the given
+// list) that already have a kanban parameter, using a single IN query.
+func (r *importRepository) GetExistingKanbanItemCodes(ctx context.Context, codes []string) (map[string]bool, error) {
+	result := make(map[string]bool)
+	if len(codes) == 0 {
+		return result, nil
+	}
+
+	var found []string
+	if err := r.db.WithContext(ctx).
+		Model(&models.KanbanParameter{}).
+		Where("item_uniq_code IN ?", codes).
+		Distinct().
+		Pluck("item_uniq_code", &found).Error; err != nil {
+		return nil, err
+	}
+
+	for _, c := range found {
+		result[c] = true
+	}
+	return result, nil
+}
+
+// CreateKanbanBatch inserts kanban parameters in batches (single round trip per
+// batch) instead of one INSERT per row.
+func (r *importRepository) CreateKanbanBatch(ctx context.Context, data []models.KanbanParameter) error {
+	if len(data) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).CreateInBatches(data, 200).Error
 }

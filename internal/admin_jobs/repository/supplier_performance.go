@@ -75,17 +75,34 @@ func (r *repo) ListSupplierPerformanceAggregates(ctx context.Context, snapshotDa
 			COALESCE(po.total_purchase_value, 0)                        AS total_purchase_value
 		FROM suppliers s
 		LEFT JOIN (
+			-- On-time vs late dihitung per delivery note, bukan per item, supaya
+			-- satu DN dengan banyak item tidak terhitung berkali-kali.
+			--
+			-- delay_days = tanggal terima - expected_delivery_date pada PO.
+			-- PO dihubungkan lewat po_number karena delivery_notes menyimpan
+			-- nomor PO sebagai teks, bukan foreign key po_id.
+			--
+			-- Bila PO tidak ketemu atau expected_delivery_date NULL, delay
+			-- dianggap 0 (on-time) - tidak ada due date yang bisa dilanggar.
 			SELECT
-				dn.supplier_id,
-				COUNT(DISTINCT dn.id) AS on_time_deliveries,
-				0                     AS late_deliveries,
-				0.0                   AS average_delay_days
-			FROM delivery_notes dn
-			JOIN delivery_note_items dni ON dni.dn_id = dn.id
-			WHERE dn.supplier_id IS NOT NULL
-			  AND dni.date_incoming = ?
-			  AND dn.status NOT IN ('draft', 'cancelled')
-			GROUP BY dn.supplier_id
+				d.supplier_id,
+				COUNT(*) FILTER (WHERE d.delay_days <= 0)                      AS on_time_deliveries,
+				COUNT(*) FILTER (WHERE d.delay_days > 0)                       AS late_deliveries,
+				COALESCE(AVG(d.delay_days) FILTER (WHERE d.delay_days > 0), 0) AS average_delay_days
+			FROM (
+				SELECT
+					dn.supplier_id,
+					dn.id,
+					COALESCE(MAX(dni.date_incoming) - MAX(po.expected_delivery_date), 0) AS delay_days
+				FROM delivery_notes dn
+				JOIN delivery_note_items dni ON dni.dn_id = dn.id
+				LEFT JOIN purchase_orders po ON po.po_number = dn.po_number
+				WHERE dn.supplier_id IS NOT NULL
+				  AND dni.date_incoming = ?
+				  AND LOWER(TRIM(dn.status)) NOT IN ('draft', 'cancelled')
+				GROUP BY dn.supplier_id, dn.id
+			) d
+			GROUP BY d.supplier_id
 		) del ON del.supplier_id = s.id
 		LEFT JOIN (
 			SELECT
@@ -108,11 +125,14 @@ func (r *repo) ListSupplierPerformanceAggregates(ctx context.Context, snapshotDa
 			FROM purchase_orders po
 			WHERE po.supplier_id IS NOT NULL
 			  AND COALESCE(po.po_date, DATE(po.created_at)) = ?
-			  AND po.status NOT IN ('draft', 'cancelled')
+			  AND LOWER(TRIM(po.status)) NOT IN ('draft', 'cancelled')
 			GROUP BY po.supplier_id
 		) po ON po.supplier_id = s.id
 		WHERE s.deleted_at IS NULL
-		  AND s.status = 'Active'
+		  -- Spesifikasi: supplier Inactive dikecualikan dari perhitungan.
+		  -- Perbandingan dibuat case-insensitive karena kolom status berupa
+		  -- teks bebas ('Active', 'active', ' Active ' semuanya dipakai).
+		  AND LOWER(TRIM(s.status)) = 'active'
 	`, targetDate, targetDate, targetDate).Scan(&rows).Error
 
 	return rows, queryErr

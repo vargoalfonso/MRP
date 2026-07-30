@@ -151,10 +151,16 @@ func normalizeInput(p pagination.SupplierPerformancePaginationInput) pagination.
 
 func normalizePeriodType(periodType string) string {
 	switch strings.ToLower(strings.TrimSpace(periodType)) {
-	case "date":
+	// Frontend mengirim "specific" untuk pilihan tanggal tunggal, sedangkan
+	// backend memakai istilah "date". Tanpa alias ini permintaan "specific"
+	// jatuh ke default "monthly" dan memfilter dengan LEFT(value, 7), sehingga
+	// pencarian per tanggal tidak pernah menemukan apa pun.
+	case "date", "daily", "specific":
 		return "date"
 	case "yearly":
 		return "yearly"
+	case "quarterly":
+		return "quarterly"
 	default:
 		return "monthly"
 	}

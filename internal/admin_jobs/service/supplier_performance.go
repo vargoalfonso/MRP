@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/ganasa18/go-template/internal/admin_jobs/repository"
@@ -18,11 +19,21 @@ const (
 	defaultFormulaNotes   = "OTD based on receipt_date <= period end; grade A >= 90, B 80-89.99, C < 80"
 )
 
-// RecomputeSupplierPerformanceRequest is the minimal payload for the recompute job.
-// snapshot_date is optional and defaults to the current UTC date.
+// RecomputeSupplierPerformanceRequest is the payload for the recompute job.
+//
+// Ada dua mode:
+//
+//  1. Satu hari  : snapshot_date (opsional, default hari ini UTC)
+//  2. Backfill   : date_from + date_to, mengisi setiap hari dalam rentang
+//
+// Mode backfill diperlukan karena snapshot disimpan per hari, sedangkan
+// halaman Supplier Performance menampilkan periode bulanan/kuartalan/tahunan.
+// Tanpa backfill, tampilan bulanan hanya berisi satu hari saja.
 type RecomputeSupplierPerformanceRequest struct {
 	PeriodType   string `json:"period_type,omitempty"`
 	SnapshotDate string `json:"snapshot_date,omitempty"`
+	DateFrom     string `json:"date_from,omitempty"`
+	DateTo       string `json:"date_to,omitempty"`
 }
 
 type supplierPerformanceAggregateRow struct {
@@ -72,35 +83,91 @@ type supplierPerformanceSnapshotRow struct {
 }
 
 func (s *service) RecomputeSupplierPerformance(ctx context.Context, req RecomputeSupplierPerformanceRequest) (int64, error) {
-	snapshotDate, err := resolveSnapshotDate(req.SnapshotDate)
+	dates, err := resolveSnapshotDates(req)
 	if err != nil {
 		return 0, err
 	}
 
-	repoRows, err := s.repo.ListSupplierPerformanceAggregates(ctx, snapshotDate)
-	if err != nil {
-		return 0, err
-	}
+	var affected int64
 
-	snapshots := make([]repository.SupplierPerformanceSnapshotRow, 0, len(repoRows))
-	for _, r := range repoRows {
-		agg := supplierPerformanceAggregateRow{
-			SupplierUUID:           r.SupplierUUID,
-			SupplierCode:           r.SupplierCode,
-			SupplierName:           r.SupplierName,
-			TotalPurchaseValue:     r.TotalPurchaseValue,
-			OnTimeDeliveries:       r.OnTimeDeliveries,
-			LateDeliveries:         r.LateDeliveries,
-			AverageDelayDays:       r.AverageDelayDays,
-			QualityInspectionCount: r.QualityInspectionCount,
-			AcceptedQuantity:       r.AcceptedQuantity,
-			RejectedQuantity:       r.RejectedQuantity,
+	for _, snapshotDate := range dates {
+		repoRows, err := s.repo.ListSupplierPerformanceAggregates(ctx, snapshotDate)
+		if err != nil {
+			return affected, fmt.Errorf("aggregate %s: %w", snapshotDate, err)
 		}
-		snap := buildSupplierPerformanceSnapshot(agg, snapshotDate)
-		snapshots = append(snapshots, toRepositorySnapshotRow(snap))
+
+		snapshots := make([]repository.SupplierPerformanceSnapshotRow, 0, len(repoRows))
+		for _, r := range repoRows {
+			agg := supplierPerformanceAggregateRow{
+				SupplierUUID:           r.SupplierUUID,
+				SupplierCode:           r.SupplierCode,
+				SupplierName:           r.SupplierName,
+				TotalPurchaseValue:     r.TotalPurchaseValue,
+				OnTimeDeliveries:       r.OnTimeDeliveries,
+				LateDeliveries:         r.LateDeliveries,
+				AverageDelayDays:       r.AverageDelayDays,
+				QualityInspectionCount: r.QualityInspectionCount,
+				AcceptedQuantity:       r.AcceptedQuantity,
+				RejectedQuantity:       r.RejectedQuantity,
+			}
+			snap := buildSupplierPerformanceSnapshot(agg, snapshotDate)
+			snapshots = append(snapshots, toRepositorySnapshotRow(snap))
+		}
+
+		n, err := s.repo.UpsertSupplierPerformanceSnapshots(ctx, snapshots)
+		if err != nil {
+			return affected, fmt.Errorf("upsert %s: %w", snapshotDate, err)
+		}
+		affected += n
 	}
 
-	return s.repo.UpsertSupplierPerformanceSnapshots(ctx, snapshots)
+	return affected, nil
+}
+
+// maxBackfillDays membatasi satu panggilan backfill agar tidak berjalan
+// berjam-jam tanpa disadari. Sekitar dua tahun sudah lebih dari cukup.
+const maxBackfillDays = 800
+
+// resolveSnapshotDates menentukan daftar tanggal yang akan dihitung.
+func resolveSnapshotDates(req RecomputeSupplierPerformanceRequest) ([]string, error) {
+	from := strings.TrimSpace(req.DateFrom)
+	to := strings.TrimSpace(req.DateTo)
+
+	if from == "" && to == "" {
+		day, err := resolveSnapshotDate(req.SnapshotDate)
+		if err != nil {
+			return nil, err
+		}
+		return []string{day}, nil
+	}
+
+	if from == "" || to == "" {
+		return nil, fmt.Errorf("date_from and date_to must be provided together")
+	}
+
+	start, err := time.Parse("2006-01-02", from)
+	if err != nil {
+		return nil, fmt.Errorf("invalid date_from %q: %w", from, err)
+	}
+
+	end, err := time.Parse("2006-01-02", to)
+	if err != nil {
+		return nil, fmt.Errorf("invalid date_to %q: %w", to, err)
+	}
+
+	if end.Before(start) {
+		return nil, fmt.Errorf("date_to %q is before date_from %q", to, from)
+	}
+
+	dates := make([]string, 0)
+	for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
+		if len(dates) >= maxBackfillDays {
+			return nil, fmt.Errorf("range too large: maximum %d days per call", maxBackfillDays)
+		}
+		dates = append(dates, d.Format("2006-01-02"))
+	}
+
+	return dates, nil
 }
 
 func resolveSnapshotDate(snapshotDate string) (string, error) {
