@@ -37,9 +37,22 @@ func (s *service) GetAll(ctx context.Context, q ListQuery) (*models.ListMechinPa
 	if page < 1 {
 		page = 1
 	}
+	// Batas atas dinaikkan ke 10000 agar halaman System Settings bisa memuat
+	// seluruh daftar machine dalam satu request.
+	//
+	// Perhatikan perubahan perilaku: sebelumnya limit di luar rentang langsung
+	// dijatuhkan ke 20, sehingga permintaan limit=1000 dari frontend diam-diam
+	// hanya mengembalikan 20 baris. Sekarang nilai yang kebesaran di-clamp ke
+	// batas maksimum, bukan direset ke default.
+	const (
+		defaultLimit = 20
+		maxLimit     = 10000
+	)
 	limit := q.Limit
-	if limit < 1 || limit > 200 {
-		limit = 20
+	if limit < 1 {
+		limit = defaultLimit
+	} else if limit > maxLimit {
+		limit = maxLimit
 	}
 	offset := (page - 1) * limit
 

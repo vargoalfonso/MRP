@@ -2,6 +2,7 @@ package bulkimport
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/xuri/excelize/v2"
 )
@@ -83,8 +84,10 @@ type SupplierRef struct{ Code, Name string }
 // template as a base (headers + sample rows intact) so users can see the
 // expected format while correcting their data. Failed rows are appended
 // after the last sample row.
-func GenerateBomErrorExcel(errors []RowError) (*excelize.File, error) {
-	f, err := BuildBomTemplate(nil)
+func GenerateBomErrorExcel(errors []RowError, md *BomTemplateMasterData) (*excelize.File, error) {
+	// md diteruskan agar file error tetap membawa sheet "Master Data" terbaru,
+	// justru di saat user paling butuh referensi kode yang valid.
+	f, err := BuildBomTemplate(md)
 	if err != nil {
 		return nil, fmt.Errorf("build base template: %w", err)
 	}
@@ -277,6 +280,12 @@ func BuildBomTemplate(md *BomTemplateMasterData) (*excelize.File, error) {
 		},
 	}
 
+	// Ganti kode contoh yang hardcoded dengan kode master data nyata supaya
+	// sample row bisa langsung dipakai user tanpa gagal validasi saat import.
+	if md != nil {
+		samples = normalizeSamplesToMasterData(samples, md)
+	}
+
 	for i, s := range samples {
 		if err := writeRow("Items", i+2, s.toSlice(len(headers))); err != nil {
 			return nil, err
@@ -302,6 +311,63 @@ type BomTemplateMasterData struct {
 	Machines  []RefRow
 	Uoms      []RefRow
 	Suppliers []RefRow
+}
+
+// normalizeSamplesToMasterData memetakan kode contoh pada sheet "Items" ke kode
+// yang benar-benar ada di master data. Kode contoh yang sama selalu dipetakan ke
+// kode master yang sama agar relasi antar baris tetap konsisten. Jika salah satu
+// master data kosong, kode contoh untuk kategori itu dibiarkan apa adanya.
+func normalizeSamplesToMasterData(samples []bomSampleRow, md *BomTemplateMasterData) []bomSampleRow {
+	codesOf := func(refs []RefRow) []string {
+		out := make([]string, 0, len(refs))
+		for _, ref := range refs {
+			if c := strings.TrimSpace(ref.Code); c != "" {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+
+	processes := codesOf(md.Processes)
+	machines := codesOf(md.Machines)
+	uoms := codesOf(md.Uoms)
+	suppliers := codesOf(md.Suppliers)
+
+	// mapper mengembalikan fungsi substitusi yang stabil (kode asal yang sama
+	// menghasilkan kode master yang sama), berputar sepanjang pool yang tersedia.
+	mapper := func(pool []string) func(string) string {
+		seen := make(map[string]string)
+		next := 0
+		return func(original string) string {
+			if original == "" || len(pool) == 0 {
+				return original
+			}
+			if mapped, ok := seen[original]; ok {
+				return mapped
+			}
+			mapped := pool[next%len(pool)]
+			next++
+			seen[original] = mapped
+			return mapped
+		}
+	}
+
+	mapProcess := mapper(processes)
+	mapMachine := mapper(machines)
+	mapUom := mapper(uoms)
+
+	for i := range samples {
+		samples[i].uom = mapUom(samples[i].uom)
+		if len(suppliers) > 0 && samples[i].supplierCode != "" {
+			samples[i].supplierCode = suppliers[0]
+		}
+		for j := range samples[i].routes {
+			samples[i].routes[j].processCode = mapProcess(samples[i].routes[j].processCode)
+			samples[i].routes[j].machineNum = mapMachine(samples[i].routes[j].machineNum)
+		}
+	}
+
+	return samples
 }
 
 func writeMasterDataSheet(f *excelize.File, md *BomTemplateMasterData) error {
