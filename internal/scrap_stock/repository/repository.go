@@ -3,6 +3,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -588,20 +589,35 @@ func (r *repository) ApproveRelease(ctx context.Context, id int64, action, appro
 			return apperror.Internal("update release status: " + err.Error())
 		}
 
-		// Deduct stock only on Completed (approved)
+		// Deduct stock only on Completed (approved). Multi-item aware.
 		if action == scrapModels.ApprovalStatusCompleted {
-			res := tx.Model(&scrapModels.ScrapStock{}).
-				Where("id = ? AND deleted_at IS NULL", rel.ScrapStockID).
-				Updates(map[string]interface{}{
-					"quantity":   gorm.Expr("quantity - ?", rel.ReleaseQty),
-					"updated_by": approvedBy,
-					"updated_at": now,
-				})
-			if res.Error != nil {
-				return apperror.Internal("deduct scrap qty: " + res.Error.Error())
+			type deductLine struct {
+				ScrapStockID int64   `json:"scrap_stock_id"`
+				ReleaseQty   float64 `json:"release_qty"`
 			}
-			if res.RowsAffected == 0 {
-				return apperror.NotFound("scrap stock record tidak ditemukan during deduction")
+			var deducts []deductLine
+			if rel.ItemsJSON != nil && *rel.ItemsJSON != "" {
+				if err := json.Unmarshal([]byte(*rel.ItemsJSON), &deducts); err != nil {
+					return apperror.Internal("parse release items: " + err.Error())
+				}
+			}
+			if len(deducts) == 0 {
+				deducts = []deductLine{{ScrapStockID: rel.ScrapStockID, ReleaseQty: rel.ReleaseQty}}
+			}
+			for _, d := range deducts {
+				res := tx.Model(&scrapModels.ScrapStock{}).
+					Where("id = ? AND deleted_at IS NULL", d.ScrapStockID).
+					Updates(map[string]interface{}{
+						"quantity":   gorm.Expr("quantity - ?", d.ReleaseQty),
+						"updated_by": approvedBy,
+						"updated_at": now,
+					})
+				if res.Error != nil {
+					return apperror.Internal("deduct scrap qty: " + res.Error.Error())
+				}
+				if res.RowsAffected == 0 {
+					return apperror.NotFound("scrap stock record tidak ditemukan during deduction")
+				}
 			}
 		}
 		return nil

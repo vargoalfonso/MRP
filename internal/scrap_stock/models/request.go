@@ -64,6 +64,9 @@ type CreateScrapReleaseRequest struct {
 	WeightReleased *float64 `json:"weight_released"`
 	CustomerName   *string  `json:"customer_name"`
 	PricePerUnit   *float64 `json:"price_per_unit"`
+	WeightKg       *float64                `json:"weight_kg"`
+	PricePerKg     *float64                `json:"price_per_kg"`
+	Items          []ScrapReleaseLineInput `json:"items"`
 	DisposalReason *string  `json:"disposal_reason"`
 	Approver       *string  `json:"approver"`
 	Remarks        *string  `json:"remarks"`
@@ -74,4 +77,10 @@ type ApproveScrapReleaseRequest struct {
 	// Action: "Completed" (approve) or "Rejected"
 	Action  string  `json:"action"  validate:"required"`
 	Remarks *string `json:"remarks"`
+}
+
+// ScrapReleaseLineInput is one cart line in a multi-item scrap release request.
+type ScrapReleaseLineInput struct {
+	ScrapStockID int64   `json:"scrap_stock_id"`
+	ReleaseQty   float64 `json:"release_qty"`
 }

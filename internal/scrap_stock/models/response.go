@@ -94,6 +94,8 @@ type ScrapReleaseItem struct {
 	WeightReleased *float64   `json:"weight_released"`
 	CustomerName   *string    `json:"customer_name"`
 	PricePerUnit   *float64   `json:"price_per_unit"`
+	PricePerKg *float64               `json:"price_per_kg"`
+	Items      []ScrapReleaseLineItem `json:"items"`
 	TotalValue     *float64   `json:"total_value"`
 	DisposalReason *string    `json:"disposal_reason"`
 	ApprovalStatus string     `json:"approval_status"`
@@ -134,4 +136,12 @@ type ScrapMovementItem struct {
 type ScrapMovementListResponse struct {
 	Items      []ScrapMovementItem `json:"items"`
 	Pagination ScrapPagination     `json:"pagination"`
+}
+
+// ScrapReleaseLineItem is one cart line returned in scrap release responses.
+type ScrapReleaseLineItem struct {
+	ScrapStockID int64   `json:"scrap_stock_id"`
+	Uniq         *string `json:"uniq"`
+	PartName     *string `json:"part_name"`
+	ReleaseQty   float64 `json:"release_qty"`
 }
