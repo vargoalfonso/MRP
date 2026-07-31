@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -77,6 +78,22 @@ func (r *repo) ResolveLatestPeriodValue(ctx context.Context, periodType string) 
 			  AND evaluation_period_type = 'daily'
 		`).Scan(&value).Error; err != nil {
 			return "", fmt.Errorf("ResolveLatestPeriodValue yearly: %w", err)
+		}
+	case "quarterly":
+		if err := r.db.WithContext(ctx).Raw(`
+			SELECT COALESCE(
+				MAX(
+					LEFT(evaluation_period_value, 4)
+					|| '-Q'
+					|| EXTRACT(QUARTER FROM evaluation_period_value::date)::int::text
+				),
+				''
+			)
+			FROM supplier_performance_snapshots
+			WHERE deleted_at IS NULL
+			  AND evaluation_period_type = 'daily'
+		`).Scan(&value).Error; err != nil {
+			return "", fmt.Errorf("ResolveLatestPeriodValue quarterly: %w", err)
 		}
 	default:
 		if err := r.db.WithContext(ctx).Raw(`
@@ -328,6 +345,26 @@ func (r *repo) listTrend(ctx context.Context, periodType, periodValue string, sn
 			ORDER BY LEFT(evaluation_period_value, 7)
 		`
 		args = []interface{}{periodValue}
+	} else if periodType == "quarterly" {
+		year, quarter, err := parseQuarterValue(periodValue)
+		if err != nil {
+			return nil, err
+		}
+		// Trend kuartalan ditampilkan per bulan supaya grafik punya tiga titik.
+		query = `
+			SELECT
+				LEFT(evaluation_period_value, 7)                  AS period,
+				ROUND(AVG(otd_percentage)::numeric, 2)            AS avg_otd_percentage,
+				ROUND(AVG(quality_percentage)::numeric, 2)        AS avg_quality_percentage
+			FROM supplier_performance_snapshots
+			WHERE deleted_at IS NULL
+			  AND evaluation_period_type = 'daily'
+			  AND LEFT(evaluation_period_value, 4) = ?
+			  AND EXTRACT(QUARTER FROM evaluation_period_value::date) = ?
+			GROUP BY LEFT(evaluation_period_value, 7)
+			ORDER BY LEFT(evaluation_period_value, 7)
+		`
+		args = []interface{}{year, quarter}
 	} else {
 		query = `
 			SELECT
@@ -356,15 +393,44 @@ func (r *repo) listTrend(ctx context.Context, periodType, periodValue string, sn
 
 func periodFilterClause(periodType, periodValue string) (string, []interface{}, error) {
 	switch strings.ToLower(strings.TrimSpace(periodType)) {
-	case "date":
+	case "date", "daily", "specific":
 		return "evaluation_period_value = ?", []interface{}{periodValue}, nil
 	case "yearly":
 		return "LEFT(evaluation_period_value, 4) = ?", []interface{}{periodValue}, nil
+	case "quarterly":
+		year, quarter, err := parseQuarterValue(periodValue)
+		if err != nil {
+			return "", nil, err
+		}
+		return "LEFT(evaluation_period_value, 4) = ? AND EXTRACT(QUARTER FROM evaluation_period_value::date) = ?",
+			[]interface{}{year, quarter}, nil
 	case "monthly":
 		return "LEFT(evaluation_period_value, 7) = ?", []interface{}{periodValue}, nil
 	default:
 		return "", nil, fmt.Errorf("unsupported period_type %q", periodType)
 	}
+}
+
+// parseQuarterValue menerima "2026-Q3" (juga "2026-3") dan memecahnya menjadi
+// tahun dan nomor kuartal.
+func parseQuarterValue(value string) (string, int, error) {
+	v := strings.ToUpper(strings.TrimSpace(value))
+
+	parts := strings.Split(v, "-")
+	if len(parts) != 2 || len(parts[0]) != 4 {
+		return "", 0, fmt.Errorf("invalid quarterly period_value %q, expected format YYYY-Qn", value)
+	}
+
+	if _, err := strconv.Atoi(parts[0]); err != nil {
+		return "", 0, fmt.Errorf("invalid year in quarterly period_value %q", value)
+	}
+
+	quarter, err := strconv.Atoi(strings.TrimPrefix(parts[1], "Q"))
+	if err != nil || quarter < 1 || quarter > 4 {
+		return "", 0, fmt.Errorf("invalid quarter in period_value %q, expected Q1 until Q4", value)
+	}
+
+	return parts[0], quarter, nil
 }
 
 func aggregateRowToSnapshot(periodType, periodValue string, row aggregatedSnapshotRow) models.Snapshot {
