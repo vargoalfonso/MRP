@@ -31,6 +31,10 @@ type IRepository interface {
 	GetPrlSourceItems(ctx context.Context, prlID string) ([]BulkSourceDocumentItemRow, error)
 
 	ListWorkOrders(ctx context.Context, f ListFilter) ([]WorkOrderRow, int64, error)
+
+	CreateImportHistory(ctx context.Context, h *woModels.WorkOrderImportHistory) error
+	ListImportHistory(ctx context.Context, limit int) ([]woModels.WorkOrderImportHistory, error)
+	GetImportHistoryErrorFile(ctx context.Context, id string) ([]byte, error)
 }
 
 type repository struct {
@@ -589,4 +593,44 @@ func (r *repository) GetPrlSourceItems(ctx context.Context, prlID string) ([]Bul
 		return nil, apperror.InternalWrap("failed to load prl source items", err)
 	}
 	return rows, nil
+}
+
+func (r *repository) CreateImportHistory(ctx context.Context, h *woModels.WorkOrderImportHistory) error {
+	if err := r.db.WithContext(ctx).Create(h).Error; err != nil {
+		return apperror.InternalWrap("create work order import history", err)
+	}
+	return nil
+}
+
+func (r *repository) ListImportHistory(ctx context.Context, limit int) ([]woModels.WorkOrderImportHistory, error) {
+	var out []woModels.WorkOrderImportHistory
+	err := r.db.WithContext(ctx).
+		Table("work_order_import_histories").
+		Select("work_order_import_histories.id, work_order_import_histories.file_name, work_order_import_histories.file_size_kb, work_order_import_histories.row_count, COALESCE(users.username, work_order_import_histories.uploaded_by) AS uploaded_by, work_order_import_histories.status, work_order_import_histories.summary, " +
+			"work_order_import_histories.imported_count, work_order_import_histories.failed_count, work_order_import_histories.preview_rows, work_order_import_histories.request_id, work_order_import_histories.created_at, work_order_import_histories.updated_at, " +
+			"(work_order_import_histories.error_file IS NOT NULL AND length(work_order_import_histories.error_file) > 0) AS has_error_file").
+		Joins("LEFT JOIN users ON users.id::text = work_order_import_histories.uploaded_by OR users.uuid::text = work_order_import_histories.uploaded_by").
+		Order("work_order_import_histories.created_at DESC").
+		Limit(limit).
+		Scan(&out).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("list work order import history", err)
+	}
+	return out, nil
+}
+
+func (r *repository) GetImportHistoryErrorFile(ctx context.Context, id string) ([]byte, error) {
+	var out []byte
+	err := r.db.WithContext(ctx).
+		Table("work_order_import_histories").
+		Select("error_file").
+		Where("id = ?", id).
+		Scan(&out).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("get work order import history error file", err)
+	}
+	if len(out) == 0 {
+		return nil, apperror.NotFound("error file tidak ditemukan")
+	}
+	return out, nil
 }

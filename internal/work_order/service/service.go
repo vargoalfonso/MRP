@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -14,10 +15,12 @@ import (
 	woModels "github.com/ganasa18/go-template/internal/work_order/models"
 	woRepo "github.com/ganasa18/go-template/internal/work_order/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/bulkimport"
 	"github.com/ganasa18/go-template/pkg/creatorresolver"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/google/uuid"
 	"github.com/skip2/go-qrcode"
+	"github.com/xuri/excelize/v2"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
@@ -47,12 +50,19 @@ type IService interface {
 	ListProcessOptions(ctx context.Context) (*woModels.ProcessOptionsResponse, error)
 	ListBulkSourceDocuments(ctx context.Context, documentType, q, targetDate string, limit int) (*woModels.BulkDocumentOptionsResponse, error)
 	ListBulkSourceDocumentItems(ctx context.Context, documentID, documentType string) (*woModels.BulkDocumentItemsResponse, error)
+
+	DownloadImportTemplate(ctx context.Context) ([]byte, error)
+	ImportFromExcel(ctx context.Context, filePath, fileName, uploadedBy, requestID string) (bulkimport.BulkResult, error)
+	DownloadImportErrors(ctx context.Context, token string) ([]byte, error)
+	ListImportHistory(ctx context.Context, limit int) ([]woModels.WorkOrderImportHistory, error)
+	DownloadImportHistoryError(ctx context.Context, id string) ([]byte, error)
 }
 
 type service struct {
-	repo   woRepo.IRepository
-	db     *gorm.DB
-	invSvc invService.IService
+	repo       woRepo.IRepository
+	db         *gorm.DB
+	invSvc     invService.IService
+	errorStore bulkimport.ErrorStore
 }
 
 const (
@@ -1877,4 +1887,400 @@ func (s *service) fetchProcessFlows(ctx context.Context, tx *gorm.DB, uniqCodes 
 		out[uniq] = datatypes.JSON(b)
 	}
 	return out, nil
+}
+
+// ---------------------------------------------------------------------------
+// Work Order bulk import from Excel
+// ---------------------------------------------------------------------------
+
+const workOrderImportSheetName = "Work Orders"
+
+var workOrderImportHeaders = []string{
+	"wo_type",
+	"reference_wo",
+	"created_date",
+	"target_date",
+	"notes",
+	"item_uniq_code",
+	"quantity",
+	"uom",
+	"process_name",
+	"kanban_qty",
+}
+
+type workOrderImportRow struct {
+	SheetRow     int
+	RawData      []string
+	WoType       string
+	ReferenceWO  *string
+	CreatedDate  *string
+	TargetDate   *string
+	Notes        *string
+	ItemUniqCode string
+	Quantity     float64
+	UOM          *string
+	ProcessName  *string
+	KanbanQty    int
+}
+
+func normalizeWoType(v string) string {
+	s := strings.ToLower(strings.TrimSpace(v))
+	switch s {
+	case "assembly":
+		return "Assembly"
+	case "rework":
+		return "Rework"
+	case "addendum", "additional":
+		return "Addendum"
+	default:
+		return "New"
+	}
+}
+
+func ptrIfNotEmpty(s string) *string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	v := strings.TrimSpace(s)
+	return &v
+}
+
+func parseWorkOrderImportRows(rows [][]string) ([]workOrderImportRow, []bulkimport.RowError) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	header := rows[0]
+	colIndex := make(map[string]int)
+	for i, h := range header {
+		colIndex[strings.ToLower(strings.TrimSpace(h))] = i
+	}
+
+	for _, key := range []string{"item_uniq_code", "quantity"} {
+		if _, ok := colIndex[key]; !ok {
+			return nil, []bulkimport.RowError{{
+				Sheet:   workOrderImportSheetName,
+				Row:     1,
+				Field:   key,
+				Message: fmt.Sprintf("header %q tidak ditemukan", key),
+				RawData: header,
+			}}
+		}
+	}
+
+	var out []workOrderImportRow
+	var errs []bulkimport.RowError
+
+	for i, row := range rows[1:] {
+		if len(row) == 0 {
+			continue
+		}
+		allEmpty := true
+		for _, cell := range row {
+			if strings.TrimSpace(cell) != "" {
+				allEmpty = false
+				break
+			}
+		}
+		if allEmpty {
+			continue
+		}
+
+		get := func(key string) string {
+			idx, ok := colIndex[key]
+			if !ok || idx >= len(row) {
+				return ""
+			}
+			return strings.TrimSpace(row[idx])
+		}
+
+		sheetRow := i + 2
+		raw := make([]string, len(row))
+		copy(raw, row)
+
+		woType := normalizeWoType(get("wo_type"))
+		itemUniqCode := strings.TrimSpace(get("item_uniq_code"))
+		qtyStr := get("quantity")
+		uom := strings.TrimSpace(get("uom"))
+		if uom == "" {
+			uom = "pcs"
+		}
+		kanbanQty, _ := strconv.Atoi(strings.TrimSpace(get("kanban_qty")))
+
+		var rowErrs []bulkimport.RowError
+		if itemUniqCode == "" {
+			rowErrs = append(rowErrs, bulkimport.RowError{
+				Sheet:   workOrderImportSheetName,
+				Row:     sheetRow,
+				Field:   "item_uniq_code",
+				Message: "item_uniq_code wajib diisi",
+				RawData: raw,
+			})
+		}
+		quantity, qtyErr := strconv.ParseFloat(qtyStr, 64)
+		if qtyErr != nil || quantity <= 0 {
+			rowErrs = append(rowErrs, bulkimport.RowError{
+				Sheet:   workOrderImportSheetName,
+				Row:     sheetRow,
+				Field:   "quantity",
+				Message: "quantity harus angka > 0",
+				RawData: raw,
+			})
+		}
+
+		if len(rowErrs) > 0 {
+			errs = append(errs, rowErrs...)
+			continue
+		}
+
+		out = append(out, workOrderImportRow{
+			SheetRow:     sheetRow,
+			RawData:      raw,
+			WoType:       woType,
+			ReferenceWO:  ptrIfNotEmpty(get("reference_wo")),
+			CreatedDate:  ptrIfNotEmpty(get("created_date")),
+			TargetDate:   ptrIfNotEmpty(get("target_date")),
+			Notes:        ptrIfNotEmpty(get("notes")),
+			ItemUniqCode: itemUniqCode,
+			Quantity:     quantity,
+			UOM:          &uom,
+			ProcessName:  ptrIfNotEmpty(get("process_name")),
+			KanbanQty:    kanbanQty,
+		})
+	}
+	return out, errs
+}
+
+func buildWorkOrderImportPreviewSnapshot(rows []workOrderImportRow, rowErrs []bulkimport.RowError) datatypes.JSON {
+	errByRow := make(map[int]string)
+	for _, e := range rowErrs {
+		if e.Sheet == workOrderImportSheetName && e.Row > 0 {
+			if _, exists := errByRow[e.Row]; !exists {
+				errByRow[e.Row] = e.Message
+			}
+		}
+	}
+	type snapshotRow struct {
+		Row          int     `json:"row"`
+		WoType       string  `json:"wo_type"`
+		ItemUniqCode string  `json:"item_uniq_code"`
+		Quantity     float64 `json:"quantity"`
+		Error        string  `json:"error,omitempty"`
+	}
+	var snap []snapshotRow
+	for _, r := range rows {
+		snap = append(snap, snapshotRow{
+			Row:          r.SheetRow,
+			WoType:       r.WoType,
+			ItemUniqCode: r.ItemUniqCode,
+			Quantity:     r.Quantity,
+			Error:        errByRow[r.SheetRow],
+		})
+	}
+	b, _ := json.Marshal(snap)
+	return datatypes.JSON(b)
+}
+
+func isSheetExists(f *excelize.File, name string) bool {
+	for _, s := range f.GetSheetList() {
+		if s == name {
+			return true
+		}
+	}
+	return false
+}
+
+func generateWorkOrderImportErrorExcel(errors []bulkimport.RowError) ([]byte, error) {
+	f := excelize.NewFile()
+	_ = f.SetSheetName("Sheet1", workOrderImportSheetName)
+	headers := append([]string{"error"}, workOrderImportHeaders...)
+	for i, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
+		_ = f.SetCellValue(workOrderImportSheetName, cell, h)
+	}
+	for i, e := range errors {
+		cell, _ := excelize.CoordinatesToCellName(1, i+2)
+		_ = f.SetCellValue(workOrderImportSheetName, cell, e.Message)
+		for j, v := range e.RawData {
+			cell, _ := excelize.CoordinatesToCellName(j+2, i+2)
+			_ = f.SetCellValue(workOrderImportSheetName, cell, v)
+		}
+	}
+	return bulkimport.ToBytes(f)
+}
+
+func (s *service) DownloadImportTemplate(ctx context.Context) ([]byte, error) {
+	master, err := s.listWorkOrderMasterData(ctx)
+	if err != nil {
+		return nil, err
+	}
+	nextSeq, err := s.nextKanbanBlkSeq(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return generateWorkOrderImportTemplateWithMaster(master, nextSeq)
+}
+
+func (s *service) ImportFromExcel(ctx context.Context, filePath, fileName, uploadedBy, requestID string) (bulkimport.BulkResult, error) {
+	f, err := excelize.OpenFile(filePath)
+	if err != nil {
+		return bulkimport.BulkResult{}, apperror.BadRequest("failed to open excel file")
+	}
+	defer f.Close()
+
+	sheetName := workOrderImportSheetName
+	if !isSheetExists(f, sheetName) {
+		if sheets := f.GetSheetList(); len(sheets) > 0 {
+			sheetName = sheets[0]
+		}
+	}
+	rows, err := f.GetRows(sheetName)
+	if err != nil {
+		return bulkimport.BulkResult{}, apperror.BadRequest("failed to read excel sheet")
+	}
+
+	parsedRows, parseErrs := parseWorkOrderImportRows(rows)
+	total := len(parsedRows)
+	successCount := 0
+	var createErrs []bulkimport.RowError
+
+	for _, row := range parsedRows {
+		// Mirror the manual flow: kanban parameter must exist. When it does not,
+		// auto-provision one using the KBN-BLK-<increment> rule.
+		if err := s.ensureKanbanParamForImport(ctx, row.ItemUniqCode, row.KanbanQty); err != nil {
+			createErrs = append(createErrs, bulkimport.RowError{
+				Sheet:   workOrderImportSheetName,
+				Row:     row.SheetRow,
+				Field:   "kanban_qty",
+				Message: err.Error(),
+				RawData: row.RawData,
+			})
+			continue
+		}
+
+		req := woModels.CreateWorkOrderRequest{
+			WOType:      row.WoType,
+			ReferenceWO: row.ReferenceWO,
+			CreatedDate: row.CreatedDate,
+			TargetDate:  row.TargetDate,
+			Notes:       row.Notes,
+			Items: []woModels.CreateWorkOrderItem{{
+				ItemUniqCode: row.ItemUniqCode,
+				Quantity:     row.Quantity,
+				UOM:          row.UOM,
+				ProcessName:  row.ProcessName,
+				KanbanQty:    row.KanbanQty,
+			}},
+		}
+		if _, err := s.Create(ctx, req, uploadedBy); err != nil {
+			createErrs = append(createErrs, bulkimport.RowError{
+				Sheet:   workOrderImportSheetName,
+				Row:     row.SheetRow,
+				Field:   "row",
+				Message: err.Error(),
+				RawData: row.RawData,
+			})
+			continue
+		}
+		successCount++
+	}
+
+	allErrs := append(parseErrs, createErrs...)
+	failedCount := total - successCount
+	status := bulkimport.StatusSuccess
+	if failedCount == total && total > 0 {
+		status = bulkimport.StatusFailed
+	} else if failedCount > 0 || len(allErrs) > 0 {
+		status = bulkimport.StatusPartial
+	}
+
+	result := bulkimport.BulkResult{
+		Status:       status,
+		Total:        total,
+		SuccessCount: successCount,
+		FailedCount:  failedCount,
+		Errors:       allErrs,
+	}
+
+	var errorBytes []byte
+	if len(allErrs) > 0 {
+		errorBytes, err = generateWorkOrderImportErrorExcel(allErrs)
+		if err != nil {
+			return bulkimport.BulkResult{}, apperror.InternalWrap("generate error excel", err)
+		}
+		if s.errorStore == nil {
+			store, err := bulkimport.NewFileStore("")
+			if err != nil {
+				return bulkimport.BulkResult{}, apperror.InternalWrap("init error store", err)
+			}
+			s.errorStore = store
+		}
+		token, err := s.errorStore.Save(errorBytes)
+		if err != nil {
+			return bulkimport.BulkResult{}, apperror.InternalWrap("save error excel", err)
+		}
+		result.ErrorToken = token
+	}
+
+	histStatus := string(result.Status)
+	if histStatus == string(bulkimport.StatusFailed) {
+		histStatus = "error"
+	}
+	var sizeKb int
+	if fi, statErr := os.Stat(filePath); statErr == nil {
+		sizeKb = int(fi.Size() / 1024)
+	}
+	history := &woModels.WorkOrderImportHistory{
+		FileName:      fileName,
+		FileSizeKb:    sizeKb,
+		RowCount:      total,
+		UploadedBy:    uploadedBy,
+		Status:        histStatus,
+		Summary:       fmt.Sprintf("%d berhasil, %d gagal dari %d Work Order", result.SuccessCount, result.FailedCount, result.Total),
+		ImportedCount: result.SuccessCount,
+		FailedCount:   result.FailedCount,
+		RequestID:     requestID,
+		ErrorFile:     errorBytes,
+		PreviewRows:   buildWorkOrderImportPreviewSnapshot(parsedRows, allErrs),
+	}
+	if err := s.repo.CreateImportHistory(ctx, history); err != nil {
+		fmt.Printf("gagal simpan work order import history: %v\n", err)
+	}
+
+	return result, nil
+}
+
+func (s *service) DownloadImportErrors(ctx context.Context, token string) ([]byte, error) {
+	if strings.TrimSpace(token) == "" {
+		return nil, apperror.BadRequest("invalid error token")
+	}
+	if s.errorStore == nil {
+		return nil, apperror.NotFound("error file tidak ditemukan or expired")
+	}
+	data, err := s.errorStore.Get(token)
+	if err != nil {
+		return nil, apperror.InternalWrap("download error file", err)
+	}
+	if len(data) == 0 {
+		return nil, apperror.NotFound("error file tidak ditemukan or expired")
+	}
+	return data, nil
+}
+
+func (s *service) ListImportHistory(ctx context.Context, limit int) ([]woModels.WorkOrderImportHistory, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	return s.repo.ListImportHistory(ctx, limit)
+}
+
+func (s *service) DownloadImportHistoryError(ctx context.Context, id string) ([]byte, error) {
+	data, err := s.repo.GetImportHistoryErrorFile(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, apperror.NotFound("error file tidak ditemukan")
+	}
+	return data, nil
 }

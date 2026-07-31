@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/xuri/excelize/v2"
 )
 
 const defaultTTL = 30 * time.Minute
@@ -88,9 +89,7 @@ func (s *fileStore) Get(token string) ([]byte, error) {
 }
 
 // ToBytes serialises an excelize.File to []byte via a buffer.
-func ToBytes(f interface {
-	WriteTo(*bytes.Buffer) (int64, error)
-}) ([]byte, error) {
+func ToBytes(f *excelize.File) ([]byte, error) {
 	var buf bytes.Buffer
 	if _, err := f.WriteTo(&buf); err != nil {
 		return nil, fmt.Errorf("bulkimport: serialise excel: %w", err)
