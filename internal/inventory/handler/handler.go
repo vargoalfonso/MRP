@@ -698,3 +698,30 @@ func (h *HTTPHandler) CreateQRSubcon(ctx *app.Context) *app.CostumeResponse {
 		},
 	}
 }
+
+// GetPackingList returns the packing/kanban list (DN number, packing number,
+// quantity, progress, qty saat ini, qty maksimal) for one inventory uniq code.
+// Data originates from the work order barcode scan.
+//
+//	GET /api/v1/inventory/raw-materials/packing-list?uniq_code=EMA-LV7-001
+//	GET /api/v1/inventory/indirect-materials/packing-list?uniq_code=EMA-LV7-001
+func (h *HTTPHandler) GetPackingList(ctx *app.Context) *app.CostumeResponse {
+	uniqCode := ctx.Query("uniq_code")
+	if uniqCode == "" {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "uniq_code is required",
+		}
+	}
+	data, err := h.svc.GetPackingList(ctx.Request.Context(), uniqCode)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}

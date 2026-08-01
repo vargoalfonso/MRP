@@ -39,7 +39,10 @@ type BomTreeRow struct {
 	Version      *string             `json:"version"`
 	Status       string              `json:"status"`
 	MaterialSpec *MaterialSpecDetail `json:"material_spec"`
-	Children     []BomTreeRow        `json:"children"`
+	// [wo-estimated-time] process route ikut dikirim di list supaya FE bisa
+	// tahu mesin yang dipakai tiap uniq (untuk kapasitas mesin).
+	ProcessRoutes []ProcessRouteDetail `json:"process_routes"`
+	Children      []BomTreeRow         `json:"children"`
 }
 
 type ListBomResponse struct {

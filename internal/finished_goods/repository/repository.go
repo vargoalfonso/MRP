@@ -55,6 +55,24 @@ type IRepository interface {
 	// order already generated and stored per item (work_order_items.qr_image_base64)
 	// for the given finished-good uniq code. One uniq resolves to exactly one QR.
 	FindWOQRByUniqCode(ctx context.Context, uniqCode string) (qr string, err error)
+
+	// ListPackingList returns every packing/kanban number that belongs to one
+	// finished-good uniq code. Rows come from the work order barcode
+	// (work_order_items.kanban_number) and are enriched with the delivery note
+	// that consumes the same packing number.
+	ListPackingList(ctx context.Context, uniqCode string) ([]FGPackingRow, error)
+}
+
+// FGPackingRow is the raw scan target for the packing-list query.
+type FGPackingRow struct {
+	DNNumber      *string `gorm:"column:dn_number"`
+	PackingNumber string  `gorm:"column:packing_number"`
+	Quantity      float64 `gorm:"column:quantity"`
+	QtyCurrent    float64 `gorm:"column:qty_current"`
+	QtyMax        float64 `gorm:"column:qty_max"`
+	Status        *string `gorm:"column:status"`
+	WONumber      *string `gorm:"column:wo_number"`
+	Source        string  `gorm:"column:source"`
 }
 
 // ---------------------------------------------------------------------------
@@ -320,4 +338,104 @@ func (r *repository) FindWOQRByUniqCode(ctx context.Context, uniqCode string) (s
 	}
 
 	return qr, nil
+}
+
+// ---------------------------------------------------------------------------
+// Packing List
+// ---------------------------------------------------------------------------
+
+// ListPackingList resolves the packing/kanban list for one finished-good uniq.
+//
+// Source of truth:
+//   - work_order_items: 1 row = 1 kanban/packing generated + barcoded by the WO
+//   - delivery_note_items: matched on packing_number to expose the DN number
+//     and the latest opname qty for that packing
+//   - kanban_parameters.kanban_qty: qty maksimal per packing
+//
+// DN items whose packing number has no work order row are appended so packings
+// created outside the WO flow still show up.
+func (r *repository) ListPackingList(ctx context.Context, uniqCode string) ([]FGPackingRow, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return []FGPackingRow{}, nil
+	}
+
+	var rows []FGPackingRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT * FROM (
+			SELECT
+				dn.dn_number      AS dn_number,
+				woi.kanban_number AS packing_number,
+				COALESCE(woi.quantity, 0) AS quantity,
+				COALESCE(
+					dni.qty_opname,
+					NULLIF(woi.total_good_qty, 0),
+					dni.quantity,
+					0
+				) AS qty_current,
+				COALESCE(
+					NULLIF(kp.kanban_qty, 0),
+					NULLIF(dni.pcs_per_kanban, 0),
+					NULLIF(woi.quantity, 0),
+					0
+				) AS qty_max,
+				woi.status   AS status,
+				w.wo_number  AS wo_number,
+				'work_order' AS source,
+				woi.created_at AS sort_at
+			FROM work_order_items woi
+			JOIN work_orders w ON w.id = woi.wo_id
+			LEFT JOIN delivery_note_items dni ON dni.packing_number = woi.kanban_number
+			LEFT JOIN delivery_notes dn ON dn.id = dni.dn_id
+			LEFT JOIN LATERAL (
+				SELECT kanban_qty
+				FROM kanban_parameters
+				WHERE item_uniq_code = woi.item_uniq_code
+				ORDER BY id DESC
+				LIMIT 1
+			) kp ON TRUE
+			WHERE woi.item_uniq_code = ?
+
+			UNION ALL
+
+			SELECT
+				dn.dn_number       AS dn_number,
+				dni.packing_number AS packing_number,
+				COALESCE(dni.quantity, 0) AS quantity,
+				COALESCE(dni.qty_opname, dni.quantity, 0) AS qty_current,
+				COALESCE(
+					NULLIF(dni.pcs_per_kanban, 0),
+					NULLIF(kp.kanban_qty, 0),
+					NULLIF(dni.quantity, 0),
+					0
+				) AS qty_max,
+				NULLIF(dni.check, '') AS status,
+				NULL           AS wo_number,
+				'delivery_note' AS source,
+				dni.created_at AS sort_at
+			FROM delivery_note_items dni
+			JOIN delivery_notes dn ON dn.id = dni.dn_id
+			LEFT JOIN LATERAL (
+				SELECT kanban_qty
+				FROM kanban_parameters
+				WHERE item_uniq_code = dni.item_uniq_code
+				ORDER BY id DESC
+				LIMIT 1
+			) kp ON TRUE
+			WHERE dni.item_uniq_code = ?
+			  AND COALESCE(dni.packing_number, '') <> ''
+			  AND NOT EXISTS (
+				SELECT 1 FROM work_order_items woi2
+				WHERE woi2.kanban_number = dni.packing_number
+			  )
+		) packing
+		ORDER BY sort_at DESC, packing_number ASC
+	`, uniqCode, uniqCode).Scan(&rows).Error
+	if err != nil {
+		return nil, apperror.Internal("fg list packing list: " + err.Error())
+	}
+	if rows == nil {
+		rows = []FGPackingRow{}
+	}
+	return rows, nil
 }

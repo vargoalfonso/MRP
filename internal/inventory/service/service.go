@@ -9,6 +9,7 @@ import (
 
 	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	"github.com/ganasa18/go-template/internal/inventory/repository"
+	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/ganasa18/go-template/pkg/inventoryconst"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/google/uuid"
@@ -56,6 +57,10 @@ type IService interface {
 
 	// Kanban summary — per item_uniq_code, called async per row by frontend
 	GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error)
+
+	// Packing list — per item_uniq_code, powers the packing table on the RM /
+	// indirect RM detail page (data comes from the work order barcode scan).
+	GetPackingList(ctx context.Context, uniqCode string) (*invModels.InvPackingListResponse, error)
 
 	// Work Order consumption — deducts stock and writes outgoing movement logs for each WO item.
 	ConsumeStockForWorkOrder(ctx context.Context, items []ConsumeItem, woNumber string, performedBy string) error
@@ -822,14 +827,14 @@ func (s *service) ListIncoming(ctx context.Context, dnType string, p pagination.
 	items := make([]invModels.IncomingItem, 0, len(rows))
 	for _, r := range rows {
 		items = append(items, invModels.IncomingItem{
-			ScanID:          r.ScanID,
-			UniqCode:        r.ItemUniqCode,
-			IncomingQty:     r.IncomingQty,
-			Warehouse:       r.Warehouse,
-			ScanDate:        r.ScanDate,
-			SupplierName:    r.SupplierName,
-			PONumber:        r.PONumber,
-			DNNumber:        r.DNNumber,
+			ScanID:       r.ScanID,
+			UniqCode:     r.ItemUniqCode,
+			IncomingQty:  r.IncomingQty,
+			Warehouse:    r.Warehouse,
+			ScanDate:     r.ScanDate,
+			SupplierName: r.SupplierName,
+			PONumber:     r.PONumber,
+			DNNumber:     r.DNNumber,
 			// [subcon-dnlog]
 			ScanRef:         r.ScanRef,
 			QCStatus:        r.QCStatus,
@@ -1549,7 +1554,6 @@ func (s *service) GenerateQRSubcon(ctx context.Context, uniqCode string) (*strin
 	return &qr, nil
 }
 
-
 // [subcon-fix] helper enrichment finished_goods.
 func subconCoalesceStr(primary, fallback *string) *string {
 	if primary != nil && *primary != "" {
@@ -1563,4 +1567,59 @@ func subconCoalesceFloat(primary, fallback *float64) *float64 {
 		return primary
 	}
 	return fallback
+}
+
+// ---------------------------------------------------------------------------
+// Packing List
+// ---------------------------------------------------------------------------
+
+// GetPackingList returns the packing/kanban rows for one inventory uniq code,
+// including the DN number, qty saat ini, qty maksimal, and the progress
+// percentage rendered by the raw material / indirect raw material detail page.
+func (s *service) GetPackingList(ctx context.Context, uniqCode string) (*invModels.InvPackingListResponse, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return nil, apperror.BadRequest("uniq_code is required")
+	}
+
+	rows, err := s.repo.ListPackingList(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]invModels.InvPackingListItem, 0, len(rows))
+	var totalCurrent, totalMax float64
+	for _, row := range rows {
+		progress := 0
+		if row.QtyMax > 0 {
+			progress = int(math.Floor((row.QtyCurrent / row.QtyMax) * 100))
+			if progress < 0 {
+				progress = 0
+			}
+			if progress > 100 {
+				progress = 100
+			}
+		}
+		totalCurrent += row.QtyCurrent
+		totalMax += row.QtyMax
+		items = append(items, invModels.InvPackingListItem{
+			DNNumber:      row.DNNumber,
+			PackingNumber: row.PackingNumber,
+			Quantity:      row.Quantity,
+			QtyCurrent:    row.QtyCurrent,
+			QtyMax:        row.QtyMax,
+			Progress:      progress,
+			Status:        row.Status,
+			WONumber:      row.WONumber,
+			Source:        row.Source,
+		})
+	}
+
+	return &invModels.InvPackingListResponse{
+		UniqCode:        uniqCode,
+		Items:           items,
+		TotalPacking:    len(items),
+		TotalQtyCurrent: totalCurrent,
+		TotalQtyMax:     totalMax,
+	}, nil
 }

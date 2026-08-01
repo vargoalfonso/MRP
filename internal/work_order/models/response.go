@@ -117,19 +117,23 @@ type WorkOrderDetailItem struct {
 
 // WorkOrderDetailResponse is returned by GET /work-orders/:id.
 type WorkOrderDetailResponse struct {
-	ID             string                `json:"id"` // WO UUID
-	WoNumber       string                `json:"wo_number"`
-	WoType         string                `json:"wo_type"`
-	ReferenceWO    *string               `json:"reference_wo"`
-	Status         string                `json:"status"`
-	ApprovalStatus string                `json:"approval_status"`
-	CreatedDate    string                `json:"created_date"` // YYYY-MM-DD
-	TargetDate     *string               `json:"target_date"`  // YYYY-MM-DD
-	CreatedByName  *string               `json:"created_by_name"`
-	Notes          *string               `json:"notes"`
-	DefectReason   *string               `json:"defect_reason"` // keterangan NG dari QC (khusus WO Rework)
-	QRDataURL      *string               `json:"qr_data_url"`
-	Items          []WorkOrderDetailItem `json:"items"`
+	ID             string  `json:"id"` // WO UUID
+	WoNumber       string  `json:"wo_number"`
+	WoType         string  `json:"wo_type"`
+	ReferenceWO    *string `json:"reference_wo"`
+	Status         string  `json:"status"`
+	ApprovalStatus string  `json:"approval_status"`
+	CreatedDate    string  `json:"created_date"` // YYYY-MM-DD
+	TargetDate     *string `json:"target_date"`  // YYYY-MM-DD
+	CreatedByName  *string `json:"created_by_name"`
+	Notes          *string `json:"notes"`
+	DefectReason   *string `json:"defect_reason"` // keterangan NG dari QC (khusus WO Rework)
+	// [wo-estimated-time] Estimasi waktu produksi (menit) + komponen perhitungannya.
+	EstimatedTimeMinutes *float64              `json:"estimated_time_minutes"`
+	CycleTimeMin         *float64              `json:"cycle_time_min"`
+	MachineCapacity      *float64              `json:"machine_capacity"`
+	QRDataURL            *string               `json:"qr_data_url"`
+	Items                []WorkOrderDetailItem `json:"items"`
 }
 
 type WorkOrderApprovalResponse struct {

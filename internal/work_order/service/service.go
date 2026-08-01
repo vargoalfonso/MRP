@@ -585,7 +585,11 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 			CreatedBy:      creatorUUID,
 			CreatedByName:  creatorName,
 			Notes:          req.Notes,
-			QRImageBase64:  &woQR,
+			// [wo-estimated-time] snapshot estimasi waktu dari FE.
+			EstimatedTimeMinutes: req.EstimatedTimeMinutes,
+			CycleTimeMin:         req.CycleTimeMin,
+			MachineCapacity:      req.MachineCapacity,
+			QRImageBase64:        &woQR,
 		}
 
 		if err := s.repo.CreateWorkOrder(ctx, tx, wo); err != nil {
@@ -1340,19 +1344,22 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 	}
 
 	return &woModels.WorkOrderDetailResponse{
-		ID:             wo.UUID.String(),
-		WoNumber:       wo.WoNumber,
-		WoType:         wo.WoType,
-		ReferenceWO:    wo.ReferenceWO,
-		Status:         wo.Status,
-		ApprovalStatus: wo.ApprovalStatus,
-		CreatedDate:    createdDate,
-		TargetDate:     targetDate,
-		CreatedByName:  wo.CreatedByName,
-		Notes:          wo.Notes,
-		DefectReason:   defectReason,
-		QRDataURL:      woQR,
-		Items:          items,
+		ID:                   wo.UUID.String(),
+		WoNumber:             wo.WoNumber,
+		WoType:               wo.WoType,
+		ReferenceWO:          wo.ReferenceWO,
+		Status:               wo.Status,
+		ApprovalStatus:       wo.ApprovalStatus,
+		CreatedDate:          createdDate,
+		TargetDate:           targetDate,
+		CreatedByName:        wo.CreatedByName,
+		Notes:                wo.Notes,
+		DefectReason:         defectReason,
+		EstimatedTimeMinutes: wo.EstimatedTimeMinutes,
+		CycleTimeMin:         wo.CycleTimeMin,
+		MachineCapacity:      wo.MachineCapacity,
+		QRDataURL:            woQR,
+		Items:                items,
 	}, nil
 }
 
