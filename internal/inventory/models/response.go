@@ -208,23 +208,54 @@ type HistoryLogResponse struct {
 // ---------------------------------------------------------------------------
 
 type IncomingItem struct {
-	ScanID          int64     `json:"scan_id"`
-	UniqCode        string    `json:"uniq_code"`
-	IncomingQty     float64   `json:"incoming_qty"`
-	Warehouse       *string   `json:"warehouse"`
-	ScanDate        time.Time `json:"scan_date"`
-	SupplierName    *string   `json:"supplier_name"`
-	PONumber        *string   `json:"po_number"`
-	DNNumber        string    `json:"dn_number"`
+	ScanID       int64     `json:"scan_id"`
+	UniqCode     string    `json:"uniq_code"`
+	IncomingQty  float64   `json:"incoming_qty"`
+	Warehouse    *string   `json:"warehouse"`
+	ScanDate     time.Time `json:"scan_date"`
+	SupplierName *string   `json:"supplier_name"`
+	PONumber     *string   `json:"po_number"`
+	DNNumber     string    `json:"dn_number"`
 	// [subcon-dnlog] arah pergerakan DN Subcon (SUBCON-OUT / SUBCON-IN)
-	ScanRef         string    `json:"scan_ref"`
-	QCStatus        string    `json:"qc_status"`         // pending | in_progress | approved | rejected
-	QCStatusDisplay string    `json:"qc_status_display"` // Pending Approval | Received | Rejected
-	UOM             *string   `json:"uom"`
-	DNType          string    `json:"dn_type"`
+	ScanRef         string  `json:"scan_ref"`
+	QCStatus        string  `json:"qc_status"`         // pending | in_progress | approved | rejected
+	QCStatusDisplay string  `json:"qc_status_display"` // Pending Approval | Received | Rejected
+	UOM             *string `json:"uom"`
+	DNType          string  `json:"dn_type"`
 }
 
 type IncomingListResponse struct {
 	Items      []IncomingItem      `json:"items"`
 	Pagination InventoryPagination `json:"pagination"`
+}
+
+// ---------------------------------------------------------------------------
+// Packing List (raw material & indirect raw material detail)
+// ---------------------------------------------------------------------------
+
+// InvPackingListItem is one packing/kanban row for an inventory item. Rows are
+// resolved from the work order barcode (work_order_items.kanban_number) and
+// enriched with the delivery note that carries the same packing number.
+type InvPackingListItem struct {
+	DNNumber      *string `json:"dn_number"`
+	PackingNumber string  `json:"packing_number"`
+	Quantity      float64 `json:"quantity"`    // qty planned on the packing
+	QtyCurrent    float64 `json:"qty_current"` // qty saat ini (scan / opname result)
+	QtyMax        float64 `json:"qty_max"`     // qty maksimal (kanban standard)
+	Progress      int     `json:"progress"`    // 0-100, qty_current / qty_max
+	Status        *string `json:"status"`
+	WONumber      *string `json:"wo_number"`
+	Source        string  `json:"source"` // work_order | delivery_note
+}
+
+// InvPackingListResponse is returned by:
+//
+//	GET /api/v1/inventory/raw-materials/packing-list?uniq_code=
+//	GET /api/v1/inventory/indirect-materials/packing-list?uniq_code=
+type InvPackingListResponse struct {
+	UniqCode        string               `json:"uniq_code"`
+	Items           []InvPackingListItem `json:"items"`
+	TotalPacking    int                  `json:"total_packing"`
+	TotalQtyCurrent float64              `json:"total_qty_current"`
+	TotalQtyMax     float64              `json:"total_qty_max"`
 }

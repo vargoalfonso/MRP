@@ -51,6 +51,7 @@ func NewHTTPModule(
 //	POST   /raw-materials                  create
 //	POST   /raw-materials/bulk             bulk create
 //	GET    /raw-materials/incoming         incoming RM scan list (Action UI tab)
+//	GET    /raw-materials/packing-list     packing list per uniq_code (WO barcode)
 //	GET    /raw-materials/:id              detail
 //	PUT    /raw-materials/:id              update
 //	DELETE /raw-materials/:id              soft delete
@@ -62,6 +63,7 @@ func NewHTTPModule(
 //	POST   /indirect-materials             create
 //	POST   /indirect-materials/bulk        bulk create
 //	GET    /indirect-materials/incoming    incoming indirect scan list
+//	GET    /indirect-materials/packing-list packing list per uniq_code (WO barcode)
 //	GET    /indirect-materials/:id         detail
 //	PUT    /indirect-materials/:id         update
 //	DELETE /indirect-materials/:id         soft delete
@@ -94,6 +96,8 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	rm.POST("/bulk", perm("inventory", "create"), m.base.RunAction(m.handler.BulkCreateRawMaterials))
 	// NOTE: static sub-routes (/incoming) must be registered before /:id
 	rm.GET("/incoming", perm("inventory", "view"), m.base.RunAction(m.handler.ListIncomingRM))
+	// [packing-list] packing/kanban hasil scan barcode work order (harus sebelum /:id)
+	rm.GET("/packing-list", perm("inventory", "view"), m.base.RunAction(m.handler.GetPackingList))
 	rm.GET("/:id", perm("inventory", "view"), m.base.RunAction(m.handler.GetRawMaterialByID))
 	rm.PUT("/:id", perm("inventory", "update"), m.base.RunAction(m.handler.UpdateRawMaterial))
 	rm.DELETE("/:id", perm("inventory", "delete"), m.base.RunAction(m.handler.DeleteRawMaterial))
@@ -106,6 +110,8 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	ind.POST("", perm("inventory", "create"), m.base.RunAction(m.handler.CreateIndirectMaterial))
 	ind.POST("/bulk", perm("inventory", "create"), m.base.RunAction(m.handler.BulkCreateIndirectMaterials))
 	ind.GET("/incoming", perm("inventory", "view"), m.base.RunAction(m.handler.ListIncomingIndirect))
+	// [packing-list] packing/kanban hasil scan barcode work order (harus sebelum /:id)
+	ind.GET("/packing-list", perm("inventory", "view"), m.base.RunAction(m.handler.GetPackingList))
 	ind.GET("/:id", perm("inventory", "view"), m.base.RunAction(m.handler.GetIndirectByID))
 	ind.PUT("/:id", perm("inventory", "update"), m.base.RunAction(m.handler.UpdateIndirectMaterial))
 	ind.DELETE("/:id", perm("inventory", "delete"), m.base.RunAction(m.handler.DeleteIndirectMaterial))

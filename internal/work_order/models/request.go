@@ -10,6 +10,11 @@ type CreateWorkOrderRequest struct {
 	TargetDate  *string               `json:"target_date"`  // YYYY-MM-DD
 	Items       []CreateWorkOrderItem `json:"items" validate:"required,min=1,dive"`
 	Notes       *string               `json:"notes"`
+	// [wo-estimated-time] Estimasi waktu produksi dalam menit (dihitung di FE
+	// dari qty x cycle_time_min x machine_capacity, semua satuan menit).
+	EstimatedTimeMinutes *float64 `json:"estimated_time_minutes"`
+	CycleTimeMin         *float64 `json:"cycle_time_min"`
+	MachineCapacity      *float64 `json:"machine_capacity"`
 }
 
 type CreateWorkOrderItem struct {

@@ -191,6 +191,10 @@ func (s *service) ListBom(ctx context.Context, q models.ListBomQuery) (*models.L
 			if spec, ok := preload.specs[parentRev.ID]; ok {
 				row.MaterialSpec = s.toSpecDetail(&spec)
 			}
+			// [wo-estimated-time] kirim juga process route (berisi machine_id).
+			if routes, ok := preload.routesByRevID[parentRev.ID]; ok {
+				row.ProcessRoutes = routes
+			}
 		}
 
 		row.Children = s.buildChildTree(linesByBomID[b.ID], preload, parent.ID, 1, q.TypeMaterial)
@@ -234,6 +238,10 @@ func (s *service) buildChildTree(lines []models.BomLine, preload *bomPreload, pa
 		}
 		if rev, ok := preload.revisionForChild(line, child.ID); ok {
 			row.Version = &rev.Revision
+			// [wo-estimated-time] child juga butuh process route untuk kapasitas mesin.
+			if routes, ok := preload.routesByRevID[rev.ID]; ok {
+				row.ProcessRoutes = routes
+			}
 			if spec, ok := preload.specs[rev.ID]; ok {
 				row.MaterialSpec = s.toSpecDetail(&spec)
 				if typeMaterialFilter != "" {
