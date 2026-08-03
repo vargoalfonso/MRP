@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"time"
 	"strings"
@@ -100,6 +101,8 @@ func toReleaseItem(r *scrapModels.ScrapRelease) *scrapModels.ScrapReleaseItem {
 		WeightReleased: r.WeightReleased,
 		CustomerName:   r.CustomerName,
 		PricePerUnit:   r.PricePerUnit,
+		PricePerKg:     r.PricePerKg,
+		Items:          parseReleaseLines(r.ItemsJSON),
 		TotalValue:     r.TotalValue,
 		DisposalReason: r.DisposalReason,
 		ApprovalStatus: r.ApprovalStatus,
@@ -413,7 +416,9 @@ func (sv *service) GetScrapReleaseByID(ctx context.Context, id int64) (*scrapMod
 	if err != nil {
 		return nil, err
 	}
-	return toReleaseItem(rel), nil
+	item := toReleaseItem(rel)
+	item.Items = parseReleaseLines(rel.ItemsJSON)
+	return item, nil
 }
 
 func (sv *service) CreateScrapRelease(ctx context.Context, req scrapModels.CreateScrapReleaseRequest, createdBy string) (*scrapModels.ScrapReleaseItem, error) {
@@ -421,21 +426,62 @@ func (sv *service) CreateScrapRelease(ctx context.Context, req scrapModels.Creat
 		return nil, apperror.UnprocessableEntity("release_type must be Sell or Dump")
 	}
 
-	// Confirm scrap stock exists and has enough qty
-	stock, err := sv.repo.GetScrapStockByID(ctx, req.ScrapStockID)
-	if err != nil {
-		return nil, err
-	}
-	if req.ReleaseQty > stock.Quantity {
-		return nil, apperror.UnprocessableEntity("release_qty exceeds available scrap quantity")
+	// Build cart lines. Fall back to a single line for backward compatibility.
+	lines := req.Items
+	if len(lines) == 0 {
+		lines = []scrapModels.ScrapReleaseLineInput{
+			{ScrapStockID: req.ScrapStockID, ReleaseQty: req.ReleaseQty},
+		}
 	}
 
-	// Auto-compute total_value for Sell type
-	var totalValue *float64
-	if req.ReleaseType == scrapModels.ReleaseTypeSell && req.PricePerUnit != nil {
-		tv := req.ReleaseQty * *req.PricePerUnit
-		totalValue = &tv
+	// Validate every cart line; collect a snapshot + total pcs.
+	var totalPcs float64
+	lineItems := make([]scrapModels.ScrapReleaseLineItem, 0, len(lines))
+	stockByID := make(map[int64]*scrapModels.ScrapStock, len(lines))
+	for i := range lines {
+		ln := lines[i]
+		if ln.ScrapStockID <= 0 || ln.ReleaseQty <= 0 {
+			return nil, apperror.UnprocessableEntity("each cart item needs scrap_stock_id and release_qty > 0")
+		}
+		st, err := sv.repo.GetScrapStockByID(ctx, ln.ScrapStockID)
+		if err != nil {
+			return nil, err
+		}
+		if ln.ReleaseQty > st.Quantity {
+			return nil, apperror.UnprocessableEntity("release_qty exceeds available scrap quantity")
+		}
+		totalPcs += ln.ReleaseQty
+		stockByID[ln.ScrapStockID] = st
+		lineItems = append(lineItems, scrapModels.ScrapReleaseLineItem{
+			ScrapStockID: ln.ScrapStockID,
+			Uniq:         &st.UniqCode,
+			PartName:     st.PartName,
+			ReleaseQty:   ln.ReleaseQty,
+		})
 	}
+
+	// Header references the first cart line for backward compatibility.
+	headerStockID := lines[0].ScrapStockID
+
+	// Weight (kg) drives the sale; price is per kg now (all uniq weighed the same).
+	weightKg := req.WeightKg
+	if weightKg == nil {
+		weightKg = req.WeightReleased
+	}
+
+	// Auto-compute total_value for Sell type: weight_kg * price_per_kg.
+	var totalValue *float64
+	if req.ReleaseType == scrapModels.ReleaseTypeSell {
+		if weightKg != nil && req.PricePerKg != nil {
+			tv := *weightKg * *req.PricePerKg
+			totalValue = &tv
+		} else if req.PricePerUnit != nil {
+			tv := totalPcs * *req.PricePerUnit
+			totalValue = &tv
+		}
+	}
+
+	itemsJSON := marshalReleaseLines(lineItems)
 
 	_, creatorName, err := creatorresolver.Resolve(ctx, sv.db, createdBy)
 	if err != nil {
@@ -443,13 +489,15 @@ func (sv *service) CreateScrapRelease(ctx context.Context, req scrapModels.Creat
 	}
 
 	rel := &scrapModels.ScrapRelease{
-		ScrapStockID:   req.ScrapStockID,
+		ScrapStockID:   headerStockID,
 		ReleaseDate:    parseDate(req.ReleaseDate),
 		ReleaseType:    req.ReleaseType,
-		ReleaseQty:     req.ReleaseQty,
-		WeightReleased: req.WeightReleased,
+		ReleaseQty:     totalPcs,
+		WeightReleased: weightKg,
 		CustomerName:   req.CustomerName,
 		PricePerUnit:   req.PricePerUnit,
+		PricePerKg:     req.PricePerKg,
+		ItemsJSON:      itemsJSON,
 		TotalValue:     totalValue,
 		DisposalReason: req.DisposalReason,
 		ApprovalStatus: scrapModels.ApprovalStatusPending,
@@ -463,30 +511,73 @@ func (sv *service) CreateScrapRelease(ctx context.Context, req scrapModels.Creat
 		return nil, err
 	}
 
-	sourceFlag := inventoryconst.SourceScrapReleaseSell
-	if req.ReleaseType == scrapModels.ReleaseTypeDump {
-		sourceFlag = inventoryconst.SourceScrapReleaseDump
-	}
-	sv.appendMovementLog(ctx, invModels.InventoryMovementLog{
-		MovementCategory: string(inventoryconst.CategoryScrap),
-		MovementType:     string(inventoryconst.MovementOutgoing),
-		UniqCode:         stock.UniqCode,
-		EntityID:         &rel.ScrapStockID,
-		QtyChange:        -req.ReleaseQty,
-		SourceFlag:       ptrStr(string(sourceFlag)),
-		ReferenceID:      &rel.ReleaseNumber,
-		Notes:            req.Remarks,
-		LoggedBy:         creatorName,
-	})
+	// Movement logs are written on approval (see ApproveScrapRelease).
 
-	return toReleaseItem(rel), nil
+	result := toReleaseItem(rel)
+	result.Items = lineItems
+	return result, nil
 }
 
 func (sv *service) ApproveScrapRelease(ctx context.Context, id int64, req scrapModels.ApproveScrapReleaseRequest, approvedBy string) error {
 	if req.Action != scrapModels.ApprovalStatusCompleted && req.Action != scrapModels.ApprovalStatusRejected {
 		return apperror.UnprocessableEntity("action must be Completed or Rejected")
 	}
-	return sv.repo.ApproveRelease(ctx, id, req.Action, approvedBy, req.Remarks)
+	if err := sv.repo.ApproveRelease(ctx, id, req.Action, approvedBy, req.Remarks); err != nil {
+		return err
+	}
+
+	// On approval (Completed) write one history-log row per released scrap item
+	// so each affected scrap stock shows the outgoing movement.
+	if req.Action == scrapModels.ApprovalStatusCompleted {
+		sv.logReleaseMovements(ctx, id, req.Remarks, approvedBy)
+	}
+	return nil
+}
+
+// logReleaseMovements writes outgoing history-log rows for an approved release,
+// one per cart item (falling back to the header stock for legacy releases).
+func (sv *service) logReleaseMovements(ctx context.Context, id int64, remarks *string, approvedBy string) {
+	rel, err := sv.repo.GetScrapReleaseByID(ctx, id)
+	if err != nil || rel == nil {
+		return
+	}
+
+	sourceFlag := inventoryconst.SourceScrapReleaseSell
+	if rel.ReleaseType == scrapModels.ReleaseTypeDump {
+		sourceFlag = inventoryconst.SourceScrapReleaseDump
+	}
+
+	lines := parseReleaseLines(rel.ItemsJSON)
+	if len(lines) == 0 {
+		uniq := ""
+		if st, e := sv.repo.GetScrapStockByID(ctx, rel.ScrapStockID); e == nil && st != nil {
+			uniq = st.UniqCode
+		}
+		lines = []scrapModels.ScrapReleaseLineItem{
+			{ScrapStockID: rel.ScrapStockID, ReleaseQty: rel.ReleaseQty, Uniq: &uniq},
+		}
+	}
+
+	for i := range lines {
+		li := lines[i]
+		uniq := ""
+		if li.Uniq != nil {
+			uniq = *li.Uniq
+		}
+		entityID := li.ScrapStockID
+		qty := li.ReleaseQty
+		sv.appendMovementLog(ctx, invModels.InventoryMovementLog{
+			MovementCategory: string(inventoryconst.CategoryScrap),
+			MovementType:     string(inventoryconst.MovementOutgoing),
+			UniqCode:         uniq,
+			EntityID:         &entityID,
+			QtyChange:        -qty,
+			SourceFlag:       ptrStr(string(sourceFlag)),
+			ReferenceID:      &rel.ReleaseNumber,
+			Notes:            remarks,
+			LoggedBy:         ptrStr(approvedBy),
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -535,6 +626,29 @@ func (sv *service) ListScrapMovements(ctx context.Context, scrapStockID int64, p
 }
 
 func ptrStr(s string) *string { return &s }
+
+func parseReleaseLines(raw *string) []scrapModels.ScrapReleaseLineItem {
+	if raw == nil || *raw == "" {
+		return nil
+	}
+	var lines []scrapModels.ScrapReleaseLineItem
+	if err := json.Unmarshal([]byte(*raw), &lines); err != nil {
+		return nil
+	}
+	return lines
+}
+
+func marshalReleaseLines(lines []scrapModels.ScrapReleaseLineItem) *string {
+	if len(lines) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(lines)
+	if err != nil {
+		return nil
+	}
+	s := string(b)
+	return &s
+}
 
 func sourceFlagToReason(flag *string) string {
 	if flag == nil {

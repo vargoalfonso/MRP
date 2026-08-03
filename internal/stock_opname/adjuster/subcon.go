@@ -35,7 +35,11 @@ func (a *SubconAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q string,
 		limit = 20
 	}
 	var rows []invModels.SubconInventory
-	query := tx.WithContext(ctx).Where("deleted_at IS NULL")
+	// [so-subcon] Stock opname subcon hanya menghitung uniq dari tab
+	// "Stock In Vendor" (total_received_qty = 0). Baris yang sudah pindah ke
+	// "Stock Received from Vendor" (total_received_qty > 0) dikecualikan agar
+	// tidak ikut masuk daftar uniq saat start count.
+	query := tx.WithContext(ctx).Where("deleted_at IS NULL").Where("COALESCE(total_received_qty, 0) = 0")
 	if q != "" {
 		query = query.Where("uniq_code ILIKE ? OR part_number ILIKE ? OR part_name ILIKE ?", "%"+q+"%", "%"+q+"%", "%"+q+"%")
 	}

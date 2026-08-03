@@ -115,6 +115,8 @@ type ScrapRelease struct {
 	CustomerName *string  `gorm:"size:255"`
 	PricePerUnit *float64 `gorm:"type:numeric(15,4)"`
 	TotalValue   *float64 `gorm:"type:numeric(15,4)"`
+	PricePerKg *float64 `gorm:"type:numeric(15,4)"`
+	ItemsJSON  *string  `gorm:"column:items_json;type:text"`
 
 	// Dump-specific
 	DisposalReason *string `gorm:"type:text"`
