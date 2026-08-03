@@ -37,6 +37,11 @@ type IService interface {
 	// History Logs tab (In-Out Activity Log)
 	GetHistory(ctx context.Context, uniqCode string, page, limit int) (*fgModels.FGHistoryResponse, error)
 
+	// Packing List (FG detail modal). Rows are resolved from the work order
+	// barcode (work_order_items.kanban_number) and the delivery note that
+	// consumes the same packing number.
+	GetPackingList(ctx context.Context, uniqCode string) (*fgModels.FGPackingListResponse, error)
+
 	// GenerateQR builds the QR for a finished good. The QR carries the kanban
 	// list / packing list resolved from the work order (1 uniq = 1 QR).
 	GenerateQR(ctx context.Context, uniqCode string) (*string, error)
@@ -774,4 +779,60 @@ func (s *service) UpdateFinishedGoods(ctx context.Context, id int64, req fgModel
 	}
 
 	return s.GetFinishedGoodsByID(ctx, id)
+}
+
+// ---------------------------------------------------------------------------
+// Packing List
+// ---------------------------------------------------------------------------
+
+// GetPackingList returns the packing/kanban rows for one finished-good uniq,
+// including the DN number, qty saat ini, qty maksimal, and the progress
+// percentage rendered by the FG detail modal.
+func (s *service) GetPackingList(ctx context.Context, uniqCode string) (*fgModels.FGPackingListResponse, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return nil, apperror.BadRequest("uniq_code is required")
+	}
+
+	rows, err := s.repo.ListPackingList(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]fgModels.FGPackingListItem, 0, len(rows))
+	var totalCurrent, totalMax float64
+	for _, row := range rows {
+		progress := 0
+		if row.QtyMax > 0 {
+			progress = int(math.Floor((row.QtyCurrent / row.QtyMax) * 100))
+			if progress < 0 {
+				progress = 0
+			}
+			if progress > 100 {
+				progress = 100
+			}
+		}
+		totalCurrent += row.QtyCurrent
+		totalMax += row.QtyMax
+
+		items = append(items, fgModels.FGPackingListItem{
+			DNNumber:      row.DNNumber,
+			PackingNumber: row.PackingNumber,
+			Quantity:      row.Quantity,
+			QtyCurrent:    row.QtyCurrent,
+			QtyMax:        row.QtyMax,
+			Progress:      progress,
+			Status:        row.Status,
+			WONumber:      row.WONumber,
+			Source:        row.Source,
+		})
+	}
+
+	return &fgModels.FGPackingListResponse{
+		UniqCode:        uniqCode,
+		Items:           items,
+		TotalPacking:    len(items),
+		TotalQtyCurrent: totalCurrent,
+		TotalQtyMax:     totalMax,
+	}, nil
 }

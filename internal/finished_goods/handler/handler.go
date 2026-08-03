@@ -356,3 +356,31 @@ func (h *HTTPHandler) UpdateFinishedGoods(ctx *app.Context) *app.CostumeResponse
 		Data:      data,
 	}
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/finished-goods/packing-list?uniq_code=
+// ---------------------------------------------------------------------------
+
+// GetPackingList returns the packing/kanban list (DN number, packing number,
+// quantity, progress, qty saat ini, qty maksimal) for one finished good.
+func (h *HTTPHandler) GetPackingList(ctx *app.Context) *app.CostumeResponse {
+	uniqCode := strings.TrimSpace(ctx.Query("uniq_code"))
+	if uniqCode == "" {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "uniq_code is required",
+		}
+	}
+
+	data, err := h.svc.GetPackingList(ctx.Request.Context(), uniqCode)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      data,
+	}
+}

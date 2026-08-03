@@ -200,3 +200,31 @@ type FGHistoryResponse struct {
 	Items      []FGMovementLogItem `json:"items"`
 	Pagination FGPagination        `json:"pagination"`
 }
+
+// ---------------------------------------------------------------------------
+// Packing List (FG detail modal)
+// ---------------------------------------------------------------------------
+
+// FGPackingListItem is one packing/kanban row for a finished good. Rows are
+// resolved from the work order barcode (work_order_items.kanban_number) and
+// enriched with the delivery note that consumes the same packing number.
+type FGPackingListItem struct {
+	DNNumber      *string `json:"dn_number"`
+	PackingNumber string  `json:"packing_number"`
+	Quantity      float64 `json:"quantity"`    // qty planned on the packing
+	QtyCurrent    float64 `json:"qty_current"` // qty saat ini (scan / opname result)
+	QtyMax        float64 `json:"qty_max"`     // qty maksimal (kanban standard)
+	Progress      int     `json:"progress"`    // 0-100, qty_current / qty_max
+	Status        *string `json:"status"`
+	WONumber      *string `json:"wo_number"`
+	Source        string  `json:"source"` // work_order | delivery_note
+}
+
+// FGPackingListResponse is returned by GET /api/v1/finished-goods/packing-list.
+type FGPackingListResponse struct {
+	UniqCode        string              `json:"uniq_code"`
+	Items           []FGPackingListItem `json:"items"`
+	TotalPacking    int                 `json:"total_packing"`
+	TotalQtyCurrent float64             `json:"total_qty_current"`
+	TotalQtyMax     float64             `json:"total_qty_max"`
+}
