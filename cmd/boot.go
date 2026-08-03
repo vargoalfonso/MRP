@@ -46,6 +46,10 @@ import (
 	coHandler "github.com/ganasa18/go-template/internal/customer_order/handler"
 	coRepository "github.com/ganasa18/go-template/internal/customer_order/repository"
 	coService "github.com/ganasa18/go-template/internal/customer_order/service"
+	coLogsModule "github.com/ganasa18/go-template/internal/customer_order_logs"
+	coLogsHandler "github.com/ganasa18/go-template/internal/customer_order_logs/handler"
+	coLogsRepository "github.com/ganasa18/go-template/internal/customer_order_logs/repository"
+	coLogsService "github.com/ganasa18/go-template/internal/customer_order_logs/service"
 	deliveryNoteModule "github.com/ganasa18/go-template/internal/delivery_note"
 	deliveryNoteHandler "github.com/ganasa18/go-template/internal/delivery_note/handler"
 	deliveryNoteRepository "github.com/ganasa18/go-template/internal/delivery_note/repository"
@@ -393,6 +397,11 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	coSvc := coService.New(coRepo)
 	coHTTPHandler := coHandler.New(coSvc)
 
+	// Customer Order Automation Logs module
+	coLogsRepo := coLogsRepository.New(db)
+	coLogsSvc := coLogsService.New(coLogsRepo)
+	coLogsHTTPHandler := coLogsHandler.New(coLogsSvc)
+
 	// Admin Jobs module
 	adminJobsRepository := adminJobsRepo.New(db)
 	adminJobsSvc := adminJobsService.New(adminJobsRepository)
@@ -508,6 +517,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		wipModule.NewHTTPModule(cfg, baseHTTPHandler, wipHTTPHandler, authSvc, roleSvc, wipSvc),
 		adminJobsModule.NewHTTPModule(cfg, baseHTTPHandler, adminJobsHTTPHandler, adminJobsSvc),
 		coModule.NewHTTPModule(cfg, baseHTTPHandler, coHTTPHandler, authSvc, roleSvc, coSvc),
+		coLogsModule.NewHTTPModule(cfg, baseHTTPHandler, coLogsHTTPHandler, authSvc),
 		dscModule.NewHTTPModule(baseHTTPHandler, dscHTTPHandler, authSvc, roleSvc, dscSvc),
 		spModule.NewHTTPModule(baseHTTPHandler, spHTTPHandler, authSvc, roleSvc),
 		productReturnModule.NewHTTPModule(cfg, baseHTTPHandler, productReturnHTTPHandler, authSvc, roleSvc, productReturnSvc),
