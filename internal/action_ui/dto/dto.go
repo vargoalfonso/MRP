@@ -87,6 +87,19 @@ type CompleteWORequest struct {
 	WOID int64 `json:"wo_id" binding:"required"`
 }
 
+// [qc-issue-table] satu baris issue (round 1/2) dengan qty
+type QCIssueInput struct {
+	Issue  string  `json:"issue"`
+	Detail string  `json:"detail"`
+	Qty    float64 `json:"qty"`
+}
+
+// [qc-issue-table] satu baris reason/info (round 3) dengan qty
+type QCReasonInput struct {
+	Info string  `json:"info"`
+	Qty  float64 `json:"qty"`
+}
+
 type QCSubmitRequest struct {
 	QCTaskID int64 `json:"qc_task_id" binding:"required"`
 
@@ -107,6 +120,9 @@ type QCSubmitRequest struct {
 	DefectReason string `json:"defect_reason"`
 	ScrapReason  string `json:"scrap_reason"`
 
+	// [qc-issue-table] daftar issue per round (bisa lebih dari 1)
+	Issues []QCIssueInput `json:"issues"`
+
 	Status string `json:"status"`
 }
 
@@ -123,6 +139,10 @@ type QCFinishRequest struct {
 	// [qc-reason] keterangan defect (NG) / scrap dari round 3
 	DefectReason string `json:"defect_reason"`
 	ScrapReason  string `json:"scrap_reason"`
+
+	// [qc-issue-table] daftar reason/info NG & scrap (bisa lebih dari 1)
+	NGReasons    []QCReasonInput `json:"ng_reasons"`
+	ScrapReasons []QCReasonInput `json:"scrap_reasons"`
 }
 
 type FinishedGoodsResponse struct {

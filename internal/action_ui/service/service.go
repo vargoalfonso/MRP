@@ -889,9 +889,9 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 			Status:    strings.ToUpper(req.Status),
 			CheckedBy: performedBy,
 
-			// [qc-reason] jenis + detail issue dari round 1 / 2
-			IssueType: strings.TrimSpace(req.IssueType),
-			IssueNote: qcTrim255(req.IssueNote),
+			// [qc-issue-table] tipe + ringkasan issue dari round 1 / 2
+			IssueType: qcIssuePrimaryType(req),
+			IssueNote: qcTrim255(qcIssueSummary(req)),
 			CheckedAt: now,
 			CreatedAt: now,
 		}
@@ -1224,7 +1224,69 @@ func (s *service) saveQCReasons(
 	if err := add(reasonCode, defectNote, req.QtyDefect, 0); err != nil {
 		return err
 	}
-	return add("scrap", scrapNote, 0, req.QtyScrap)
+	if err := add("scrap", scrapNote, 0, req.QtyScrap); err != nil {
+		return err
+	}
+
+	// [qc-issue-table] simpan tiap baris issue (round 1/2) ke qc_defect_items
+	taskID2 := req.QCTaskID
+	for _, it := range req.Issues {
+		code := strings.TrimSpace(it.Issue)
+		text := qcTrim255(strings.TrimSpace(it.Detail))
+		if code == "" && text == "" && it.Qty <= 0 {
+			continue
+		}
+		if code == "" {
+			code = "issue"
+		}
+		row := models.QCDefectItem{
+			QCLogID:          qc.ID,
+			QCTaskID:         &taskID2,
+			WOID:             &item.WOID,
+			WOItemID:         &item.ID,
+			UniqCode:         qc.UniqCode,
+			DefectSource:     "issue",
+			DefectReasonCode: code,
+			DefectReasonText: text,
+			Qty:              it.Qty,
+			ProcessName:      qc.ProcessName,
+			ReportedBy:       performedBy,
+			ReportedAt:       now,
+		}
+		if err := tx.Create(&row).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// [qc-issue-table] tipe issue utama (baris pertama) untuk kolom ringkas qc_logs
+func qcIssuePrimaryType(req dto.QCSubmitRequest) string {
+	if len(req.Issues) > 0 {
+		return strings.TrimSpace(req.Issues[0].Issue)
+	}
+	return strings.TrimSpace(req.IssueType)
+}
+
+// [qc-issue-table] ringkasan semua issue -> "issue: detail (qty); ..."
+func qcIssueSummary(req dto.QCSubmitRequest) string {
+	if len(req.Issues) == 0 {
+		return req.IssueNote
+	}
+	parts := make([]string, 0, len(req.Issues))
+	for _, it := range req.Issues {
+		seg := strings.TrimSpace(it.Issue)
+		detail := strings.TrimSpace(it.Detail)
+		if detail != "" {
+			if seg != "" {
+				seg += ": "
+			}
+			seg += detail
+		}
+		seg = strings.TrimSpace(fmt.Sprintf("%s (%g)", seg, it.Qty))
+		parts = append(parts, seg)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, performedBy string) error {
@@ -1365,6 +1427,59 @@ func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, perform
 				"defect_reason": dr,
 				"scrap_reason":  sr,
 			}).Error; err != nil {
+				return err
+			}
+		}
+
+		// [qc-issue-table] Round 3: simpan Reason/Info NG & Scrap ke qc_defect_items
+		if len(req.NGReasons) > 0 || len(req.ScrapReasons) > 0 {
+			taskID3 := req.QCTaskID
+			qc3 := models.QCLog{
+				UUID:       uuid.New().String(),
+				QCTaskID:   &taskID3,
+				WOID:       &item.WOID,
+				WOItemID:   &item.ID,
+				UniqCode:   item.ItemUniqCode,
+				QCRound:    3,
+				QtyChecked: req.TotalProductionQty + req.NGDefectQty + req.TotalScrapInBox,
+				QtyDefect:  req.NGDefectQty,
+				QtyScrap:   req.TotalScrapInBox,
+				Status:     "FINISH",
+				CheckedBy:  performedBy,
+				CheckedAt:  now,
+				CreatedAt:  now,
+			}
+			if err := tx.Create(&qc3).Error; err != nil {
+				return err
+			}
+			saveReason := func(source string, rows []dto.QCReasonInput) error {
+				for _, r := range rows {
+					text := qcTrim255(strings.TrimSpace(r.Info))
+					if text == "" && r.Qty <= 0 {
+						continue
+					}
+					row := models.QCDefectItem{
+						QCLogID:          qc3.ID,
+						QCTaskID:         &taskID3,
+						WOID:             &item.WOID,
+						WOItemID:         &item.ID,
+						UniqCode:         item.ItemUniqCode,
+						DefectSource:     source,
+						DefectReasonText: text,
+						Qty:              r.Qty,
+						ReportedBy:       performedBy,
+						ReportedAt:       now,
+					}
+					if err := tx.Create(&row).Error; err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if err := saveReason("ng_reason", req.NGReasons); err != nil {
+				return err
+			}
+			if err := saveReason("scrap_reason", req.ScrapReasons); err != nil {
 				return err
 			}
 		}
