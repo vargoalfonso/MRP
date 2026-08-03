@@ -129,6 +129,8 @@ type QCDefectItem struct {
 	DefectReasonText string
 	QtyDefect        float64
 	QtyScrap         float64
+	// [qc-issue-table] qty eksplisit per baris issue/reason
+	Qty              float64
 	IsRepairable     bool
 	MachineID        *string
 	ProcessName      string
