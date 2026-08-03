@@ -44,6 +44,7 @@ type SupplierItem struct {
 	PcsPerKanban  *int64         `gorm:"column:pcs_per_kanban" json:"pcs_per_kanban,omitempty"`
 	CustomerCycle *string        `gorm:"column:customer_cycle;size:100" json:"customer_cycle,omitempty"`
 	Percentage    *float64       `gorm:"column:percentage;type:numeric(5,2)" json:"percentage,omitempty"`
+	CycleTime     *int64         `gorm:"column:cycle_time" json:"cycle_time,omitempty"`
 	PayloadJSON   datatypes.JSON `gorm:"column:payload_json;type:jsonb" json:"payload_json,omitempty"`
 	Status        string         `gorm:"size:20;not null;default:'active'" json:"status"`
 	CreatedAt     time.Time      `json:"created_at"`
@@ -67,6 +68,7 @@ type CreateSupplierItemRequest struct {
 	PcsPerKanban  string `json:"pcs_per_kanban" validate:"omitempty,max=50"`
 	CustomerCycle string `json:"customer_cycle" validate:"omitempty,max=100"`
 	Percentage    string `json:"percentage" validate:"omitempty,max=10"`
+	CycleTime     string `json:"cycle_time" validate:"omitempty,max=10"`
 	Status        string `json:"status" validate:"required,oneof=active inactive"`
 }
 
@@ -82,6 +84,7 @@ type UpdateSupplierItemRequest struct {
 	PcsPerKanban  string `json:"pcs_per_kanban" validate:"omitempty,max=50"`
 	CustomerCycle string `json:"customer_cycle" validate:"omitempty,max=100"`
 	Percentage    string `json:"percentage" validate:"omitempty,max=10"`
+	CycleTime     string `json:"cycle_time" validate:"omitempty,max=10"`
 	Status        string `json:"status" validate:"required,oneof=active inactive"`
 }
 
