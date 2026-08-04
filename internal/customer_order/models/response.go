@@ -15,6 +15,7 @@ type DocumentResponse struct {
 	DeliveryAddress    *string        `json:"delivery_address"`
 	Status             string         `json:"status"`
 	Notes              *string        `json:"notes"`
+	Remarks            *string        `json:"remarks"`
 	TotalQuantity      float64        `json:"total_quantity"`
 	TotalUniq          int            `json:"total_uniq"`
 	CreatedBy          string         `json:"created_by"`
@@ -75,6 +76,7 @@ func ToDocumentResponse(d *CustomerOrderDocument) DocumentResponse {
 		DeliveryAddress: d.DeliveryAddress,
 		Status:          d.Status,
 		Notes:           d.Notes,
+		Remarks:         d.Remarks,
 		CreatedBy:       d.CreatedBy,
 		CreatedAt:       d.CreatedAt,
 		UpdatedAt:       d.UpdatedAt,

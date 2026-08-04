@@ -7,6 +7,7 @@ type CreateOrderRequest struct {
 	DeliveryAddress string            `json:"delivery_address" validate:"omitempty"`
 	DeliveryDate    string            `json:"delivery_date" validate:"omitempty"`
 	Notes           string            `json:"notes" validate:"omitempty"`
+	Remarks         string            `json:"remarks" validate:"omitempty"`
 	Items           []CreateItemInput `json:"items" validate:"required,min=1,dive"`
 }
 
@@ -26,6 +27,7 @@ type UpdateOrderRequest struct {
 	DeliveryAddress string            `json:"delivery_address" validate:"omitempty"`
 	DeliveryDate    string            `json:"delivery_date" validate:"omitempty"`
 	Notes           string            `json:"notes" validate:"omitempty"`
+	Remarks         string            `json:"remarks" validate:"omitempty"`
 	Items           []UpdateItemInput `json:"items" validate:"required,min=1,dive"`
 }
 

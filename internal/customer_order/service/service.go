@@ -64,6 +64,17 @@ func (s *service) Create(ctx context.Context, req models.CreateOrderRequest, cre
 	if v := strings.TrimSpace(req.Notes); v != "" {
 		doc.Notes = &v
 	}
+	if v := strings.TrimSpace(req.Remarks); v != "" {
+		doc.Remarks = &v
+	}
+
+	// Automation marker: if the special instructions (notes) carry an
+	// external_ref, use it verbatim as the document number instead of
+	// auto-generating one. Example special instruction value:
+	//   external_ref=0053/BTI/BTI-M-016/DN/VIII/2026; client=BTI; source=...
+	if ref := parseExternalRef(req.Notes); ref != "" {
+		doc.DocumentNumber = ref
+	}
 
 	for i, it := range req.Items {
 		snap, err := s.repo.GetItemSnapshot(ctx, it.ItemUniqCode)
@@ -175,6 +186,7 @@ func (s *service) Update(ctx context.Context, id string, req models.UpdateOrderR
 	doc.ContactPerson = optionalString(req.ContactPerson)
 	doc.DeliveryAddress = optionalString(req.DeliveryAddress)
 	doc.Notes = optionalString(req.Notes)
+	doc.Remarks = optionalString(req.Remarks)
 	if doc.DocumentType == "DN" {
 		doc.DocumentDate = resolveUpdateDocumentDate(req)
 	}
@@ -326,4 +338,19 @@ func optionalString(v string) *string {
 		return nil
 	}
 	return &v
+}
+
+// parseExternalRef extracts the external reference value from a special
+// instructions string produced by automation. It looks for a segment shaped
+// like "external_ref=<value>" (segments are separated by ';') and returns the
+// trimmed <value>. It returns an empty string when no external_ref is present.
+func parseExternalRef(notes string) string {
+	const key = "external_ref="
+	for _, seg := range strings.Split(notes, ";") {
+		seg = strings.TrimSpace(seg)
+		if len(seg) >= len(key) && strings.EqualFold(seg[:len(key)], key) {
+			return strings.TrimSpace(seg[len(key):])
+		}
+	}
+	return ""
 }
