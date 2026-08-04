@@ -64,6 +64,10 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierItemReque
 	if err != nil {
 		return nil, err
 	}
+	cycleTime, err := parseOptionalInt64(req.CycleTime, "cycle_time")
+	if err != nil {
+		return nil, err
+	}
 
 	payloadJSON, err := normalizePayloadJSON(rawPayload)
 	if err != nil {
@@ -84,6 +88,7 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierItemReque
 		PcsPerKanban:  pcsPerKanban,
 		CustomerCycle: models.NormalizeOptionalString(toOptionalString(req.CustomerCycle)),
 		Percentage:    percentage,
+		CycleTime:     cycleTime,
 		PayloadJSON:   payloadJSON,
 		Status:        normalizeStatus(req.Status),
 	}
@@ -169,6 +174,10 @@ func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupp
 	if err != nil {
 		return nil, err
 	}
+	cycleTime, err := parseOptionalInt64(req.CycleTime, "cycle_time")
+	if err != nil {
+		return nil, err
+	}
 
 	payloadJSON, err := normalizePayloadJSON(rawPayload)
 	if err != nil {
@@ -187,6 +196,7 @@ func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupp
 	item.PcsPerKanban = pcsPerKanban
 	item.CustomerCycle = models.NormalizeOptionalString(toOptionalString(req.CustomerCycle))
 	item.Percentage = percentage
+	item.CycleTime = cycleTime
 	item.PayloadJSON = payloadJSON
 	item.Status = normalizeStatus(req.Status)
 
