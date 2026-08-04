@@ -125,7 +125,7 @@ type BulkFromPRLRequest struct {
 	PrlID         string          `json:"prl_id"         validate:"required"`
 	BudgetSubtype string          `json:"budget_subtype" validate:"required,oneof=adhoc regular"`
 	Period        string          `json:"period"         validate:"required"`
-	Items         []BulkItemInput `json:"items"          validate:"required,min=1,dive"`
+	Items         []BulkItemInput `json:"items"          validate:"omitempty,dive"`
 }
 
 // BulkItemInput is one UNIQ row from Step 2, with one or more supplier allocations.
