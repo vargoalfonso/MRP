@@ -12,7 +12,7 @@ func (c *Client) Predict(ctx context.Context, req PredictRequest) (*PredictRespo
 		return nil, err
 	}
 	var resp PredictResponse
-	err = c.do(ctx, "POST", "/predict", body, "application/json", &resp)
+	err = c.doLong(ctx, "POST", "/predict", body, "application/json", &resp)
 	if err != nil {
 		return nil, err
 	}
