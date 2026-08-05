@@ -24,24 +24,28 @@ type UploadDatasetRequest struct {
 
 // TrainGlobalRequest is the handler input for triggering a global training.
 type TrainGlobalRequest struct {
-	RequestID string `json:"request_id" validate:"required"`
-	Domain    string `json:"domain" validate:"required"`
-	DatasetID string `json:"dataset_id" validate:"required"`
-	FineTune  bool   `json:"fine_tune"`
-	TimeLimit int    `json:"time_limit"`
-	Presets   string `json:"presets,omitempty"`
+	RequestID     string `json:"request_id" validate:"required"`
+	Domain        string `json:"domain" validate:"required"`
+	DatasetID     string `json:"dataset_id" validate:"required"`
+	FineTune      bool   `json:"fine_tune"`
+	TimeLimit     int    `json:"time_limit"`
+	Presets       string `json:"presets,omitempty"`
+	// SelectedModel: Chronos2 | RandomForest | Arima (empty = default Chronos2)
+	SelectedModel string `json:"selected_model,omitempty"`
 }
 
 // TrainCustomRequest is the handler input for triggering a custom (per-tenant/per-uniq) training.
 type TrainCustomRequest struct {
-	RequestID string `json:"request_id" validate:"required"`
-	Domain    string `json:"domain" validate:"required"`
-	DatasetID string `json:"dataset_id" validate:"required"`
-	Tenant    string `json:"tenant" validate:"required"`
-	Uniq      string `json:"uniq" validate:"required"`
-	FineTune  bool   `json:"fine_tune"`
-	TimeLimit int    `json:"time_limit"`
-	Presets   string `json:"presets,omitempty"`
+	RequestID     string `json:"request_id" validate:"required"`
+	Domain        string `json:"domain" validate:"required"`
+	DatasetID     string `json:"dataset_id" validate:"required"`
+	Tenant        string `json:"tenant" validate:"required"`
+	Uniq          string `json:"uniq" validate:"required"`
+	FineTune      bool   `json:"fine_tune"`
+	TimeLimit     int    `json:"time_limit"`
+	Presets       string `json:"presets,omitempty"`
+	// SelectedModel: Chronos2 | RandomForest | Arima (empty = default Chronos2)
+	SelectedModel string `json:"selected_model,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
@@ -87,4 +91,28 @@ type ObservationItemDTO struct {
 type FutureCovariateDTO struct {
 	CovariateName string    `json:"covariate_name"`
 	Values        []float64 `json:"values"`
+}
+
+// ---------------------------------------------------------------------------
+// Pull Dataset from ERP
+// ---------------------------------------------------------------------------
+
+// PullDatasetRequest is the handler input for pulling a dataset from ERP
+// (shared by PRL and DN; the domain is derived from the route).
+type PullDatasetRequest struct {
+	RequestID       string `json:"request_id" validate:"required"`
+	Scope           string `json:"scope"`
+	Tenant          string `json:"tenant"`
+	Uniq            string `json:"uniq"`
+	Name            string `json:"name"`
+	Version         string `json:"version"`
+	Freq            string `json:"freq"`
+	Status          string `json:"status"`
+	DateFrom        string `json:"date_from" validate:"required"`
+	DateTo          string `json:"date_to" validate:"required"`
+	TriggerTraining bool   `json:"trigger_training"`
+	FineTune        bool   `json:"fine_tune"`
+	TimeLimit       int    `json:"time_limit"`
+	Presets         string `json:"presets"`
+	SelectedModel   string `json:"selected_model"`
 }

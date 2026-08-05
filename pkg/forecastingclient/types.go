@@ -40,23 +40,25 @@ type UploadDatasetResponse struct {
 // ---------------------------------------------------------------------------
 
 type TrainGlobalRequest struct {
-	RequestID string `json:"request_id"`
-	Domain    string `json:"domain"`
-	DatasetID string `json:"dataset_id"`
-	FineTune  bool   `json:"fine_tune"`
-	TimeLimit int    `json:"time_limit"`
-	Presets   string `json:"presets,omitempty"`
+	RequestID     string `json:"request_id"`
+	Domain        string `json:"domain"`
+	DatasetID     string `json:"dataset_id"`
+	FineTune      bool   `json:"fine_tune"`
+	TimeLimit     int    `json:"time_limit"`
+	Presets       string `json:"presets,omitempty"`
+	SelectedModel string `json:"selected_model,omitempty"`
 }
 
 type TrainCustomRequest struct {
-	RequestID string `json:"request_id"`
-	Domain    string `json:"domain"`
-	DatasetID string `json:"dataset_id"`
-	Tenant    string `json:"tenant"`
-	Uniq      string `json:"uniq"`
-	FineTune  bool   `json:"fine_tune"`
-	TimeLimit int    `json:"time_limit"`
-	Presets   string `json:"presets,omitempty"`
+	RequestID     string `json:"request_id"`
+	Domain        string `json:"domain"`
+	DatasetID     string `json:"dataset_id"`
+	Tenant        string `json:"tenant"`
+	Uniq          string `json:"uniq"`
+	FineTune      bool   `json:"fine_tune"`
+	TimeLimit     int    `json:"time_limit"`
+	Presets       string `json:"presets,omitempty"`
+	SelectedModel string `json:"selected_model,omitempty"`
 }
 
 type TrainResponse struct {
@@ -258,4 +260,52 @@ type ForecastItem struct {
 	P10       float64 `json:"0.1,omitempty"`
 	P50       float64 `json:"0.5,omitempty"`
 	P90       float64 `json:"0.9,omitempty"`
+}
+
+// ---------------------------------------------------------------------------
+// Datasets - Pull from ERP
+// ---------------------------------------------------------------------------
+
+// PullDatasetRequest is the JSON body for /admin/datasets/pull/{prl,dn}.
+type PullDatasetRequest struct {
+	RequestID       string `json:"request_id"`
+	Scope           string `json:"scope,omitempty"`
+	Tenant          string `json:"tenant,omitempty"`
+	Uniq            string `json:"uniq,omitempty"`
+	Name            string `json:"name,omitempty"`
+	Version         string `json:"version,omitempty"`
+	Freq            string `json:"freq,omitempty"`
+	Status          string `json:"status,omitempty"`
+	DateFrom        string `json:"date_from"`
+	DateTo          string `json:"date_to"`
+	TriggerTraining bool   `json:"trigger_training,omitempty"`
+	FineTune        bool   `json:"fine_tune,omitempty"`
+	TimeLimit       int    `json:"time_limit,omitempty"`
+	Presets         string `json:"presets,omitempty"`
+	SelectedModel   string `json:"selected_model,omitempty"`
+}
+
+// DatasetBoundsResponse is returned by /admin/datasets/pull/{prl,dn}/bounds.
+type DatasetBoundsResponse struct {
+	Domain      string `json:"domain"`
+	Scope       string `json:"scope"`
+	Tenant      string `json:"tenant"`
+	Uniq        string `json:"uniq"`
+	Status      string `json:"status"`
+	Granularity string `json:"granularity"`
+	Min         string `json:"min"`
+	Max         string `json:"max"`
+	MinLabel    string `json:"min_label"`
+	MaxLabel    string `json:"max_label"`
+	RowCount    int64  `json:"row_count"`
+	UniqCount   int64  `json:"uniq_count"`
+	Note        string `json:"note"`
+}
+
+// PullBoundsOptions are query filters for the bounds endpoints.
+type PullBoundsOptions struct {
+	Scope  string
+	Tenant string
+	Uniq   string
+	Status string
 }

@@ -48,6 +48,20 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 			roleMiddleware.RequirePermission(m.roleService, "forecasting", "create"),
 			m.base.RunAction(m.handler.UploadDataset))
 
+		// Dataset pull from ERP
+		g.POST("/datasets/pull/prl",
+			roleMiddleware.RequirePermission(m.roleService, "forecasting", "create"),
+			m.base.RunAction(m.handler.PullPRL))
+		g.POST("/datasets/pull/dn",
+			roleMiddleware.RequirePermission(m.roleService, "forecasting", "create"),
+			m.base.RunAction(m.handler.PullDN))
+		g.GET("/datasets/pull/prl/bounds",
+			roleMiddleware.RequirePermission(m.roleService, "forecasting", "view"),
+			m.base.RunAction(m.handler.GetPRLBounds))
+		g.GET("/datasets/pull/dn/bounds",
+			roleMiddleware.RequirePermission(m.roleService, "forecasting", "view"),
+			m.base.RunAction(m.handler.GetDNBounds))
+
 		// Training
 		g.POST("/train/global",
 			roleMiddleware.RequirePermission(m.roleService, "forecasting", "create"),

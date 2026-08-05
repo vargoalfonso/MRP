@@ -16,6 +16,12 @@ type Service interface {
 	// Dataset
 	UploadDataset(ctx context.Context, req models.UploadDatasetRequest, fileName string, fileBytes []byte) (*forecastingclient.UploadDatasetResponse, error)
 
+	// Dataset - Pull from ERP
+	PullPRL(ctx context.Context, req models.PullDatasetRequest, createdBy string) (*forecastingclient.UploadDatasetResponse, error)
+	PullDN(ctx context.Context, req models.PullDatasetRequest, createdBy string) (*forecastingclient.UploadDatasetResponse, error)
+	GetPRLBounds(ctx context.Context, opts forecastingclient.PullBoundsOptions) (*forecastingclient.DatasetBoundsResponse, error)
+	GetDNBounds(ctx context.Context, opts forecastingclient.PullBoundsOptions) (*forecastingclient.DatasetBoundsResponse, error)
+
 	// Training
 	TrainGlobal(ctx context.Context, req models.TrainGlobalRequest, createdBy string) (*forecastingclient.TrainResponse, error)
 	TrainCustom(ctx context.Context, req models.TrainCustomRequest, createdBy string) (*forecastingclient.TrainResponse, error)
@@ -89,18 +95,108 @@ func (s *service) UploadDataset(ctx context.Context, req models.UploadDatasetReq
 }
 
 // ---------------------------------------------------------------------------
+// Dataset - Pull from ERP
+// ---------------------------------------------------------------------------
+
+func (s *service) PullPRL(ctx context.Context, req models.PullDatasetRequest, createdBy string) (*forecastingclient.UploadDatasetResponse, error) {
+	return s.pullDataset(ctx, "prl", req, createdBy)
+}
+
+func (s *service) PullDN(ctx context.Context, req models.PullDatasetRequest, createdBy string) (*forecastingclient.UploadDatasetResponse, error) {
+	return s.pullDataset(ctx, "dn", req, createdBy)
+}
+
+func (s *service) pullDataset(ctx context.Context, domain string, req models.PullDatasetRequest, createdBy string) (*forecastingclient.UploadDatasetResponse, error) {
+	clientReq := forecastingclient.PullDatasetRequest{
+		RequestID:       req.RequestID,
+		Scope:           req.Scope,
+		Tenant:          req.Tenant,
+		Uniq:            req.Uniq,
+		Name:            req.Name,
+		Version:         req.Version,
+		Freq:            req.Freq,
+		Status:          req.Status,
+		DateFrom:        req.DateFrom,
+		DateTo:          req.DateTo,
+		TriggerTraining: req.TriggerTraining,
+		FineTune:        req.FineTune,
+		TimeLimit:       req.TimeLimit,
+		Presets:         req.Presets,
+		SelectedModel:   req.SelectedModel,
+	}
+
+	var resp *forecastingclient.UploadDatasetResponse
+	var err error
+	if domain == "prl" {
+		resp, err = s.client.PullPRL(ctx, clientReq)
+	} else {
+		resp, err = s.client.PullDN(ctx, clientReq)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// If a training run was triggered as part of the pull, persist it so it
+	// appears in the monitor list like a normal training run.
+	if req.TriggerTraining && resp.TrainingRunID != nil && *resp.TrainingRunID != "" {
+		scope := req.Scope
+		if scope == "" {
+			scope = "global"
+		}
+		run := &models.ForecastingTrainingRun{
+			UUID:           uuid.New().String(),
+			RequestID:      req.RequestID,
+			TrainingRunID:  *resp.TrainingRunID,
+			Domain:         domain,
+			Scope:          scope,
+			Tenant:         req.Tenant,
+			Uniq:           req.Uniq,
+			DatasetID:      resp.DatasetID,
+			DatasetName:    resp.Name,
+			DatasetVersion: resp.Version,
+			SourceMode:     resp.SourceMode,
+			GCSURI:         resp.GCSURI,
+			RowCount:       resp.RowCount,
+			ItemCount:      resp.ItemCount,
+			FineTune:       req.FineTune,
+			TimeLimit:      req.TimeLimit,
+			Presets:        req.Presets,
+			Status:         "PENDING",
+			CreatedBy:      createdBy,
+		}
+		if resp.OperationName != nil {
+			run.OperationName = *resp.OperationName
+		}
+		if err := s.repo.CreateTrainingRun(ctx, run); err != nil {
+			return nil, err
+		}
+	}
+
+	return resp, nil
+}
+
+func (s *service) GetPRLBounds(ctx context.Context, opts forecastingclient.PullBoundsOptions) (*forecastingclient.DatasetBoundsResponse, error) {
+	return s.client.GetPRLBounds(ctx, opts)
+}
+
+func (s *service) GetDNBounds(ctx context.Context, opts forecastingclient.PullBoundsOptions) (*forecastingclient.DatasetBoundsResponse, error) {
+	return s.client.GetDNBounds(ctx, opts)
+}
+
+// ---------------------------------------------------------------------------
 // Training
 // ---------------------------------------------------------------------------
 
 func (s *service) TrainGlobal(ctx context.Context, req models.TrainGlobalRequest, createdBy string) (*forecastingclient.TrainResponse, error) {
 	// Call external API
 	externalResp, err := s.client.TrainGlobal(ctx, forecastingclient.TrainGlobalRequest{
-		RequestID: req.RequestID,
-		Domain:    req.Domain,
-		DatasetID: req.DatasetID,
-		FineTune:  req.FineTune,
-		TimeLimit: req.TimeLimit,
-		Presets:   req.Presets,
+		RequestID:     req.RequestID,
+		Domain:        req.Domain,
+		DatasetID:     req.DatasetID,
+		FineTune:      req.FineTune,
+		TimeLimit:     req.TimeLimit,
+		Presets:       req.Presets,
+		SelectedModel: req.SelectedModel,
 	})
 	if err != nil {
 		return nil, err
@@ -133,14 +229,15 @@ func (s *service) TrainGlobal(ctx context.Context, req models.TrainGlobalRequest
 
 func (s *service) TrainCustom(ctx context.Context, req models.TrainCustomRequest, createdBy string) (*forecastingclient.TrainResponse, error) {
 	externalResp, err := s.client.TrainCustom(ctx, forecastingclient.TrainCustomRequest{
-		RequestID: req.RequestID,
-		Domain:    req.Domain,
-		DatasetID: req.DatasetID,
-		Tenant:    req.Tenant,
-		Uniq:      req.Uniq,
-		FineTune:  req.FineTune,
-		TimeLimit: req.TimeLimit,
-		Presets:   req.Presets,
+		RequestID:     req.RequestID,
+		Domain:        req.Domain,
+		DatasetID:     req.DatasetID,
+		Tenant:        req.Tenant,
+		Uniq:          req.Uniq,
+		FineTune:      req.FineTune,
+		TimeLimit:     req.TimeLimit,
+		Presets:       req.Presets,
+		SelectedModel: req.SelectedModel,
 	})
 	if err != nil {
 		return nil, err
