@@ -41,6 +41,7 @@ type IRepository interface {
 	GetTopIssues(ctx context.Context, filter Filter, limit int) ([]models.IssueSummary, error)
 	CountPendingRework(ctx context.Context) (int64, error)
 	ListProductionQC(ctx context.Context, filter Filter) (*models.ProductionQCListResponse, error)
+	GetProductionQCDetail(ctx context.Context, qcLogID int64) (*models.ProductionQCDetailResponse, error)
 	ListIncomingQC(ctx context.Context, filter Filter) (*models.IncomingQCListResponse, error)
 	ListProductReturnQC(ctx context.Context, filter Filter) (*models.ProductReturnQCListResponse, error)
 	ListDefects(ctx context.Context, filter Filter) (*models.DefectListResponse, error)
@@ -159,7 +160,101 @@ func (r *repository) ListProductionQC(ctx context.Context, filter Filter) (*mode
 	if err := r.db.WithContext(ctx).Raw(query, args...).Scan(&items).Error; err != nil {
 		return nil, apperror.Internal("list production qc: " + err.Error())
 	}
+	// [qc-issue-detail] lampirkan daftar Issue/Reason per baris untuk tooltip.
+	logIDs := make([]int64, 0, len(items))
+	for _, it := range items {
+		logIDs = append(logIDs, it.QCLogID)
+	}
+	issuesByLog, err := r.loadProductionIssues(ctx, logIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].Issues = issuesByLog[items[i].QCLogID]
+	}
 	return &models.ProductionQCListResponse{Items: items, Pagination: buildPagination(total, filter.Page, filter.Limit)}, nil
+}
+
+// [qc-issue-detail] Ambil daftar Issue/Reason (qc_defect_items) untuk sekumpulan
+// qc_log_id, dikelompokkan per qc_log_id.
+func (r *repository) loadProductionIssues(ctx context.Context, logIDs []int64) (map[int64][]models.ProductionQCIssue, error) {
+	result := make(map[int64][]models.ProductionQCIssue)
+	if len(logIDs) == 0 {
+		return result, nil
+	}
+	type issueRow struct {
+		QCLogID          int64
+		DefectSource     string
+		DefectReasonCode string
+		DefectReasonText string
+		Qty              float64
+		QtyDefect        float64
+		QtyScrap         float64
+		ProcessName      string
+	}
+	var rows []issueRow
+	if err := r.db.WithContext(ctx).
+		Table("qc_defect_items").
+		Where("qc_log_id IN ?", logIDs).
+		Where("COALESCE(defect_reason_text, '') <> '' OR qty > 0 OR qty_defect > 0 OR qty_scrap > 0").
+		Order("qc_log_id ASC, id ASC").
+		Select("qc_log_id, defect_source, defect_reason_code, defect_reason_text, qty, qty_defect, qty_scrap, process_name").
+		Scan(&rows).Error; err != nil {
+		return nil, apperror.Internal("load production qc issues: " + err.Error())
+	}
+	for _, rr := range rows {
+		result[rr.QCLogID] = append(result[rr.QCLogID], models.ProductionQCIssue{
+			Source:      rr.DefectSource,
+			ReasonCode:  rr.DefectReasonCode,
+			ReasonText:  rr.DefectReasonText,
+			Qty:         rr.Qty,
+			QtyDefect:   rr.QtyDefect,
+			QtyScrap:    rr.QtyScrap,
+			ProcessName: rr.ProcessName,
+		})
+	}
+	return result, nil
+}
+
+// [qc-issue-detail] Detail satu baris Production QC berdasarkan qc_log_id.
+func (r *repository) GetProductionQCDetail(ctx context.Context, qcLogID int64) (*models.ProductionQCDetailResponse, error) {
+	query := `
+		SELECT
+			ql.id AS qc_log_id,
+			TO_CHAR(ql.checked_at::date, 'YYYY-MM-DD') AS report_date,
+			COALESCE(wo.wo_number, '') AS wo_number,
+			ql.uniq_code,
+			COALESCE(woi.kanban_number, '') AS kanban_number,
+			ql.qty_checked AS items_checked,
+			(
+				SELECT NULLIF(qdi.defect_reason_text, '')
+				FROM qc_defect_items qdi
+				WHERE qdi.qc_log_id = ql.id
+				ORDER BY qdi.qty_defect DESC, qdi.id ASC
+				LIMIT 1
+			) AS issue_label,
+			ql.qty_defect,
+			ql.qty_scrap,
+			CASE WHEN ql.qty_checked > 0 THEN ROUND((ql.qty_pass / ql.qty_checked) * 100, 2) ELSE 0 END AS quality_rate_percent,
+			CASE WHEN UPPER(ql.status) IN ('PASSED', 'APPROVED') THEN 'passed' ELSE 'not_passed' END AS status
+		FROM qc_logs ql
+		LEFT JOIN work_orders wo ON wo.id = ql.wo_id
+		LEFT JOIN work_order_items woi ON woi.id = ql.wo_item_id
+		WHERE ql.id = ?
+		LIMIT 1`
+	var item models.ProductionQCItem
+	if err := r.db.WithContext(ctx).Raw(query, qcLogID).Scan(&item).Error; err != nil {
+		return nil, apperror.Internal("get production qc detail: " + err.Error())
+	}
+	if item.QCLogID == 0 {
+		return nil, apperror.NotFound("production qc tidak ditemukan")
+	}
+	issuesByLog, err := r.loadProductionIssues(ctx, []int64{qcLogID})
+	if err != nil {
+		return nil, err
+	}
+	item.Issues = issuesByLog[qcLogID]
+	return &models.ProductionQCDetailResponse{Item: item}, nil
 }
 
 func (r *repository) ListIncomingQC(ctx context.Context, filter Filter) (*models.IncomingQCListResponse, error) {

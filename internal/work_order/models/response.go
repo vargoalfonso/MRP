@@ -115,6 +115,13 @@ type WorkOrderDetailItem struct {
 	QRDataURL       *string         `json:"qr_data_url"`
 }
 
+// [wo-defect-reasons] Satu baris Reason/Info dari QC (NG atau Scrap) round 3.
+type WorkOrderDefectReasonInfo struct {
+	Source string  `json:"source"` // ng_reason | scrap_reason
+	Info   string  `json:"info"`
+	Qty    float64 `json:"qty"`
+}
+
 // WorkOrderDetailResponse is returned by GET /work-orders/:id.
 type WorkOrderDetailResponse struct {
 	ID             string  `json:"id"` // WO UUID
@@ -128,6 +135,9 @@ type WorkOrderDetailResponse struct {
 	CreatedByName  *string `json:"created_by_name"`
 	Notes          *string `json:"notes"`
 	DefectReason   *string `json:"defect_reason"` // keterangan NG dari QC (khusus WO Rework)
+	// [wo-defect-reasons] Semua Reason/Info (NG & Scrap) round 3 dari QC Finish
+	// WO sumber; dipakai untuk tooltip di halaman detail WO Rework.
+	DefectReasons []WorkOrderDefectReasonInfo `json:"defect_reasons"`
 	// [wo-estimated-time] Estimasi waktu produksi (menit) + komponen perhitungannya.
 	EstimatedTimeMinutes *float64              `json:"estimated_time_minutes"`
 	CycleTimeMin         *float64              `json:"cycle_time_min"`

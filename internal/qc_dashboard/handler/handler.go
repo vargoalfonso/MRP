@@ -52,6 +52,18 @@ func (h *HTTPHandler) ListProductionQC(ctx *app.Context) *app.CostumeResponse {
 	return app.NewSuccess(ctx, http.StatusOK, data)
 }
 
+func (h *HTTPHandler) GetProductionQCDetail(ctx *app.Context) *app.CostumeResponse {
+	qcLogID, err := strconv.ParseInt(ctx.Param("qc_log_id"), 10, 64)
+	if err != nil {
+		return app.NewError(ctx, apperror.BadRequest("qc_log_id tidak valid"))
+	}
+	data, err := h.svc.GetProductionQCDetail(ctx.Request.Context(), qcLogID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return app.NewSuccess(ctx, http.StatusOK, data)
+}
+
 func (h *HTTPHandler) ListIncomingQC(ctx *app.Context) *app.CostumeResponse {
 	p := pagination.QCDashboardPagination(ctx)
 	data, err := h.svc.ListIncomingQC(ctx.Request.Context(), qcDashboardRepo.Filter{

@@ -1302,27 +1302,74 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 
 	// [defect-reason] Untuk WO Rework, ambil keterangan defect (NG) dari QC
 	// Final Inspection WO sumber (reference_wo) agar tampil di ERP detail WO.
-	var defectReason *string
-	if strings.EqualFold(strings.TrimSpace(wo.WoType), "Rework") && wo.ReferenceWO != nil && strings.TrimSpace(*wo.ReferenceWO) != "" {
-		uniqCodes := make([]string, 0, len(itemRows))
-		for _, it := range itemRows {
-			if strings.TrimSpace(it.ItemUniqCode) != "" {
-				uniqCodes = append(uniqCodes, it.ItemUniqCode)
-			}
+	// [wo-defect-reason-scope] WO Rework: Reason/Info Defect harus di-scope ke kanban
+	// SUMBER (wo_item) yang memicu rework, bukan gabungan semua kanban dengan uniq yang
+	// sama. Kunci akurat = qc_defect_items.wo_item_id == wo.ReferenceWOItemID.
+	// Fallback ke uniq_code (perilaku lama) hanya untuk rework lama yang dibuat sebelum
+	// kolom reference_wo_item_id ada.
+	uniqCodesR := make([]string, 0, len(itemRows))
+	for _, it := range itemRows {
+		if strings.TrimSpace(it.ItemUniqCode) != "" {
+			uniqCodesR = append(uniqCodesR, it.ItemUniqCode)
 		}
+	}
+	scopeReasonQuery := func(q *gorm.DB) (*gorm.DB, bool) {
+		if wo.ReferenceWOItemID != nil {
+			return q.Where("qdi.wo_item_id = ?", *wo.ReferenceWOItemID), true
+		}
+		if wo.ReferenceWO != nil && strings.TrimSpace(*wo.ReferenceWO) != "" {
+			q = q.Joins("JOIN work_orders AS swo ON swo.id = qdi.wo_id").
+				Where("swo.wo_number = ?", strings.TrimSpace(*wo.ReferenceWO))
+			if len(uniqCodesR) > 0 {
+				q = q.Where("qdi.uniq_code IN ?", uniqCodesR)
+			}
+			return q, true
+		}
+		return q, false
+	}
+
+	var defectReason *string
+	if strings.EqualFold(strings.TrimSpace(wo.WoType), "Rework") {
 		reasonQuery := s.db.WithContext(ctx).
 			Table("qc_defect_items AS qdi").
-			Joins("JOIN work_orders AS swo ON swo.id = qdi.wo_id").
-			Where("swo.wo_number = ?", strings.TrimSpace(*wo.ReferenceWO)).
 			Where("qdi.qty_defect > 0").
 			Where("COALESCE(qdi.defect_reason_text, '') <> ''")
-		if len(uniqCodes) > 0 {
-			reasonQuery = reasonQuery.Where("qdi.uniq_code IN ?", uniqCodes)
+		if scoped, ok := scopeReasonQuery(reasonQuery); ok {
+			var reasons []string
+			if err := scoped.Order("qdi.reported_at DESC").Limit(1).Pluck("qdi.defect_reason_text", &reasons).Error; err == nil && len(reasons) > 0 {
+				if trimmed := strings.TrimSpace(reasons[0]); trimmed != "" {
+					defectReason = &trimmed
+				}
+			}
 		}
-		var reasons []string
-		if err := reasonQuery.Order("qdi.reported_at DESC").Limit(1).Pluck("qdi.defect_reason_text", &reasons).Error; err == nil && len(reasons) > 0 {
-			if trimmed := strings.TrimSpace(reasons[0]); trimmed != "" {
-				defectReason = &trimmed
+	}
+
+	// [wo-defect-reasons] Ambil semua Reason/Info (NG & Scrap) round 3 dari QC
+	// Finish WO sumber untuk ditampilkan sebagai tooltip di detail WO Rework.
+	var defectReasons []woModels.WorkOrderDefectReasonInfo
+	if strings.EqualFold(strings.TrimSpace(wo.WoType), "Rework") {
+		type reasonRow struct {
+			DefectSource     string
+			DefectReasonText string
+			Qty              float64
+		}
+		listQuery := s.db.WithContext(ctx).
+			Table("qc_defect_items AS qdi").
+			Where("qdi.defect_source IN ?", []string{"ng_reason", "scrap_reason"}).
+			Where("COALESCE(qdi.defect_reason_text, '') <> '' OR qdi.qty > 0")
+		if scoped, ok := scopeReasonQuery(listQuery); ok {
+			var rrows []reasonRow
+			if err := scoped.
+				Order("qdi.reported_at DESC, qdi.id ASC").
+				Select("qdi.defect_source AS defect_source, qdi.defect_reason_text AS defect_reason_text, qdi.qty AS qty").
+				Scan(&rrows).Error; err == nil {
+				for _, rr := range rrows {
+					defectReasons = append(defectReasons, woModels.WorkOrderDefectReasonInfo{
+						Source: rr.DefectSource,
+						Info:   strings.TrimSpace(rr.DefectReasonText),
+						Qty:    rr.Qty,
+					})
+				}
 			}
 		}
 	}
@@ -1355,6 +1402,7 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 		CreatedByName:        wo.CreatedByName,
 		Notes:                wo.Notes,
 		DefectReason:         defectReason,
+		DefectReasons:        defectReasons,
 		EstimatedTimeMinutes: wo.EstimatedTimeMinutes,
 		CycleTimeMin:         wo.CycleTimeMin,
 		MachineCapacity:      wo.MachineCapacity,
