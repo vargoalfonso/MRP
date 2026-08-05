@@ -257,9 +257,9 @@ type ForecastItem struct {
 	ItemID    string  `json:"item_id"`
 	Timestamp string  `json:"timestamp"`
 	Mean      float64 `json:"mean"`
-	P10       float64 `json:"0.1,omitempty"`
+	P25       float64 `json:"0.25,omitempty"`
 	P50       float64 `json:"0.5,omitempty"`
-	P90       float64 `json:"0.9,omitempty"`
+	P75       float64 `json:"0.75,omitempty"`
 }
 
 // ---------------------------------------------------------------------------

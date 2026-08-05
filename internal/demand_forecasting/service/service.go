@@ -504,9 +504,9 @@ func (s *service) Predict(ctx context.Context, req models.PredictRequest, create
 			ItemID:    f.ItemID,
 			Timestamp: f.Timestamp,
 			Mean:      f.Mean,
-			P10:       f.P10,
+			P25:       f.P25,
 			P50:       f.P50,
-			P90:       f.P90,
+			P75:       f.P75,
 		}
 		totalMean += f.Mean
 	}
