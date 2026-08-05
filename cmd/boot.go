@@ -451,6 +451,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		BasicAuthUser: cfg.ForecastingAPIUser,
 		BasicAuthPass: cfg.ForecastingAPIPass,
 		Timeout:       cfg.ForecastingAPITimeout,
+		LongTimeout:   cfg.ForecastingAPILongTimeout,
 	})
 	dfRepo := demandForecastingRepository.New(db)
 	dfSvc := demandForecastingService.New(dfRepo, forecastingClient)

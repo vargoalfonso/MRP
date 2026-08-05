@@ -24,21 +24,26 @@ type Options struct {
 	BasicAuthUser string // if set, Basic Auth header is sent
 	BasicAuthPass string
 	Timeout       time.Duration // per-request timeout; defaults to 60s
+	LongTimeout   time.Duration // longer timeout for training triggers; defaults to 120s
 	HTTPClient    *http.Client  // optional; defaults to http.DefaultClient
 }
 
 // Client wraps HTTP calls to the external forecasting pipeline API.
 type Client struct {
-	baseURL    string
-	basicUser  string
-	basicPass  string
-	httpClient *http.Client
+	baseURL     string
+	basicUser   string
+	basicPass   string
+	httpClient  *http.Client
+	longTimeout time.Duration
 }
 
 // New builds a Forecasting client from Options.
 func New(opts Options) *Client {
 	if opts.Timeout == 0 {
 		opts.Timeout = defaultTimeout
+	}
+	if opts.LongTimeout == 0 {
+		opts.LongTimeout = longTimeout
 	}
 	hc := opts.HTTPClient
 	if hc == nil {
@@ -47,10 +52,11 @@ func New(opts Options) *Client {
 		}
 	}
 	return &Client{
-		baseURL:    opts.BaseURL,
-		basicUser:  opts.BasicAuthUser,
-		basicPass:  opts.BasicAuthPass,
-		httpClient: hc,
+		baseURL:     opts.BaseURL,
+		basicUser:   opts.BasicAuthUser,
+		basicPass:   opts.BasicAuthPass,
+		httpClient:  hc,
+		longTimeout: opts.LongTimeout,
 	}
 }
 
@@ -110,12 +116,13 @@ func (c *Client) do(ctx context.Context, method, path string, bodyBytes []byte, 
 
 // doLong is like do but uses the long timeout for training triggers etc.
 func (c *Client) doLong(ctx context.Context, method, path string, bodyBytes []byte, contentType string, dest interface{}) error {
-	hc := &http.Client{Timeout: longTimeout}
+	hc := &http.Client{Timeout: c.longTimeout}
 	cli := &Client{
-		baseURL:    c.baseURL,
-		basicUser:  c.basicUser,
-		basicPass:  c.basicPass,
-		httpClient: hc,
+		baseURL:     c.baseURL,
+		basicUser:   c.basicUser,
+		basicPass:   c.basicPass,
+		httpClient:  hc,
+		longTimeout: c.longTimeout,
 	}
 	return cli.do(ctx, method, path, bodyBytes, contentType, dest)
 }
