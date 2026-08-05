@@ -1176,7 +1176,28 @@ func (s *service) resolvePackingTx(ctx context.Context, tx *gorm.DB, packingNumb
 		return nil, apperror.Internal("resolve packing number: " + err.Error())
 	}
 	if strings.TrimSpace(row.UniqCode) == "" {
-		return nil, apperror.NotFound("packing number tidak ditemukan di delivery note")
+		// [so-fg-packing] Finished Goods di-scan dari kanban/packing list Work
+		// Order (work_order_items.kanban_number), bukan dari delivery note. Kalau
+		// packing tidak ada di delivery_note_items, resolve dari work_order_items
+		// supaya scan packing FG (yang belum punya DN) tetap ketemu. dn_number
+		// diisi dari DN yang cocok bila sudah ada, kalau belum dibiarkan kosong.
+		var woRow packingScanRow
+		if err := tx.WithContext(ctx).
+			Table("work_order_items woi").
+			Select("woi.kanban_number AS packing_number, woi.item_uniq_code AS item_uniq_code, COALESCE(NULLIF(kp.kanban_qty, 0), NULLIF(woi.quantity, 0), 0) AS quantity, COALESCE(dn.dn_number, '') AS dn_number").
+			Joins("LEFT JOIN delivery_note_items dni ON dni.packing_number = woi.kanban_number").
+			Joins("LEFT JOIN delivery_notes dn ON dn.id = dni.dn_id").
+			Joins("LEFT JOIN LATERAL (SELECT kanban_qty FROM kanban_parameters WHERE item_uniq_code = woi.item_uniq_code ORDER BY id DESC LIMIT 1) kp ON TRUE").
+			Where("woi.kanban_number = ?", packingNumber).
+			Order("woi.id DESC").
+			Limit(1).
+			Scan(&woRow).Error; err != nil {
+			return nil, apperror.Internal("resolve packing number (work order): " + err.Error())
+		}
+		row = woRow
+	}
+	if strings.TrimSpace(row.UniqCode) == "" {
+		return nil, apperror.NotFound("packing number tidak ditemukan di delivery note maupun work order")
 	}
 
 	opt := &stockModels.PackingOption{PackingNumber: row.PackingNumber, DNNumber: row.DNNumber, UniqCode: row.UniqCode, MaxQty: row.Quantity}
@@ -1240,7 +1261,11 @@ func (s *service) applyPackingCount(ctx context.Context, tx *gorm.DB, entry *sto
 		return 0, false, apperror.Internal("load packing row: " + err.Error())
 	}
 	if row.ID == 0 {
-		return 0, false, apperror.NotFound("packing number tidak ditemukan saat approve")
+		// [so-fg-packing] Packing FG berasal dari work_order_items (kanban WO),
+		// belum tentu punya baris delivery_note_items. Terapkan hitung opname di
+		// work_order_items supaya alur approve FG delta-based sama seperti tipe
+		// inventory lain.
+		return s.applyPackingCountWO(ctx, tx, entry, packingNumber)
 	}
 	if entry.MaxQty != nil && entry.CountedQty > *entry.MaxQty {
 		return 0, false, apperror.BadRequest(fmt.Sprintf("counted qty melebihi batas. Maksimal %.2f untuk packing %s", *entry.MaxQty, packingNumber))
@@ -1259,6 +1284,48 @@ func (s *service) applyPackingCount(ctx context.Context, tx *gorm.DB, entry *sto
 		Where("id = ?", row.ID).
 		Updates(map[string]interface{}{"qty_opname": entry.CountedQty, "qty_opname_at": opnameAt, "updated_at": opnameAt}).Error; err != nil {
 		return 0, false, apperror.Internal("update packing qty opname: " + err.Error())
+	}
+	return delta, true, nil
+}
+
+// applyPackingCountWO menerapkan hasil hitung fisik untuk packing yang berasal
+// dari kanban/packing list Work Order (work_order_items). Nilai berjalan =
+// qty_opname kalau sudah pernah diopname, kalau belum pakai total_good_qty
+// (angka produksi WO). total_good_qty TIDAK diubah supaya data produksi utuh;
+// hasil opname disimpan terpisah di qty_opname. Mengembalikan delta supaya
+// total stok FG digeser sebesar delta itu saja (bukan overwrite total).
+func (s *service) applyPackingCountWO(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry, packingNumber string) (float64, bool, error) {
+	var row struct {
+		ID           int64    `gorm:"column:id"`
+		TotalGoodQty float64  `gorm:"column:total_good_qty"`
+		QtyOpname    *float64 `gorm:"column:qty_opname"`
+	}
+	if err := tx.WithContext(ctx).
+		Table("work_order_items").
+		Select("id, total_good_qty, qty_opname").
+		Where("kanban_number = ?", packingNumber).
+		Order("id DESC").
+		Limit(1).
+		Scan(&row).Error; err != nil {
+		return 0, false, apperror.Internal("load WO packing row: " + err.Error())
+	}
+	if row.ID == 0 {
+		return 0, false, apperror.NotFound("packing number tidak ditemukan saat approve")
+	}
+	if entry.MaxQty != nil && entry.CountedQty > *entry.MaxQty {
+		return 0, false, apperror.BadRequest(fmt.Sprintf("counted qty melebihi batas. Maksimal %.2f untuk packing %s", *entry.MaxQty, packingNumber))
+	}
+	previous := row.TotalGoodQty
+	if row.QtyOpname != nil {
+		previous = *row.QtyOpname
+	}
+	delta := entry.CountedQty - previous
+	opnameAt := time.Now()
+	if err := tx.WithContext(ctx).
+		Table("work_order_items").
+		Where("id = ?", row.ID).
+		Updates(map[string]interface{}{"qty_opname": entry.CountedQty, "qty_opname_at": opnameAt, "updated_at": opnameAt}).Error; err != nil {
+		return 0, false, apperror.Internal("update WO packing qty opname: " + err.Error())
 	}
 	return delta, true, nil
 }

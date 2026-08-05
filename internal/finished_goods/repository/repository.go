@@ -368,6 +368,8 @@ func (r *repository) ListPackingList(ctx context.Context, uniqCode string) ([]FG
 				woi.kanban_number AS packing_number,
 				COALESCE(woi.quantity, 0) AS quantity,
 				COALESCE(
+					-- [so-fg-packing-qtycur] utamakan hasil opname packing WO (qty_opname)
+					woi.qty_opname,
 					dni.qty_opname,
 					NULLIF(woi.total_good_qty, 0),
 					dni.quantity,
