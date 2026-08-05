@@ -12,6 +12,7 @@ import (
 type IService interface {
 	GetOverview(ctx context.Context, filter repository.Filter) (*models.OverviewResponse, error)
 	ListProductionQC(ctx context.Context, filter repository.Filter) (*models.ProductionQCListResponse, error)
+	GetProductionQCDetail(ctx context.Context, qcLogID int64) (*models.ProductionQCDetailResponse, error)
 	ListIncomingQC(ctx context.Context, filter repository.Filter) (*models.IncomingQCListResponse, error)
 	ListProductReturnQC(ctx context.Context, filter repository.Filter) (*models.ProductReturnQCListResponse, error)
 	ListDefects(ctx context.Context, filter repository.Filter) (*models.DefectListResponse, error)
@@ -91,6 +92,10 @@ func (s *service) GetOverview(ctx context.Context, filter repository.Filter) (*m
 
 func (s *service) ListProductionQC(ctx context.Context, filter repository.Filter) (*models.ProductionQCListResponse, error) {
 	return s.repo.ListProductionQC(ctx, filter)
+}
+
+func (s *service) GetProductionQCDetail(ctx context.Context, qcLogID int64) (*models.ProductionQCDetailResponse, error) {
+	return s.repo.GetProductionQCDetail(ctx, qcLogID)
 }
 
 func (s *service) ListIncomingQC(ctx context.Context, filter repository.Filter) (*models.IncomingQCListResponse, error) {

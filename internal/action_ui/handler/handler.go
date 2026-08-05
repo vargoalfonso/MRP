@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/ganasa18/go-template/internal/action_ui/dto"
 	actionModels "github.com/ganasa18/go-template/internal/action_ui/models"
@@ -355,6 +356,38 @@ func (h *HTTPHandler) QCFinish(ctx *app.Context) *app.CostumeResponse {
 		RequestID: ctx.APIReqID,
 		Status:    http.StatusCreated,
 		Message:   "QC Finish Success",
+	}
+}
+
+// GET /api/v1/action-ui/qc/rounds?wo_id=&wo_item_id=
+// [qc-round-db] Mengembalikan Round 1 & 2 yang sudah tersubmit untuk satu
+// wo_item (dari qc_logs + qc_defect_items) supaya frontend QC Process bisa
+// memulihkan data ronde lintas gadget tanpa localStorage.
+func (h *HTTPHandler) QCRounds(ctx *app.Context) *app.CostumeResponse {
+	qcTaskID, err := strconv.ParseInt(ctx.Query("qc_task_id"), 10, 64)
+	if err != nil || qcTaskID == 0 {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "qc_task_id is required",
+		}
+	}
+
+	data, err := h.svc.ListQCRounds(ctx.Request.Context(), qcTaskID)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "failed get qc rounds",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "QC Rounds Success",
+		Data:      data,
 	}
 }
 

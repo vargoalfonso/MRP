@@ -20,6 +20,10 @@ type WorkOrder struct {
 	// Values: standard | bulk | rm_processing
 	WOKind         string  `gorm:"column:wo_kind;not null;size:32"`
 	ReferenceWO    *string `gorm:"column:reference_wo;size:64"`
+	// [wo-defect-reason-scope] wo_item SUMBER (kanban spesifik) yang memicu rework ini.
+	// Diisi saat rework dibuat dari QC Finish, dipakai untuk memfilter Reason/Info Defect
+	// agar hanya menampilkan reason kanban sumber tsb (bukan gabungan uniq yang sama).
+	ReferenceWOItemID *int64 `gorm:"column:reference_wo_item_id"`
 	Status         string  `gorm:"column:status;not null;size:32"`
 	ApprovalStatus string  `gorm:"column:approval_status;not null;size:32"`
 

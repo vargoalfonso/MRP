@@ -192,6 +192,26 @@ type QCTaskListItem struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// [qc-round-db] response GET /qc/rounds: ronde QC (Round 1 & 2) yang sudah
+// tersubmit, direkonstruksi dari qc_logs + qc_defect_items agar bisa dibaca
+// ulang lintas-gadget (bukan dari localStorage frontend).
+type QCRoundIssue struct {
+	Issue  string  `json:"issue"`
+	Detail string  `json:"detail"`
+	Qty    float64 `json:"qty"`
+}
+
+type QCRoundItem struct {
+	Round        int            `json:"round"`
+	QtyChecked   float64        `json:"qty_checked"`
+	QtyPass      float64        `json:"qty_pass"`
+	QtyDefect    float64        `json:"qty_defect"`
+	QtyScrap     float64        `json:"qty_scrap"`
+	DefectReason string         `json:"defect_reason"`
+	ScrapReason  string         `json:"scrap_reason"`
+	Issues       []QCRoundIssue `json:"issues"`
+}
+
 type WOListItem struct {
 	WOID           int64   `json:"wo_id"`
 	WONumber       string  `json:"wo_number"`

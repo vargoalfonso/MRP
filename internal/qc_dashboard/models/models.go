@@ -49,6 +49,27 @@ type ProductionQCItem struct {
 	QtyScrap           float64 `json:"qty_scrap"`
 	QualityRatePercent float64 `json:"quality_rate_percent"`
 	Status             string  `json:"status"`
+	// [qc-issue-detail] semua Issue/Reason (round 1-3) untuk tooltip & detail page.
+	// gorm:"-" wajib: field ini diisi manual (loadProductionIssues), BUKAN relasi.
+	// Tanpa tag ini GORM menganggapnya relasi -> error "invalid field ... define a
+	// valid foreign key for relations" saat Scan hasil Raw query.
+	Issues []ProductionQCIssue `json:"issues" gorm:"-"`
+}
+
+// [qc-issue-detail] Satu baris Issue/Reason yang diinput operator saat QC.
+type ProductionQCIssue struct {
+	Source      string  `json:"source"`
+	ReasonCode  string  `json:"reason_code"`
+	ReasonText  string  `json:"reason_text"`
+	Qty         float64 `json:"qty"`
+	QtyDefect   float64 `json:"qty_defect"`
+	QtyScrap    float64 `json:"qty_scrap"`
+	ProcessName string  `json:"process_name"`
+}
+
+// [qc-issue-detail] Response detail satu baris Production QC.
+type ProductionQCDetailResponse struct {
+	Item ProductionQCItem `json:"item"`
 }
 
 type ProductionQCListResponse struct {

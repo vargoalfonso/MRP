@@ -49,6 +49,9 @@ type IService interface {
 
 	ListQCTask(ctx context.Context, req dto.ListQCTaskRequest) (map[string]interface{}, error)
 
+	// [qc-round-db] ambil ronde tersubmit per qc_task_id (unik per kanban) dari DB
+	ListQCRounds(ctx context.Context, qcTaskID int64) (map[string]interface{}, error)
+
 	IssueList(ctx context.Context) (map[string]interface{}, error)
 	WOList(ctx context.Context, search string) ([]dto.WOListItem, error)
 	WODetail(ctx context.Context, woNumber string) (*dto.WODetailResponse, error)
@@ -875,6 +878,8 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 		// =====================================
 		qc := models.QCLog{
 			UUID:        uuid.New().String(),
+			// [qc-round-db] scope ronde ke qc_task_id (unik per kanban)
+			QCTaskID:    &req.QCTaskID,
 			WOID:        &item.WOID,
 			WOItemID:    &item.ID,
 			UniqCode:    payload.Uniq,
@@ -1537,6 +1542,10 @@ func (s *service) createReworkWorkOrder(tx *gorm.DB, item models.WorkOrderItem, 
 		"wo_type":         "Rework", // enum work_orders: New | Assembly | Rework | Addendum
 		"wo_kind":         "standard",
 		"reference_wo":    srcWO.WONumber,
+		// [wo-defect-reason-scope] simpan wo_item SUMBER (kanban spesifik) agar detail WO
+		// rework hanya menampilkan Reason/Info Defect milik kanban ini, bukan gabungan
+		// semua kanban dengan uniq yang sama.
+		"reference_wo_item_id": item.ID,
 		"status":          "Draft",
 		"approval_status": "Pending",
 		"created_date":    now,
@@ -1724,6 +1733,117 @@ func getCurrentIndex(step int, total int) int {
 	}
 
 	return idx
+}
+
+// [qc-round-db] ListQCRounds mengambil Round 1 & 2 yang sudah tersubmit untuk
+// satu wo_item, direkonstruksi dari qc_logs (angka) + qc_defect_items (reason &
+// issue). Dipakai frontend QC Process agar data ronde tetap tampil lintas
+// gadget/browser tanpa bergantung pada localStorage.
+func (s *service) ListQCRounds(ctx context.Context, qcTaskID int64) (map[string]interface{}, error) {
+	if qcTaskID == 0 {
+		return nil, apperror.BadRequest("qc_task_id is required")
+	}
+
+	// [qc-round-db] status scan-out diambil dari DB (WorkOrderItem milik task),
+	// bukan localStorage, supaya gate Round 3 konsisten lintas gadget.
+	scanOutCompleted := false
+	totalProduction := float64(0)
+	var task models.QCTask
+	if err := s.db.WithContext(ctx).
+		Where(&models.QCTask{ID: qcTaskID}).
+		First(&task).Error; err != nil {
+		return nil, err
+	}
+	if task.WOItemID != nil {
+		// [qc-scanout] Sumber kebenaran scan-out = ProductionScanLog (scan_type SCAN_OUT)
+		// untuk wo_item + proses task ini. Counter ScanInCount/ScanOutCount TIDAK dipakai
+		// karena ScanInCount tidak selalu tersimpan (ScanIn tidak mem-persist counter),
+		// sehingga kondisi lama selalu false walau uniq sudah scan out.
+		var scanOutLogCount int64
+		q := s.db.WithContext(ctx).
+			Model(&models.ProductionScanLog{}).
+			Where("wo_item_id = ? AND scan_type = ?", *task.WOItemID, "SCAN_OUT")
+		if task.ProcessName != "" {
+			q = q.Where("process_name = ?", task.ProcessName)
+		}
+		if err := q.Count(&scanOutLogCount).Error; err == nil {
+			scanOutCompleted = scanOutLogCount > 0
+		}
+		if item, err := s.repoProduction.FindWOItemByID(ctx, *task.WOItemID); err == nil {
+			totalProduction = item.TotalGoodQty
+		}
+	}
+
+	// [qc-round-db] ronde tersubmit di-scope ke qc_task_id (unik per kanban),
+	// bukan wo_item_id yang bisa sama antar kanban dalam satu WO item.
+	var logs []models.QCLog
+	if err := s.db.WithContext(ctx).
+		Where(&models.QCLog{QCTaskID: &qcTaskID}).
+		Order("id asc").
+		Find(&logs).Error; err != nil {
+		return nil, err
+	}
+
+	// Ambil log terbaru per round (slice sudah urut id asc, jadi entri terakhir
+	// menang bila ada submit berulang untuk round yang sama).
+	latest := map[int]models.QCLog{}
+	for _, lg := range logs {
+		if lg.QCRound == 1 || lg.QCRound == 2 {
+			latest[lg.QCRound] = lg
+		}
+	}
+
+	rounds := make([]dto.QCRoundItem, 0, 2)
+	for _, rnd := range []int{1, 2} {
+		lg, ok := latest[rnd]
+		if !ok {
+			continue
+		}
+
+		item := dto.QCRoundItem{
+			Round:      lg.QCRound,
+			QtyChecked: lg.QtyChecked,
+			QtyPass:    lg.QtyPass,
+			QtyDefect:  lg.QtyDefect,
+			QtyScrap:   lg.QtyScrap,
+			Issues:     make([]dto.QCRoundIssue, 0),
+		}
+
+		var defItems []models.QCDefectItem
+		if err := s.db.WithContext(ctx).
+			Where(&models.QCDefectItem{QCLogID: lg.ID}).
+			Order("id asc").
+			Find(&defItems).Error; err != nil {
+			return nil, err
+		}
+
+		for _, di := range defItems {
+			switch di.DefectSource {
+			case "process":
+				if item.DefectReason == "" {
+					item.DefectReason = di.DefectReasonText
+				}
+			case "scrap":
+				if item.ScrapReason == "" {
+					item.ScrapReason = di.DefectReasonText
+				}
+			case "issue":
+				item.Issues = append(item.Issues, dto.QCRoundIssue{
+					Issue:  di.DefectReasonCode,
+					Detail: di.DefectReasonText,
+					Qty:    di.Qty,
+				})
+			}
+		}
+
+		rounds = append(rounds, item)
+	}
+
+	return map[string]interface{}{
+		"rounds":             rounds,
+		"scan_out_completed": scanOutCompleted,
+		"total_production":   totalProduction,
+	}, nil
 }
 
 func (s *service) ListQCTask(ctx context.Context, req dto.ListQCTaskRequest) (map[string]interface{}, error) {
