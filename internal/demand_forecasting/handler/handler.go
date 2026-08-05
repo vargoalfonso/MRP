@@ -377,6 +377,78 @@ func (h *HTTPHandler) ListInferenceResults(c *app.Context) *app.CostumeResponse 
 }
 
 // ---------------------------------------------------------------------------
+// Pull Dataset from ERP (PRL / DN)
+// ---------------------------------------------------------------------------
+
+func (h *HTTPHandler) PullPRL(c *app.Context) *app.CostumeResponse {
+	return h.pullDataset(c, "prl")
+}
+
+func (h *HTTPHandler) PullDN(c *app.Context) *app.CostumeResponse {
+	return h.pullDataset(c, "dn")
+}
+
+func (h *HTTPHandler) pullDataset(c *app.Context, domain string) *app.CostumeResponse {
+	var req models.PullDatasetRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return app.NewError(c, apperror.BadRequest("invalid request body: "+err.Error()))
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{
+			RequestID: c.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      errs,
+		}
+	}
+
+	userID, err := mustUserID(c)
+	if err != nil {
+		return app.NewError(c, err)
+	}
+
+	var resp *forecastingclient.UploadDatasetResponse
+	if domain == "prl" {
+		resp, err = h.svc.PullPRL(c.Request.Context(), req, userID)
+	} else {
+		resp, err = h.svc.PullDN(c.Request.Context(), req, userID)
+	}
+	if err != nil {
+		return app.NewError(c, err)
+	}
+
+	return app.NewSuccess(c, http.StatusOK, resp)
+}
+
+func (h *HTTPHandler) GetPRLBounds(c *app.Context) *app.CostumeResponse {
+	opts := forecastingclient.PullBoundsOptions{
+		Scope:  c.Query("scope"),
+		Tenant: c.Query("tenant"),
+		Uniq:   c.Query("uniq"),
+		Status: c.Query("status"),
+	}
+	resp, err := h.svc.GetPRLBounds(c.Request.Context(), opts)
+	if err != nil {
+		return app.NewError(c, err)
+	}
+	return app.NewSuccess(c, http.StatusOK, resp)
+}
+
+func (h *HTTPHandler) GetDNBounds(c *app.Context) *app.CostumeResponse {
+	opts := forecastingclient.PullBoundsOptions{
+		Scope:  c.Query("scope"),
+		Tenant: c.Query("tenant"),
+		Uniq:   c.Query("uniq"),
+		Status: c.Query("status"),
+	}
+	resp, err := h.svc.GetDNBounds(c.Request.Context(), opts)
+	if err != nil {
+		return app.NewError(c, err)
+	}
+	return app.NewSuccess(c, http.StatusOK, resp)
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

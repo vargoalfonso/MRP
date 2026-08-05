@@ -39,11 +39,13 @@ func (r *repository) Create(ctx context.Context, doc *models.CustomerOrderDocume
 			return apperror.InternalWrap("lock table failed", err)
 		}
 
-		num, err := nextDocumentNumber(tx, doc.DocumentType)
-		if err != nil {
-			return err
+		if doc.DocumentNumber == "" {
+			num, err := nextDocumentNumber(tx, doc.DocumentType)
+			if err != nil {
+				return err
+			}
+			doc.DocumentNumber = num
 		}
-		doc.DocumentNumber = num
 
 		if err := tx.Create(doc).Error; err != nil {
 			return apperror.InternalWrap("create customer order failed", err)

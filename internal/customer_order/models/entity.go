@@ -15,6 +15,7 @@ type CustomerOrderDocument struct {
 	DeliveryAddress      *string    `gorm:"type:text" json:"delivery_address"`
 	Status               string     `gorm:"size:32;not null;default:draft" json:"status"`
 	Notes                *string    `gorm:"type:text" json:"notes"`
+	Remarks              *string    `gorm:"type:text" json:"remarks"`
 	CreatedBy            string     `gorm:"size:255" json:"created_by"`
 	CreatedAt            time.Time  `json:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at"`
