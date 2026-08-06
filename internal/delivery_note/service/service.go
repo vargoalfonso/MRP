@@ -122,6 +122,8 @@ func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNReq
 			Period:          req.Period,
 			Type:            req.Type,
 			WONumber:        req.WONumber,
+			DeliveryTo:      req.DeliveryTo,
+			DeliveryTotal:   req.DeliveryTotal,
 			Status:          "active",
 			SupplierID:      po.SupplierID,
 			TotalPOQty:      totalQty,

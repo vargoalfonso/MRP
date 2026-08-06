@@ -139,6 +139,10 @@ import (
 	productionHandler "github.com/ganasa18/go-template/internal/production/handler"
 	productionRepository "github.com/ganasa18/go-template/internal/production/repository"
 	productionService "github.com/ganasa18/go-template/internal/production/service"
+	productionDashboardModule "github.com/ganasa18/go-template/internal/production_dashboard"
+	productionDashboardHandler "github.com/ganasa18/go-template/internal/production_dashboard/handler"
+	productionDashboardRepository "github.com/ganasa18/go-template/internal/production_dashboard/repository"
+	productionDashboardService "github.com/ganasa18/go-template/internal/production_dashboard/service"
 	qcModule "github.com/ganasa18/go-template/internal/qc"
 	qcHandler "github.com/ganasa18/go-template/internal/qc/handler"
 	qcRepo "github.com/ganasa18/go-template/internal/qc/repository"
@@ -323,6 +327,11 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	qcDashboardSvc := qcDashboardService.New(qcDashboardRepo, concurrency.DefaultFanout)
 	qcDashboardHTTPHandler := qcDashboardHandler.New(qcDashboardSvc)
 
+	// Production Dashboard module (Production Views: FG, WIP, Output/Machine, Summary Stroke, Runtime)
+	productionDashboardRepo := productionDashboardRepository.New(db)
+	productionDashboardSvc := productionDashboardService.New(productionDashboardRepo)
+	productionDashboardHTTPHandler := productionDashboardHandler.New(productionDashboardSvc)
+
 	// Inventory module (RM database, Indirect RM, Subcon)
 	invRepository := inventoryRepo.New(db)
 	invSvc := inventoryService.New(invRepository)
@@ -494,6 +503,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		mainDashboardModule.NewHTTPModule(cfg, baseHTTPHandler, mainDashHTTPHandler, authSvc, roleSvc),
 		qcModule.NewHTTPModule(cfg, baseHTTPHandler, qcHTTPHandler, authSvc, roleSvc),
 		qcDashboardModule.NewHTTPModule(cfg, baseHTTPHandler, qcDashboardHTTPHandler, authSvc, roleSvc, qcDashboardSvc),
+		productionDashboardModule.NewHTTPModule(cfg, baseHTTPHandler, productionDashboardHTTPHandler, authSvc, roleSvc, productionDashboardSvc),
 		inventoryModule.NewHTTPModule(cfg, baseHTTPHandler, invHTTPHandler, authSvc, roleSvc, invSvc),
 		workOrderModule.NewHTTPModule(cfg, baseHTTPHandler, woHTTPHandler, authSvc, roleSvc, woSvc),
 		safetyStockModule.NewHTTPModule(cfg, baseHTTPHandler, safetyStockHandler, authSvc, roleSvc, safetyStockService),
