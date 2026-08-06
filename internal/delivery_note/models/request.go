@@ -8,6 +8,9 @@ type CreateDNRequest struct {
 	Period   string `json:"period" validate:"required"`
 	Type     string `json:"type" validate:"required"`
 	WONumber string `json:"wo_number"` // optional, diisi untuk DN Subcon
+	// DeliveryTo = "pengiriman ke ..."; DeliveryTotal = total pengiriman terjadwal (= cycle_time supplier).
+	DeliveryTo    int64 `json:"delivery_to"`
+	DeliveryTotal int64 `json:"delivery_total"`
 
 	Items []CreateDNItemRequest `json:"items" validate:"required,dive"`
 }
@@ -96,9 +99,9 @@ type ScanDeliveryInRequest struct {
 
 // ScanDeliveryInResult reports where the returned goods were placed.
 type ScanDeliveryInResult struct {
-	Destination string `json:"destination"` // "WIP" | "Finished Goods"
-	NextProcess string `json:"next_process"`
-	ItemUniq    string `json:"item_uniq_code"`
+	Destination string  `json:"destination"` // "WIP" | "Finished Goods"
+	NextProcess string  `json:"next_process"`
+	ItemUniq    string  `json:"item_uniq_code"`
 	Qty         float64 `json:"qty"`
 }
 

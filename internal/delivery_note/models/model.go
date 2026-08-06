@@ -25,7 +25,9 @@ type DeliveryNote struct {
 	CreatedAt       time.Time          `json:"created_at"`
 	UpdatedAt       time.Time          `json:"updated_at"`
 	MaterialGrade   string             `json:"material_grade" gorm:"column:material_grade"`
-	WONumber        string             `json:"wo_number" gorm:"column:wo_number"` //request, diisi untuk DN Subcon; work order terkait
+	WONumber        string             `json:"wo_number" gorm:"column:wo_number"`           //request, diisi untuk DN Subcon; work order terkait
+	DeliveryTo      int64              `json:"delivery_to" gorm:"column:delivery_to"`       //request, "pengiriman ke ..." mengikuti cycle_time supplier
+	DeliveryTotal   int64              `json:"delivery_total" gorm:"column:delivery_total"` //request, total pengiriman terjadwal (= cycle_time supplier)
 	Items           []DeliveryNoteItem `json:"items" gorm:"foreignKey:DNID;references:ID"`
 }
 
@@ -87,8 +89,8 @@ type DeliveryNoteItem struct {
 	QtySent        int64           `json:"qty_sent" gorm:"qty_sent"`
 	// [so-packing] qty aktual hasil stock opname untuk packing ini.
 	// NULL berarti belum pernah diopname -> pakai quantity sebagai nilai berjalan.
-	QtyOpname      *float64        `json:"qty_opname" gorm:"column:qty_opname"`
-	QtyOpnameAt    *time.Time      `json:"qty_opname_at" gorm:"column:qty_opname_at"`
+	QtyOpname   *float64   `json:"qty_opname" gorm:"column:qty_opname"`
+	QtyOpnameAt *time.Time `json:"qty_opname_at" gorm:"column:qty_opname_at"`
 }
 
 type KanbanParameter struct {

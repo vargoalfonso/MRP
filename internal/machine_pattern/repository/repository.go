@@ -194,11 +194,19 @@ func (r *repository) GetSummary(ctx context.Context) (*models.MachinePatternSumm
 func (r *repository) GetMaterialGrade(ctx context.Context, uniqCode string) (string, error) {
 	var grade string
 
+	// Resolve grade through the proper chain: items -> item_revisions ->
+	// item_material_specs. item_material_specs.item_revision_id references
+	// item_revisions(id), NOT items(id), so joining directly on i.id was wrong.
+	// COALESCE guards against NULL material_grade, which would otherwise fail
+	// scanning into a Go string ("converting NULL to string is unsupported").
+	// Pick the latest revision when several exist.
 	err := r.db.WithContext(ctx).
 		Table("items i").
-		Select("ims.material_grade").
-		Joins("JOIN item_material_specs ims ON ims.item_revision_id = i.id").
+		Select("COALESCE(ims.material_grade, '') AS material_grade").
+		Joins("JOIN item_revisions ir ON ir.item_id = i.id").
+		Joins("JOIN item_material_specs ims ON ims.item_revision_id = ir.id").
 		Where("i.uniq_code = ?", uniqCode).
+		Order("ir.id DESC").
 		Limit(1).
 		Scan(&grade).Error
 
