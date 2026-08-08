@@ -24,6 +24,9 @@ type IService interface {
 	// Raw Material
 	ListRawMaterials(ctx context.Context, p pagination.InventoryRMPaginationInput) (*invModels.RawMaterialListResponse, error)
 	GetRawMaterialByID(ctx context.Context, id int64) (*invModels.RawMaterial, error)
+	// [rm-key] Detail RM lewat id numerik, uniq_code, atau uuid.
+	GetRawMaterialByKey(ctx context.Context, key string) (*invModels.RawMaterial, error)
+	GetRawMaterialHistoryByKey(ctx context.Context, key string, p pagination.PaginationInput) (*invModels.HistoryLogResponse, error)
 	CreateRawMaterial(ctx context.Context, req invModels.CreateRawMaterialRequest, createdBy string) (*invModels.RawMaterialItem, error)
 	BulkCreateRawMaterials(ctx context.Context, req invModels.BulkCreateRawMaterialRequest, createdBy string) (int, error)
 	UpdateRawMaterial(ctx context.Context, id int64, req invModels.UpdateRawMaterialRequest, updatedBy string) (*invModels.RawMaterial, error)
@@ -137,6 +140,20 @@ func (s *service) ListRawMaterials(ctx context.Context, p pagination.InventoryRM
 
 func (s *service) GetRawMaterialByID(ctx context.Context, id int64) (*invModels.RawMaterial, error) {
 	return s.repo.GetRawMaterialByID(ctx, id)
+}
+
+// [rm-key] GetRawMaterialByKey menerima id numerik, uniq_code, atau uuid.
+func (s *service) GetRawMaterialByKey(ctx context.Context, key string) (*invModels.RawMaterial, error) {
+	return s.repo.FindRawMaterialByKey(ctx, key)
+}
+
+// [rm-key] GetRawMaterialHistoryByKey = movement log dengan kunci fleksibel.
+func (s *service) GetRawMaterialHistoryByKey(ctx context.Context, key string, p pagination.PaginationInput) (*invModels.HistoryLogResponse, error) {
+	rm, err := s.repo.FindRawMaterialByKey(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetRawMaterialHistory(ctx, rm.ID, p)
 }
 
 func (s *service) CreateRawMaterial(ctx context.Context, req invModels.CreateRawMaterialRequest, createdBy string) (*invModels.RawMaterialItem, error) {

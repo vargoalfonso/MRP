@@ -583,3 +583,60 @@ func (h *HTTPHandler) SubmitReturnValidation(ctx *app.Context) *app.CostumeRespo
 		Message:   "OK",
 	}
 }
+
+// POST /api/v1/action-ui/production/rm-repack
+// [repack-sisa] Pindahkan sisa material dari packing asal ke packing tujuan
+// yang masih punya slot (dipakai modal Repacking setelah Scan Out).
+func (h *HTTPHandler) RMRepack(ctx *app.Context) *app.CostumeResponse {
+	var req dto.RMRepackRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+
+	result, err := h.svc.RMRepack(ctx.Request.Context(), req)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data:      result,
+	}
+}
+
+// GET /api/v1/action-ui/production/rm-packing-list?rm_uuid=..&code=..
+// Dipakai modal Repacking untuk menampilkan packing/kanban milik satu Raw Material.
+func (h *HTTPHandler) RMPackingList(ctx *app.Context) *app.CostumeResponse {
+	rmUUID := ctx.Query("rm_uuid")
+	code := ctx.Query("code")
+	if rmUUID == "" && code == "" {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "rm_uuid atau code wajib diisi",
+		}
+	}
+
+	result, err := h.svc.RMPackingList(ctx.Request.Context(), rmUUID, code)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "validation failed",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data:      result,
+	}
+}

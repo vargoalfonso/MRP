@@ -30,6 +30,11 @@ type WIPItem struct {
 	MachineName string `gorm:"column:machine_name"`
 	OpSeq       int    `gorm:"column:op_seq"`
 
+	// [wip-scope] Proses yang MENGHASILKAN stok ini. Dipakai supaya baris
+	// antrean (queue) tampil sebagai hasil proses sebelumnya, bukan seolah
+	// proses berikutnya sudah berjalan.
+	FromProcess string `gorm:"column:from_process;size:100"`
+
 	Seq int `gorm:"column:seq"`
 	// 🔥 dari work_order_items
 	UOM string `gorm:"column:uom"`
@@ -78,6 +83,11 @@ type WIPListResponse struct {
 	Type                  string `json:"type"`
 	StockToCompleteKanban int    `json:"stock_to_complete_kanban"`
 	Kanban                int    `json:"kanban"`
+
+	// [wip-scope] status baris WIP (queue = menunggu diproses) dan proses
+	// yang menunggu stok ini.
+	Status         string `json:"status"`
+	WaitingProcess string `json:"waiting_process"`
 }
 
 type WIPProcess struct {

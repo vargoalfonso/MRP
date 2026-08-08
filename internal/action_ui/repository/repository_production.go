@@ -40,6 +40,8 @@ type IProductionRepository interface {
 	// WIP
 	FindOrCreateWIP(ctx context.Context, woID int64) (models.WIP, error)
 	FindQueueWIPItem(ctx context.Context, wipID int64, uniq string, processName string) (models.WIPItem, error)
+	// [wip-source] cari WIP item proses saat ini (queue/process) untuk material input.
+	FindIncomingWIPForItem(ctx context.Context, woID int64, uniq string, processName string) (models.WIPItem, error)
 	CreateWIPItem(ctx context.Context, data *models.WIPItem) error
 	UpdateWIPItem(ctx context.Context, data *models.WIPItem) error
 	CreateWIPLog(ctx context.Context, data *models.WIPLog) error
@@ -58,11 +60,23 @@ type IProductionRepository interface {
 	FindWOItemByID(ctx context.Context, id int64) (models.WorkOrderItem, error)
 
 	FindProductionRawMaterialLogsByWOItemID(ctx context.Context, woItemID int64) ([]models.RawMaterialLog, error)
+	// [proc-scope] log RM per step proses; log proses lain tidak ikut terbawa.
+	FindProductionRawMaterialLogsByWOItemStep(ctx context.Context, woItemID int64, stepSeq int) ([]models.RawMaterialLog, error)
+	DeleteRawMaterialLogsByWOItemStep(ctx context.Context, woItemID int64, stepSeq int) error
 	FindLatestScanInLog(ctx context.Context, woItemID int64) (models.ProductionScanLog, error)
 
 	FindRawMaterialMetaByKeys(ctx context.Context, uuids []string, uniqCodes []string) ([]RawMaterialMeta, error)
 
 	FindBomMaterialsByRootUniq(ctx context.Context, rootUniq string) ([]BomMaterialRow, error)
+
+	// [repacking] list packing/kanban milik satu Raw Material (uniq_code).
+	ListRMPackingList(ctx context.Context, uniqCode string) ([]RMPackingRow, error)
+	// [repacking] set qty_opname (qty berjalan) satu packing setelah repack.
+	ApplyPackingQtyOpname(ctx context.Context, itemUniqCode, packingNumber string, finalQty float64, at time.Time) error
+	// [packing-deduct] pengurangan qty packing (relatif) saat scan out.
+	DeductPackingQty(ctx context.Context, itemUniqCode, packingNumber string, deductQty float64, at time.Time) error
+	// [repack-sisa] tambah qty packing tujuan saat repacking sisa material.
+	AddPackingQty(ctx context.Context, itemUniqCode, packingNumber string, addQty float64, at time.Time) error
 }
 
 // BomMaterialRow = hasil query flatten BOM tree untuk kebutuhan Action UI.
@@ -143,6 +157,24 @@ func (r *productionRepo) FindQueueWIPItem(ctx context.Context, wipID int64, uniq
 		Order("id asc").
 		First(&row).Error
 
+	return row, err
+}
+
+func (r *productionRepo) FindIncomingWIPForItem(ctx context.Context, woID int64, uniq string, processName string) (models.WIPItem, error) {
+	var row models.WIPItem
+	var wipIDs []int64
+	if err := r.db.WithContext(ctx).Table("wips").
+		Where("wo_id = ?", woID).Pluck("id", &wipIDs).Error; err != nil {
+		return row, err
+	}
+	if len(wipIDs) == 0 {
+		return row, gorm.ErrRecordNotFound
+	}
+	err := r.db.WithContext(ctx).
+		Where("wip_id IN ? AND uniq = ? AND process_name = ? AND status IN ?",
+			wipIDs, uniq, processName, []string{"queue", "process"}).
+		Order("id desc").
+		First(&row).Error
 	return row, err
 }
 
@@ -322,9 +354,9 @@ func (r *productionRepo) FindWOItemsByWOID(ctx context.Context, woid int64) ([]m
 	var items []models.WorkOrderItem
 
 	err := r.db.WithContext(ctx).
-	Where("wo_id = ?", woid).
-	Order("id ASC").
-	Find(&items).Error
+		Where("wo_id = ?", woid).
+		Order("id ASC").
+		Find(&items).Error
 
 	if err != nil {
 		return nil, err
@@ -452,11 +484,11 @@ func (r *productionRepo) CreateQC(ctx context.Context, qc *models.QCTask) error 
 	return r.db.WithContext(ctx).Create(qc).Error
 }
 
-
 type WOListAgg struct {
 	ID             int64
 	WONumber       string
 	Status         string
+	WOType         string
 	Model          string
 	PartName       string
 	ProductionLine string
@@ -478,6 +510,7 @@ func (r *productionRepo) ListWorkOrders(ctx context.Context, search string, limi
 			w.id                              AS id,
 			w.wo_number                       AS wo_number,
 			w.status                          AS status,
+			w.wo_type                         AS wo_type,
 			w.model                           AS model,
 			COALESCE(MIN(i.part_name), '')    AS part_name,
 			COALESCE(MIN(m.production_line),'') AS production_line,
@@ -662,6 +695,35 @@ func (r *productionRepo) FindProductionRawMaterialLogsByWOItemID(
 	return logs, err
 }
 
+// [proc-scope] Log RM milik SATU step proses saja. Baris lama yang belum punya
+// step_seq dianggap milik step pertama supaya data lama tetap tampil.
+func (r *productionRepo) FindProductionRawMaterialLogsByWOItemStep(
+	ctx context.Context, woItemID int64, stepSeq int,
+) ([]models.RawMaterialLog, error) {
+	var logs []models.RawMaterialLog
+	q := r.db.WithContext(ctx).Where("wo_item_id = ?", woItemID)
+	if stepSeq <= 1 {
+		q = q.Where("COALESCE(step_seq, 0) <= 1")
+	} else {
+		q = q.Where("COALESCE(step_seq, 0) = ?", stepSeq)
+	}
+	err := q.Order("id ASC").Find(&logs).Error
+	return logs, err
+}
+
+// [proc-scope] Hapus log RM milik satu step proses saja.
+func (r *productionRepo) DeleteRawMaterialLogsByWOItemStep(
+	ctx context.Context, woItemID int64, stepSeq int,
+) error {
+	q := r.db.WithContext(ctx).Where("wo_item_id = ?", woItemID)
+	if stepSeq <= 1 {
+		q = q.Where("COALESCE(step_seq, 0) <= 1")
+	} else {
+		q = q.Where("COALESCE(step_seq, 0) = ?", stepSeq)
+	}
+	return q.Delete(&models.RawMaterialLog{}).Error
+}
+
 func (r *productionRepo) FindLatestScanInLog(ctx context.Context, woItemID int64) (models.ProductionScanLog, error) {
 	var log models.ProductionScanLog
 	err := r.db.WithContext(ctx).
@@ -695,4 +757,123 @@ func (r *productionRepo) FindRawMaterialMetaByKeys(
 
 	err := q.Scan(&rows).Error
 	return rows, err
+}
+
+// ---------------------------------------------------------------------------
+// [repacking] Packing / Kanban list per Raw Material
+// ---------------------------------------------------------------------------
+
+// RMPackingRow = baris mentah packing/kanban untuk satu uniq_code RM.
+type RMPackingRow struct {
+	DNNumber      *string `gorm:"column:dn_number"`
+	PackingNumber string  `gorm:"column:packing_number"`
+	Quantity      float64 `gorm:"column:quantity"`
+	QtyCurrent    float64 `gorm:"column:qty_current"`
+	QtyMax        float64 `gorm:"column:qty_max"`
+	Status        *string `gorm:"column:status"`
+	WONumber      *string `gorm:"column:wo_number"`
+	Source        string  `gorm:"column:source"`
+}
+
+// ListRMPackingList mengambil daftar packing/kanban untuk satu uniq_code RM.
+// Sumber: delivery_note_items (DN Management) -- Raw Material masuk lewat DN,
+// BUKAN work_order_items (WO khusus pembuatan finished goods). Di-join ke
+// delivery_notes untuk DN number & kanban_parameters (kanban_qty = qty maksimal).
+// qty_current diambil dari qty_opname (hasil repack) bila ada, jika tidak dari
+// quantity pada DN. Sama dengan branch 'delivery_note' packing list RM di ERP.
+func (r *productionRepo) ListRMPackingList(ctx context.Context, uniqCode string) ([]RMPackingRow, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return []RMPackingRow{}, nil
+	}
+
+	var rows []RMPackingRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT * FROM (
+			SELECT
+				dn.dn_number       AS dn_number,
+				dni.packing_number AS packing_number,
+				COALESCE(dni.quantity, 0) AS quantity,
+				COALESCE(dni.qty_opname, dni.quantity, 0) AS qty_current,
+				COALESCE(
+					NULLIF(dni.pcs_per_kanban, 0),
+					NULLIF(kp.kanban_qty, 0),
+					NULLIF(dni.quantity, 0),
+					0
+				) AS qty_max,
+				NULLIF(dni.check, '') AS status,
+				NULL            AS wo_number,
+				'delivery_note' AS source,
+				dni.created_at AS sort_at
+			FROM delivery_note_items dni
+			JOIN delivery_notes dn ON dn.id = dni.dn_id
+			LEFT JOIN LATERAL (
+				SELECT kanban_qty
+				FROM kanban_parameters
+				WHERE item_uniq_code = dni.item_uniq_code
+				ORDER BY id DESC
+				LIMIT 1
+			) kp ON TRUE
+			WHERE dni.item_uniq_code = ?
+			  AND COALESCE(dni.packing_number, '') <> ''
+		) packing
+		ORDER BY sort_at DESC, packing_number ASC
+	`, uniqCode).Scan(&rows).Error
+	if err != nil {
+		return nil, apperror.Internal("action_ui list rm packing list: " + err.Error())
+	}
+	if rows == nil {
+		rows = []RMPackingRow{}
+	}
+	return rows, nil
+}
+
+// ApplyPackingQtyOpname men-set qty berjalan (qty_opname) satu packing setelah
+// repack. Dipakai fitur Repacking saat scan out untuk menyesuaikan qty per
+// packing/kanban pada delivery_note_items.
+func (r *productionRepo) ApplyPackingQtyOpname(ctx context.Context, itemUniqCode, packingNumber string, finalQty float64, at time.Time) error {
+	packingNumber = strings.TrimSpace(packingNumber)
+	if packingNumber == "" {
+		return nil
+	}
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE delivery_note_items
+		SET qty_opname = ?, qty_opname_at = ?, updated_at = ?
+		WHERE item_uniq_code = ? AND packing_number = ?
+	`, finalQty, at, at, itemUniqCode, packingNumber).Error
+}
+
+// DeductPackingQty mengurangi qty berjalan (qty_opname) satu packing
+// sebesar deductQty. Dipakai saat scan out untuk packing yang discan di
+// Step 1 tanpa lewat Repacking, supaya "Qty saat ini" dan Progress pada
+// packing list Raw Material ikut berkurang seperti stok RM-nya.
+func (r *productionRepo) DeductPackingQty(ctx context.Context, itemUniqCode, packingNumber string, deductQty float64, at time.Time) error {
+	packingNumber = strings.TrimSpace(packingNumber)
+	if packingNumber == "" || deductQty <= 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE delivery_note_items
+		SET qty_opname = GREATEST(COALESCE(qty_opname, quantity, 0) - ?, 0),
+		    qty_opname_at = ?,
+		    updated_at = ?
+		WHERE item_uniq_code = ? AND packing_number = ?
+	`, deductQty, at, at, itemUniqCode, packingNumber).Error
+}
+
+// [repack-sisa] AddPackingQty menambah qty berjalan (qty_opname) satu packing
+// sebesar addQty. Dipakai saat Repacking: sisa material dari packing asal
+// dipindahkan ke packing tujuan yang masih punya slot.
+func (r *productionRepo) AddPackingQty(ctx context.Context, itemUniqCode, packingNumber string, addQty float64, at time.Time) error {
+	packingNumber = strings.TrimSpace(packingNumber)
+	if packingNumber == "" || addQty <= 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE delivery_note_items
+		SET qty_opname = COALESCE(qty_opname, quantity, 0) + ?,
+		    qty_opname_at = ?,
+		    updated_at = ?
+		WHERE item_uniq_code = ? AND packing_number = ?
+	`, addQty, at, at, itemUniqCode, packingNumber).Error
 }

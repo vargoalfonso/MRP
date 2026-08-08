@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/ganasa18/go-template/internal/base/app"
 	invModels "github.com/ganasa18/go-template/internal/inventory/models"
@@ -120,13 +121,22 @@ func (h *HTTPHandler) BulkCreateRawMaterials(ctx *app.Context) *app.CostumeRespo
 //
 //	GET /api/v1/inventory/raw-materials/:id
 func (h *HTTPHandler) GetRawMaterialByID(ctx *app.Context) *app.CostumeResponse {
-	id, ok := parseID(ctx)
-	if !ok {
+	// [rm-key] :id boleh id numerik, uniq_code, atau uuid. Kalau id numerik
+	// tidak ketemu, coba fallback ke query ?uniq= / ?uniq_code=.
+	key := strings.TrimSpace(ctx.Param("id"))
+	if key == "" {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
 	}
-	data, err := h.svc.GetRawMaterialByID(ctx.Request.Context(), id)
+	data, err := h.svc.GetRawMaterialByKey(ctx.Request.Context(), key)
 	if err != nil {
-		return app.NewError(ctx, err)
+		alt := rmFallbackKey(ctx, key)
+		if alt == "" {
+			return app.NewError(ctx, err)
+		}
+		data, err = h.svc.GetRawMaterialByKey(ctx.Request.Context(), alt)
+		if err != nil {
+			return app.NewError(ctx, err)
+		}
 	}
 	return &app.CostumeResponse{
 		RequestID: ctx.APIReqID,
@@ -187,15 +197,36 @@ func (h *HTTPHandler) DeleteRawMaterial(ctx *app.Context) *app.CostumeResponse {
 // GetRawMaterialHistory returns movement log for a single RM record.
 //
 //	GET /api/v1/inventory/raw-materials/:id/history?limit=20&page=1
+// [rm-key] rmFallbackKey membaca ?uniq= / ?uniq_code= sebagai kunci cadangan
+// ketika :id tidak ketemu di tabel raw_materials.
+func rmFallbackKey(ctx *app.Context, key string) string {
+	alt := strings.TrimSpace(ctx.Query("uniq"))
+	if alt == "" {
+		alt = strings.TrimSpace(ctx.Query("uniq_code"))
+	}
+	if alt == key {
+		return ""
+	}
+	return alt
+}
+
 func (h *HTTPHandler) GetRawMaterialHistory(ctx *app.Context) *app.CostumeResponse {
-	id, ok := parseID(ctx)
-	if !ok {
+	// [rm-key] sama seperti detail: terima id numerik, uniq_code, atau uuid.
+	key := strings.TrimSpace(ctx.Param("id"))
+	if key == "" {
 		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid id"}
 	}
 	p := pagination.Pagination(ctx)
-	data, err := h.svc.GetRawMaterialHistory(ctx.Request.Context(), id, p)
+	data, err := h.svc.GetRawMaterialHistoryByKey(ctx.Request.Context(), key, p)
 	if err != nil {
-		return app.NewError(ctx, err)
+		alt := rmFallbackKey(ctx, key)
+		if alt == "" {
+			return app.NewError(ctx, err)
+		}
+		data, err = h.svc.GetRawMaterialHistoryByKey(ctx.Request.Context(), alt, p)
+		if err != nil {
+			return app.NewError(ctx, err)
+		}
 	}
 	return &app.CostumeResponse{
 		RequestID: ctx.APIReqID,
