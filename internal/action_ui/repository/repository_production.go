@@ -49,6 +49,8 @@ type IProductionRepository interface {
 
 	ListWorkOrders(ctx context.Context, search string, limit int) ([]WOListAgg, error)
 	FindRawMaterialByCode(ctx context.Context, code string) (models.RawMaterial, error)
+	LookupItemUniqByPacking(ctx context.Context, packingNumber string) (string, error)
+	FindItemByUniq(ctx context.Context, uniq string) (ItemLookup, error)
 	FindRawMaterialByUUID(ctx context.Context, rmUUID string) (models.RawMaterial, error)
 	DecreaseRawMaterialStock(ctx context.Context, id int64, qty float64) (before float64, after float64, err error)
 	InsertInventoryMovementLog(ctx context.Context, log models.InventoryMovementLog) error
@@ -543,6 +545,54 @@ func (r *productionRepo) FindRawMaterialByCode(ctx context.Context, code string)
 	return rm, nil
 }
 
+func (r *productionRepo) LookupItemUniqByPacking(ctx context.Context, packingNumber string) (string, error) {
+	packingNumber = strings.TrimSpace(packingNumber)
+	if packingNumber == "" {
+		return "", errors.New("packing number empty")
+	}
+
+	var uniqCode string
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT item_uniq_code FROM delivery_note_items WHERE packing_number = ?
+		UNION ALL
+		SELECT item_uniq_code FROM work_order_items WHERE kanban_number = ?
+		LIMIT 1
+	`, packingNumber, packingNumber).Scan(&uniqCode).Error
+
+	if err != nil {
+		return "", err
+	}
+	if uniqCode == "" {
+		return "", gorm.ErrRecordNotFound
+	}
+	return uniqCode, nil
+}
+
+type ItemLookup struct {
+	ID         int64
+	UniqCode   string
+	PartNumber *string
+	PartName   *string
+	UOM        *string
+	StockQty   float64
+}
+
+func (r *productionRepo) FindItemByUniq(ctx context.Context, uniq string) (ItemLookup, error) {
+	var item ItemLookup
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT i.id, i.uniq_code, i.part_number, i.part_name, i.uom,
+		       COALESCE((SELECT stock_qty FROM finished_goods WHERE uniq_code = i.uniq_code LIMIT 1), 0) AS stock_qty
+		FROM items i WHERE i.uniq_code = ? AND i.deleted_at IS NULL LIMIT 1
+	`, uniq).Scan(&item).Error
+	if err != nil {
+		return item, err
+	}
+	if item.UniqCode == "" {
+		return item, gorm.ErrRecordNotFound
+	}
+	return item, nil
+}
+
 func (r *productionRepo) FindRawMaterialByUUID(ctx context.Context, rmUUID string) (models.RawMaterial, error) {
 	var rm models.RawMaterial
 	err := r.db.WithContext(ctx).
@@ -791,6 +841,42 @@ func (r *productionRepo) ListRMPackingList(ctx context.Context, uniqCode string)
 	err := r.db.WithContext(ctx).Raw(`
 		SELECT * FROM (
 			SELECT
+				dn.dn_number      AS dn_number,
+				woi.kanban_number AS packing_number,
+				COALESCE(woi.quantity, 0) AS quantity,
+				COALESCE(
+					woi.qty_opname,
+					dni.qty_opname,
+					CASE WHEN woi.status IN ('FINISHED', 'DONE', 'COMPLETED') THEN NULLIF(woi.total_good_qty, 0) ELSE NULL END,
+					dni.quantity,
+					0
+				) AS qty_current,
+				COALESCE(
+					NULLIF(kp.kanban_qty, 0),
+					NULLIF(dni.pcs_per_kanban, 0),
+					NULLIF(woi.quantity, 0),
+					0
+				) AS qty_max,
+				woi.status   AS status,
+				w.wo_number  AS wo_number,
+				'work_order' AS source,
+				woi.created_at AS sort_at
+			FROM work_order_items woi
+			JOIN work_orders w ON w.id = woi.wo_id
+			LEFT JOIN delivery_note_items dni ON dni.packing_number = woi.kanban_number
+			LEFT JOIN delivery_notes dn ON dn.id = dni.dn_id
+			LEFT JOIN LATERAL (
+				SELECT kanban_qty
+				FROM kanban_parameters
+				WHERE item_uniq_code = woi.item_uniq_code
+				ORDER BY id DESC
+				LIMIT 1
+			) kp ON TRUE
+			WHERE woi.item_uniq_code = ?
+
+			UNION ALL
+
+			SELECT
 				dn.dn_number       AS dn_number,
 				dni.packing_number AS packing_number,
 				COALESCE(dni.quantity, 0) AS quantity,
@@ -816,9 +902,13 @@ func (r *productionRepo) ListRMPackingList(ctx context.Context, uniqCode string)
 			) kp ON TRUE
 			WHERE dni.item_uniq_code = ?
 			  AND COALESCE(dni.packing_number, '') <> ''
+			  AND NOT EXISTS (
+				SELECT 1 FROM work_order_items woi2
+				WHERE woi2.kanban_number = dni.packing_number
+			  )
 		) packing
 		ORDER BY sort_at DESC, packing_number ASC
-	`, uniqCode).Scan(&rows).Error
+	`, uniqCode, uniqCode).Scan(&rows).Error
 	if err != nil {
 		return nil, apperror.Internal("action_ui list rm packing list: " + err.Error())
 	}
@@ -836,11 +926,19 @@ func (r *productionRepo) ApplyPackingQtyOpname(ctx context.Context, itemUniqCode
 	if packingNumber == "" {
 		return nil
 	}
-	return r.db.WithContext(ctx).Exec(`
+	err := r.db.WithContext(ctx).Exec(`
 		UPDATE delivery_note_items
 		SET qty_opname = ?, qty_opname_at = ?, updated_at = ?
 		WHERE item_uniq_code = ? AND packing_number = ?
 	`, finalQty, at, at, itemUniqCode, packingNumber).Error
+	if err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE work_order_items
+		SET qty_opname = ?, updated_at = ?
+		WHERE item_uniq_code = ? AND kanban_number = ?
+	`, finalQty, at, itemUniqCode, packingNumber).Error
 }
 
 // DeductPackingQty mengurangi qty berjalan (qty_opname) satu packing
@@ -852,13 +950,22 @@ func (r *productionRepo) DeductPackingQty(ctx context.Context, itemUniqCode, pac
 	if packingNumber == "" || deductQty <= 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).Exec(`
+	err := r.db.WithContext(ctx).Exec(`
 		UPDATE delivery_note_items
 		SET qty_opname = GREATEST(COALESCE(qty_opname, quantity, 0) - ?, 0),
 		    qty_opname_at = ?,
 		    updated_at = ?
 		WHERE item_uniq_code = ? AND packing_number = ?
 	`, deductQty, at, at, itemUniqCode, packingNumber).Error
+	if err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE work_order_items
+		SET qty_opname = GREATEST(COALESCE(qty_opname, quantity, 0) - ?, 0),
+		    updated_at = ?
+		WHERE item_uniq_code = ? AND kanban_number = ?
+	`, deductQty, at, itemUniqCode, packingNumber).Error
 }
 
 // [repack-sisa] AddPackingQty menambah qty berjalan (qty_opname) satu packing
@@ -869,11 +976,20 @@ func (r *productionRepo) AddPackingQty(ctx context.Context, itemUniqCode, packin
 	if packingNumber == "" || addQty <= 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).Exec(`
+	err := r.db.WithContext(ctx).Exec(`
 		UPDATE delivery_note_items
 		SET qty_opname = COALESCE(qty_opname, quantity, 0) + ?,
 		    qty_opname_at = ?,
 		    updated_at = ?
 		WHERE item_uniq_code = ? AND packing_number = ?
 	`, addQty, at, at, itemUniqCode, packingNumber).Error
+	if err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE work_order_items
+		SET qty_opname = COALESCE(qty_opname, quantity, 0) + ?,
+		    updated_at = ?
+		WHERE item_uniq_code = ? AND kanban_number = ?
+	`, addQty, at, itemUniqCode, packingNumber).Error
 }

@@ -2103,27 +2103,84 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 // NEW — Lookup RM (Scan RM 2.2)
 // =====================================
 func (s *service) RawMaterialLookup(ctx context.Context, code string) (*dto.RawMaterialLookupResponse, error) {
-	rm, err := s.repoProduction.FindRawMaterialByCode(ctx, code)
-	if err != nil {
-		return nil, err
+	codeStr := strings.TrimSpace(code)
+
+	derefStr := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
 	}
-	var weight float64
-	if rm.StockWeightKg != nil {
-		weight = *rm.StockWeightKg
+
+	// 1. Try to find as WO Number (for wip type assembly)
+	if wo, err := s.repoProduction.FindWOByNumber(ctx, codeStr); err == nil && wo.ID != 0 {
+		items, err := s.repoProduction.FindWOItemsByWOID(ctx, wo.ID)
+		if err == nil && len(items) > 0 {
+			firstItem := items[0]
+			return &dto.RawMaterialLookupResponse{
+				RMID:              0,
+				RMUUID:            "",
+				UniqCode:          firstItem.ItemUniqCode,
+				PartNumber:        firstItem.PartNumber,
+				PartName:          firstItem.PartName,
+				RawMaterialType:   "wip",
+				TypeLabel:         "WIP",
+				UOM:               firstItem.UOM,
+				AvailableStock:    firstItem.TotalGoodQty,
+				StockWeightKg:     0,
+				WarehouseLocation: "",
+			}, nil
+		}
 	}
-	return &dto.RawMaterialLookupResponse{
-		RMID:              rm.ID,
-		RMUUID:            rm.UUID,
-		UniqCode:          rm.UniqCode,
-		PartNumber:        rm.PartNumber,
-		PartName:          rm.PartName,
-		RawMaterialType:   rm.RawMaterialType,
-		TypeLabel:         rawMaterialTypeLabel(rm.RawMaterialType),
-		UOM:               rm.UOM,
-		AvailableStock:    rm.StockQty,
-		StockWeightKg:     weight,
-		WarehouseLocation: rm.WarehouseLocation,
-	}, nil
+
+	searchCode := codeStr
+	// 2. Try to find by packing number
+	if uniq, err := s.repoProduction.LookupItemUniqByPacking(ctx, codeStr); err == nil && uniq != "" {
+		searchCode = uniq
+	}
+
+	// 3. Try to find as master RM
+	rm, err := s.repoProduction.FindRawMaterialByCode(ctx, searchCode)
+	if err == nil {
+		var weight float64
+		if rm.StockWeightKg != nil {
+			weight = *rm.StockWeightKg
+		}
+		return &dto.RawMaterialLookupResponse{
+			RMID:              rm.ID,
+			RMUUID:            rm.UUID,
+			UniqCode:          rm.UniqCode,
+			PartNumber:        rm.PartNumber,
+			PartName:          rm.PartName,
+			RawMaterialType:   rm.RawMaterialType,
+			TypeLabel:         rawMaterialTypeLabel(rm.RawMaterialType),
+			UOM:               rm.UOM,
+			AvailableStock:    rm.StockQty,
+			StockWeightKg:     weight,
+			WarehouseLocation: rm.WarehouseLocation,
+		}, nil
+	}
+
+	// 4. If not found in RM, try to find as Finished Goods / Item
+	item, errItem := s.repoProduction.FindItemByUniq(ctx, searchCode)
+	if errItem == nil {
+		return &dto.RawMaterialLookupResponse{
+			RMID:              item.ID,
+			RMUUID:            "",
+			UniqCode:          item.UniqCode,
+			PartNumber:        derefStr(item.PartNumber),
+			PartName:          derefStr(item.PartName),
+			RawMaterialType:   "wip", // Label as WIP so frontend treats it correctly
+			TypeLabel:         "WIP",
+			UOM:               derefStr(item.UOM),
+			AvailableStock:    item.StockQty,
+			StockWeightKg:     0,
+			WarehouseLocation: "",
+		}, nil
+	}
+
+	// Return original error if not found anywhere
+	return nil, err
 }
 
 func rawMaterialTypeLabel(t string) string {
@@ -2271,7 +2328,11 @@ func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrder
 
 		// [repacking] Terapkan penyesuaian qty per packing/kanban dari UI Repacking.
 		// FinalQty = qty_current packing setelah repack (nilai absolut).
-		if found && len(rm.Packings) > 0 {
+		if len(rm.Packings) > 0 {
+			uniqToDeduct := code
+			if found && master.UniqCode != "" {
+				uniqToDeduct = master.UniqCode
+			}
 			for _, p := range rm.Packings {
 				if strings.TrimSpace(p.PackingNumber) == "" {
 					continue
@@ -2283,45 +2344,92 @@ func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrder
 					if p.DeductQty <= 0 {
 						continue
 					}
-					if err := s.repoProduction.DeductPackingQty(ctx, master.UniqCode, p.PackingNumber, p.DeductQty, now); err != nil {
+					if err := s.repoProduction.DeductPackingQty(ctx, uniqToDeduct, p.PackingNumber, p.DeductQty, now); err != nil {
 						return err
 					}
 					continue
 				}
-				if err := s.repoProduction.ApplyPackingQtyOpname(ctx, master.UniqCode, p.PackingNumber, p.FinalQty, now); err != nil {
+				if err := s.repoProduction.ApplyPackingQtyOpname(ctx, uniqToDeduct, p.PackingNumber, p.FinalQty, now); err != nil {
 					return err
 				}
 			}
 		}
 
-		// Stok hanya dikurangi kalau qty > 0 dan RM dikenal di master.
-		// [wip-source] Material WIP tidak memotong stok Raw Material.
-		if rm.QtyUsed <= 0 || !found || rm.IsWIP {
+		// Stok hanya dikurangi kalau qty > 0.
+		// [wip-source] Material WIP tidak memotong stok.
+		if rm.QtyUsed <= 0 || rm.IsWIP {
 			continue
 		}
 
-		// 2) kurangi stok RM
-		if _, _, err := s.repoProduction.DecreaseRawMaterialStock(ctx, master.ID, rm.QtyUsed); err != nil {
-			return err
-		}
+		if found {
+			// 2) kurangi stok RM
+			if _, _, err := s.repoProduction.DecreaseRawMaterialStock(ctx, master.ID, rm.QtyUsed); err != nil {
+				return err
+			}
 
-		// 3) audit trail inventory
-		ref := woNumber
-		src := "wo_scan"
-		entityID := master.ID
-		by := scannedBy
-		if err := s.repoProduction.InsertInventoryMovementLog(ctx, models.InventoryMovementLog{
-			MovementCategory: "raw_material",
-			MovementType:     "outgoing",
-			UniqCode:         master.UniqCode,
-			EntityID:         &entityID,
-			QtyChange:        -rm.QtyUsed,
-			ReferenceID:      &ref,
-			SourceFlag:       &src,
-			LoggedBy:         &by,
-			LoggedAt:         now,
-		}); err != nil {
-			return err
+			// 3) audit trail inventory
+			ref := woNumber
+			src := "wo_scan"
+			entityID := master.ID
+			by := scannedBy
+			if err := s.repoProduction.InsertInventoryMovementLog(ctx, models.InventoryMovementLog{
+				MovementCategory: "raw_material",
+				MovementType:     "outgoing",
+				UniqCode:         master.UniqCode,
+				EntityID:         &entityID,
+				QtyChange:        -rm.QtyUsed,
+				ReferenceID:      &ref,
+				SourceFlag:       &src,
+				LoggedBy:         &by,
+				LoggedAt:         now,
+			}); err != nil {
+				return err
+			}
+		} else if code != "" {
+			// FG fallback: jika material tidak ditemukan di master RM, asumsikan Finished Goods
+			var fg struct {
+				ID       int64
+				StockQty float64
+			}
+			err := s.db.WithContext(ctx).Raw("SELECT id, stock_qty FROM finished_goods WHERE uniq_code = ?", code).Scan(&fg).Error
+			if err == nil && fg.ID > 0 {
+				before := fg.StockQty
+				after := before - rm.QtyUsed
+				if after < 0 {
+					after = 0
+				}
+				if err := s.db.WithContext(ctx).Exec(`
+					UPDATE finished_goods
+					SET stock_qty = ?, updated_at = ?
+					WHERE id = ?
+				`, after, now, fg.ID).Error; err != nil {
+					return err
+				}
+				ref := woNumber
+				src := "wo_scan"
+				by := scannedBy
+				notes := "Used in production scan out"
+				
+				// 1. Tulis ke inventory_movement_logs
+				if err := s.repoProduction.InsertInventoryMovementLog(ctx, models.InventoryMovementLog{
+					MovementCategory: "finished_goods",
+					MovementType:     "outgoing",
+					UniqCode:         code,
+					EntityID:         &fg.ID,
+					QtyChange:        -rm.QtyUsed,
+					ReferenceID:      &ref,
+					SourceFlag:       &src,
+					LoggedBy:         &by,
+					LoggedAt:         now,
+				}); err != nil {
+					return err
+				}
+				
+				// 2. Tulis ke fg_movement_logs
+				if err := s.appendFGMovementLog(s.db.WithContext(ctx), fg.ID, code, "outgoing", -rm.QtyUsed, before, after, &ref, nil, &notes, &by); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
@@ -2558,12 +2666,19 @@ func (s *service) ScanOutContext(
 				typeLabel = rmTypeLabel(meta.RawMaterialType)
 				avail = meta.StockQty
 				weight = meta.StockWeightKg
+			} else if l.UniqCode != "" {
+				if fgItem, err := s.repoProduction.FindItemByUniq(ctx, l.UniqCode); err == nil {
+					if fgItem.UOM != nil && *fgItem.UOM != "" {
+						uom = *fgItem.UOM
+					}
+					avail = fgItem.StockQty
+				}
 			}
 
 			// [wip-source] Material hasil proses sebelumnya memakai UNIQ yang
 			// sama dengan item WO ini, tetapi type_label-nya bisa "OTHER".
 			isWIP := strings.EqualFold(typeLabel, "WIP") ||
-				strings.EqualFold(l.UniqCode, item.ItemUniqCode)
+				(currentStepSeqOf(item) > 1 && strings.EqualFold(l.UniqCode, item.ItemUniqCode))
 			if isWIP {
 				typeLabel = "WIP"
 			}
@@ -3210,7 +3325,7 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 			QtyPerUniq:     bm.QtyPerUniq,
 			SpecWeightKg:   specWeight,
 			TypeLabel:      typeLabel,
-			IsWIP:          strings.EqualFold(typeLabel, "WIP") || strings.EqualFold(l.UniqCode, item.ItemUniqCode),
+			IsWIP:          strings.EqualFold(typeLabel, "WIP") || (currentStepSeqOf(item) > 1 && strings.EqualFold(l.UniqCode, item.ItemUniqCode)),
 			UOM:            uom,
 			AvailableStock: avail,
 			StockWeightKg:  weight,
