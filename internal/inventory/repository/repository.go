@@ -215,6 +215,8 @@ type IRepository interface {
 	ListRawMaterials(ctx context.Context, f ListFilter) ([]RawMaterialRow, int64, error)
 	GetRawMaterialStats(ctx context.Context) (*RMStats, error)
 	GetRawMaterialByID(ctx context.Context, id int64) (*invModels.RawMaterial, error)
+	// [rm-key] Cari RM lewat id numerik, uniq_code, atau uuid.
+	FindRawMaterialByKey(ctx context.Context, key string) (*invModels.RawMaterial, error)
 	CreateRawMaterial(ctx context.Context, rm *invModels.RawMaterial) error
 	BulkCreateRawMaterials(ctx context.Context, items []invModels.RawMaterial) error
 	UpdateRawMaterial(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.RawMaterial, error)
@@ -387,6 +389,72 @@ func (r *repo) GetRawMaterialByID(ctx context.Context, id int64) (*invModels.Raw
 		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material tidak ditemukan")
 	}
 	return &rm, err
+}
+
+// [rm-key] parseNumericKey: cek string murni angka tanpa import strconv.
+func parseNumericKey(s string) (int64, bool) {
+	if s == "" || len(s) > 18 {
+		return 0, false
+	}
+	var n int64
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int64(c-'0')
+	}
+	return n, n > 0
+}
+
+// FindRawMaterialByKey mencari satu Raw Material lewat beberapa jenis kunci:
+// id numerik (dipakai halaman detail ERP), uniq_code, atau uuid.
+//
+// Halaman detail ERP mengirim id dari list; kalau baris itu sudah hilang atau
+// id-nya berasal dari sumber lain, kita fallback ke uniq_code supaya tidak
+// langsung 404 "raw material tidak ditemukan".
+func (r *repo) FindRawMaterialByKey(ctx context.Context, key string) (*invModels.RawMaterial, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material tidak ditemukan")
+	}
+
+	if id, ok := parseNumericKey(key); ok {
+		var byID invModels.RawMaterial
+		err := r.db.WithContext(ctx).
+			Where("id = ? AND deleted_at IS NULL", id).
+			First(&byID).Error
+		if err == nil {
+			return &byID, nil
+		}
+		if err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+	}
+
+	var rm invModels.RawMaterial
+	err := r.db.WithContext(ctx).
+		Where("deleted_at IS NULL AND UPPER(uniq_code) = UPPER(?)", key).
+		First(&rm).Error
+	if err == nil {
+		return &rm, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+
+	if len(key) >= 32 && strings.Count(key, "-") == 4 {
+		err = r.db.WithContext(ctx).
+			Where("deleted_at IS NULL AND uuid::text = ?", key).
+			First(&rm).Error
+		if err == nil {
+			return &rm, nil
+		}
+		if err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+	}
+
+	return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material tidak ditemukan: "+key)
 }
 
 func (r *repo) CreateRawMaterial(ctx context.Context, rm *invModels.RawMaterial) error {

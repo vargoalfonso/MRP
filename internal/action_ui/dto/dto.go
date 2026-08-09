@@ -43,22 +43,22 @@ type RawMaterialInput struct {
 }
 
 type ScanInRequest struct {
-	WOID                 int64   `json:"wo_id" binding:"required"`
-	WOItemID             int64   `json:"wo_item_id"`
-	Uniq                 string  `json:"uniq" binding:"required"`
-	MachineID            string  `json:"machine_id"`      // optional
-	ProductionLine       string  `json:"production_line"` // optional
-	Qty                  float64 `json:"qty" binding:"required"`
-	Shift                string  `json:"shift" binding:"required"`
-	DandoriTime          string  `json:"dandori_time"`  // optional
-	SetupQCTime          string  `json:"setup_qc_time"` // optional
-	ScannedBy            string  `json:"scanned_by"`    // dari user login / optional override
-	ProductIssue         bool    `json:"product_issue"`
-	ProductIssueType     string  `json:"product_issue_type"`
+	WOID             int64   `json:"wo_id" binding:"required"`
+	WOItemID         int64   `json:"wo_item_id"`
+	Uniq             string  `json:"uniq" binding:"required"`
+	MachineID        string  `json:"machine_id"`      // optional
+	ProductionLine   string  `json:"production_line"` // optional
+	Qty              float64 `json:"qty" binding:"required"`
+	Shift            string  `json:"shift" binding:"required"`
+	DandoriTime      string  `json:"dandori_time"`  // optional
+	SetupQCTime      string  `json:"setup_qc_time"` // optional
+	ScannedBy        string  `json:"scanned_by"`    // dari user login / optional override
+	ProductIssue     bool    `json:"product_issue"`
+	ProductIssueType string  `json:"product_issue_type"`
 	// [rm-source] detail bebas untuk jenis issue "Lainnya"
-	ProductIssueNote     string  `json:"product_issue_note"`
-	ProductIssueDuration int64   `json:"product_issue_duration"`
-	IsWIP                bool    `json:"is_wip"`
+	ProductIssueNote     string `json:"product_issue_note"`
+	ProductIssueDuration int64  `json:"product_issue_duration"`
+	IsWIP                bool   `json:"is_wip"`
 
 	RawMaterials []RawMaterialInput `json:"raw_materials"`
 }
@@ -216,6 +216,7 @@ type WOListItem struct {
 	WOID           int64   `json:"wo_id"`
 	WONumber       string  `json:"wo_number"`
 	Status         string  `json:"status"`
+	WOType         string  `json:"wo_type"` // New | Assembly | Rework | Addendum
 	Model          string  `json:"model"`
 	PartName       string  `json:"part_name"`
 	ProductionLine string  `json:"production_line"`
@@ -257,12 +258,27 @@ type WODetailUniq struct {
 	MachineScanned bool                  `json:"machine_scanned"`
 	ProcessFlow    []WODetailProcessStep `json:"process_flow"`
 
-		SavedQty     float64                     `json:"saved_qty"`
+	SavedQty     float64                     `json:"saved_qty"`
 	DandoriTime  string                      `json:"dandori_time"`
 	SetupQCTime  string                      `json:"setup_qc_time"`
 	RawMaterials []ScanOutContextRawMaterial `json:"raw_materials"`
 
 	BomMaterials []BomMaterial `json:"bom_materials"`
+
+	// [wip-source] material WIP dari proses sebelumnya (hanya untuk process >= 2).
+	WIPMaterial *WIPMaterialDTO `json:"wip_material,omitempty"`
+}
+
+// WIPMaterialDTO = UNIQ semi-jadi hasil proses sebelumnya yang menjadi material
+// input untuk proses saat ini (Poka Yoke multi-process).
+type WIPMaterialDTO struct {
+	Uniq         string  `json:"uniq"`
+	ProcessName  string  `json:"process_name"`
+	PrevProcess  string  `json:"prev_process"`
+	OpSeq        int     `json:"op_seq"`
+	QtyAvailable float64 `json:"qty_available"`
+	UOM          string  `json:"uom"`
+	PartName     string  `json:"part_name"`
 }
 
 type BomMaterial struct {
@@ -284,7 +300,7 @@ type BomMaterial struct {
 	WeightKg      *float64 `json:"weight_kg"`
 	SupplierName  string   `json:"supplier_name"`
 
-	RMUUID          string  `json:"rm_uuid"`
+	RMUUID string `json:"rm_uuid"`
 	// [rm-source] uniq_code master Raw Material yang benar-benar dipakai
 	// untuk stok (mis. BR50), berbeda dari Uniq item BOM (mis. M19).
 	RMUniqCode      string  `json:"rm_uniq_code"`
@@ -314,6 +330,72 @@ type ScanOutRawMaterial struct {
 	UniqCode      string  `json:"uniq_code"`
 	PackingListRM string  `json:"packing_list_rm"`
 	QtyUsed       float64 `json:"qty_used"`
+	// [wip-source] material berasal dari WIP UNIQ proses sebelumnya; stok RM tidak dipotong.
+	IsWIP bool `json:"is_wip"`
+	// [repacking] alokasi pengurangan qty per packing/kanban + hasil repack.
+	Packings []ScanOutPacking `json:"packings"`
+}
+
+// ScanOutPacking = satu baris packing/kanban yang diatur lewat fitur Repacking.
+//
+//	DeductQty = jumlah yang diambil dari packing ini untuk scan out.
+//	FinalQty  = qty_current packing setelah repack (nilai absolut, sudah final).
+type ScanOutPacking struct {
+	PackingNumber string  `json:"packing_number"`
+	DNNumber      string  `json:"dn_number"`
+	DeductQty     float64 `json:"deduct_qty"`
+	FinalQty      float64 `json:"final_qty"`
+	// [packing-deduct] true = qty packing dikurangi sebesar DeductQty
+	// (alokasi packing dari Step 1, tanpa Repacking). false = FinalQty
+	// dipakai sebagai nilai absolut hasil Repacking (perilaku lama).
+	DeductOnly bool `json:"deduct_only"`
+}
+
+// RMPackingItem = satu packing/kanban milik satu Raw Material (uniq_code).
+type RMPackingItem struct {
+	DNNumber      *string `json:"dn_number"`
+	PackingNumber string  `json:"packing_number"`
+	Quantity      float64 `json:"quantity"`
+	QtyCurrent    float64 `json:"qty_current"`
+	QtyMax        float64 `json:"qty_max"`
+	Progress      int     `json:"progress"`
+	Status        *string `json:"status"`
+	WONumber      *string `json:"wo_number"`
+	Source        string  `json:"source"`
+}
+
+// RMPackingListResponse = balikan GET /production/rm-packing-list.
+type RMPackingListResponse struct {
+	UniqCode        string          `json:"uniq_code"`
+	Items           []RMPackingItem `json:"items"`
+	TotalPacking    int             `json:"total_packing"`
+	TotalQtyCurrent float64         `json:"total_qty_current"`
+	TotalQtyMax     float64         `json:"total_qty_max"`
+}
+
+// [repack-sisa] RMRepackMove = satu packing tujuan pemindahan sisa material.
+type RMRepackMove struct {
+	PackingNumber string  `json:"packing_number"`
+	DNNumber      string  `json:"dn_number"`
+	Qty           float64 `json:"qty"`
+}
+
+// RMRepackRequest = body POST /production/rm-repack.
+// Sisa qty di SourcePackingNumber dipindahkan ke packing tujuan yang masih
+// punya slot. Sisa yang tidak dipindah tetap tinggal di packing asal.
+type RMRepackRequest struct {
+	RMUUID              string         `json:"rm_uuid"`
+	Code                string         `json:"code"`
+	SourcePackingNumber string         `json:"source_packing_number"`
+	Moves               []RMRepackMove `json:"moves"`
+	ScannedBy           string         `json:"scanned_by"`
+}
+
+// RMRepackResponse = hasil repacking + daftar packing terbaru.
+type RMRepackResponse struct {
+	UniqCode string          `json:"uniq_code"`
+	Moved    float64         `json:"moved"`
+	Items    []RMPackingItem `json:"items"`
 }
 
 // Langkah proses lengkap untuk Poka Yoke (Step 1)
@@ -349,10 +431,10 @@ type ScanMachineResponse struct {
 type ScanOutContextRawMaterial struct {
 	RMUUID         string  `json:"rm_uuid"`
 	PackingListRM  string  `json:"packing_list_rm"`
-	MaterialCode   string  `json:"material_code"` 
-	Form           string  `json:"form"`         
-	QtyPerUniq     float64 `json:"qty_per_uniq"` 
-	SpecWeightKg   float64 `json:"spec_weight_kg"` 
+	MaterialCode   string  `json:"material_code"`
+	Form           string  `json:"form"`
+	QtyPerUniq     float64 `json:"qty_per_uniq"`
+	SpecWeightKg   float64 `json:"spec_weight_kg"`
 	TypeLabel      string  `json:"type_label"`
 	IsWIP          bool    `json:"is_wip"`
 	UOM            string  `json:"uom"`

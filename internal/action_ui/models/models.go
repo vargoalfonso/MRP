@@ -175,19 +175,27 @@ type ProcessFlow struct {
 }
 
 type RawMaterialLog struct {
-	ID         int64     `gorm:"primaryKey;autoIncrement;column:id"`
-	UUID       string    `gorm:"column:uuid"`
-	WOID       int64     `gorm:"column:wo_id"`
-	WOItemID   int64     `gorm:"column:wo_item_id"`
-	UniqCode   string    `gorm:"column:uniq_code"`
-	RMUUID     string    `gorm:"column:rm_uuid"`
-	PartNumber string    `gorm:"column:part_number"`
-	PartName   string    `gorm:"column:part_name"`
-	UOM        string    `gorm:"column:uom"`
-	QtyUsed    float64   `gorm:"column:qty_used"`
-	ScannedBy  string    `gorm:"column:scanned_by"`
-	ScannedAt  time.Time `gorm:"column:scanned_at"`
-	CreatedAt  time.Time `gorm:"column:created_at"`
+	ID       int64  `gorm:"primaryKey;autoIncrement;column:id"`
+	UUID     string `gorm:"column:uuid"`
+	WOID     int64  `gorm:"column:wo_id"`
+	WOItemID int64  `gorm:"column:wo_item_id"`
+	UniqCode string `gorm:"column:uniq_code"`
+	RMUUID   string `gorm:"column:rm_uuid"`
+
+	PartNumber string  `gorm:"column:part_number"`
+	PartName   string  `gorm:"column:part_name"`
+	UOM        string  `gorm:"column:uom"`
+	QtyUsed    float64 `gorm:"column:qty_used"`
+
+	// [proc-scope] Step/proses pemilik log ini. Satu WO item dipakai untuk
+	// SEMUA proses, jadi tanpa kolom ini log RM proses 1 ikut terbaca di
+	// proses 2 (daftar material & Step 2 jadi salah).
+	ProcessName string `gorm:"column:process_name;size:100;index"`
+	StepSeq     int    `gorm:"column:step_seq;index"`
+
+	ScannedBy string    `gorm:"column:scanned_by"`
+	ScannedAt time.Time `gorm:"column:scanned_at"`
+	CreatedAt time.Time `gorm:"column:created_at"`
 }
 
 func (RawMaterialLog) TableName() string { return "raw_material_logs" }
@@ -276,6 +284,11 @@ type WIPItem struct {
 	ProcessName string `gorm:"column:process_name"`
 	MachineName string `gorm:"column:machine_name"`
 	OpSeq       int    `gorm:"column:op_seq"`
+
+	// [wip-scope] Proses yang MENGHASILKAN stok ini. Dipakai supaya baris
+	// antrean (queue) tampil sebagai hasil proses sebelumnya, bukan seolah
+	// proses berikutnya sudah berjalan.
+	FromProcess string `gorm:"column:from_process;size:100"`
 
 	Seq int `gorm:"column:seq"`
 	// 🔥 dari work_order_items

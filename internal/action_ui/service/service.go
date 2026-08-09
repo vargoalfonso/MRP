@@ -61,6 +61,11 @@ type IService interface {
 
 	ScanOutContext(ctx context.Context, woNumber string) (*dto.ScanOutContextResponse, error)
 
+	// [repacking] list packing/kanban milik satu Raw Material (buat modal Repacking).
+	RMPackingList(ctx context.Context, rmUUID, code string) (*dto.RMPackingListResponse, error)
+	// [repack-sisa] pindahkan sisa material ke packing list RM lain.
+	RMRepack(ctx context.Context, req dto.RMRepackRequest) (*dto.RMRepackResponse, error)
+
 	// =============================
 	// Product Return (BRD)
 	// =============================
@@ -239,7 +244,8 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 
 	if item.ScanInCount > item.ScanOutCount {
 		now := time.Now()
-		if err := s.repoProduction.DeleteRawMaterialLogsByWOItemID(ctx, item.ID); err != nil {
+		// [proc-scope] jangan hapus log RM milik proses lain.
+		if err := s.repoProduction.DeleteRawMaterialLogsByWOItemStep(ctx, item.ID, currentStepSeqOf(item)); err != nil {
 			return err
 		}
 		if err := s.saveRawMaterialLogs(ctx, item, req.RawMaterials, req.ScannedBy, now); err != nil {
@@ -375,12 +381,12 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 			ProductionLine: productionLine,
 			IssueType:      req.ProductIssueType,
 			// [rm-source] detail bebas untuk jenis issue "Lainnya"
-			IssueNote:      strings.TrimSpace(req.ProductIssueNote),
-			IssueDuration:  req.ProductIssueDuration,
-			QtyAffected:    req.Qty,
-			ReportedBy:     req.ScannedBy,
-			ReportedAt:     now,
-			CreatedAt:      now,
+			IssueNote:     strings.TrimSpace(req.ProductIssueNote),
+			IssueDuration: req.ProductIssueDuration,
+			QtyAffected:   req.Qty,
+			ReportedBy:    req.ScannedBy,
+			ReportedAt:    now,
+			CreatedAt:     now,
 		}
 
 		if err := s.repoProduction.InsertProductIssue(ctx, issue); err != nil {
@@ -877,7 +883,7 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 		// INSERT QC LOG
 		// =====================================
 		qc := models.QCLog{
-			UUID:        uuid.New().String(),
+			UUID: uuid.New().String(),
 			// [qc-round-db] scope ronde ke qc_task_id (unik per kanban)
 			QCTaskID:    &req.QCTaskID,
 			WOID:        &item.WOID,
@@ -960,118 +966,16 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 }
 
 func (s *service) advanceProcessAfterScanOut(ctx context.Context, tx *gorm.DB, item *models.WorkOrderItem, qtyPass float64, performedBy string) error {
+	_ = qtyPass
+	_ = performedBy
 
-	flow := resolveProcessFlow(*item)
-
-	var wo models.WorkOrder
-	if err := tx.Where("id = ?", item.WOID).
-		First(&wo).Error; err != nil {
-		return err
-	}
-
-	now := time.Now()
-
-	totalStep := len(flow)
-	currentIndex := getCurrentIndex(item.CurrentStepSeq, totalStep)
-	currentStep := flow[currentIndex]
-
-	// =====================================
-	// CLOSE CURRENT WIP
-	// =====================================
-	var currentWIP models.WIPItem
-
-	if err := tx.
-		Where(`
-			uniq = ?
-			AND process_name = ?
-			AND status = ?
-		`,
-			item.ItemUniqCode,
-			currentStep.ProcessName,
-			"process",
-		).
-		Order("id desc").
-		First(&currentWIP).Error; err == nil {
-
-		currentWIP.QtyOut += int(qtyPass)
-		currentWIP.QtyRemaining =
-			currentWIP.QtyIn - currentWIP.QtyOut
-
-		currentWIP.Status = "done"
-		currentWIP.UpdatedAt = now
-
-		if err := tx.Save(&currentWIP).Error; err != nil {
-			return err
-		}
-
-		_ = tx.Create(&models.WIPLog{
-			WipItemID: currentWIP.ID,
-			Action:    "SCAN_OUT_DONE",
-			Qty:       int(qtyPass),
-			CreatedAt: now,
-		}).Error
-	}
-
-	// =====================================
-	// JIKA MASIH ADA NEXT PROCESS
-	// =====================================
-	if currentIndex < totalStep-1 {
-
-		nextStep := flow[currentIndex+1]
-
-		nextWIP := models.WIPItem{
-			WipID: currentWIP.WipID,
-
-			Uniq:          item.ItemUniqCode,
-			PackingNumber: item.KanbanNumber,
-			WipType:       "production",
-
-			ProcessName: nextStep.ProcessName,
-			MachineName: derefString(nextStep.MachineName),
-			OpSeq:       nextStep.OpSeq,
-			Seq:         currentIndex + 2, // step ke-2 / ke-3
-
-			UOM: item.UOM,
-
-			Stock:        int(qtyPass),
-			QtyIn:        int(qtyPass),
-			QtyOut:       0,
-			QtyRemaining: int(qtyPass),
-
-			Status: "queue",
-
-			CreatedAt: now,
-			UpdatedAt: now,
-		}
-
-		if err := tx.Create(&nextWIP).Error; err != nil {
-			return err
-		}
-
-		_ = tx.Create(&models.WIPLog{
-			WipItemID: nextWIP.ID,
-			Action:    "TRANSFER_IN",
-			Qty:       int(qtyPass),
-			CreatedAt: now,
-		}).Error
-
-		// =====================================
-		// PINDAH STEP
-		// pakai 1,2,3
-		// =====================================
-		item.CurrentStepSeq = currentIndex + 2
-		item.Status = "PENDING"
-		item.LastScannedProcess = ""
-
-		return tx.Save(item).Error
-	}
-
-	// =====================================
-	// LAST PROCESS
-	// =====================================
-	// RM processing outputs a raw material, not a finished good: route the
-	// output into raw_materials (target += output, source -= input) with movement
-	// logs, and skip the finished-goods path entirely.
+	// [bug4] Scan Out TIDAK lagi memindahkan barang ke WIP / Finished Goods
+	// maupun menaikkan step proses. Perpindahan ke WIP (proses berikutnya) atau
+	// ke Finished Goods (proses terakhir) dilakukan di QC Process Round 3
+	// (QCFinish) berdasarkan Total Production Quantity.
+	//
+	// Pengecualian: WO rm_processing tidak melalui QC Round 3, jadi tetap
+	// diselesaikan langsung di sini (output berupa raw material).
 	var woKind string
 	if err := tx.Table("work_orders").Select("wo_kind").
 		Where("id = ?", item.WOID).Take(&woKind).Error; err != nil {
@@ -1086,16 +990,120 @@ func (s *service) advanceProcessAfterScanOut(ctx context.Context, tx *gorm.DB, i
 		return tx.Save(item).Error
 	}
 
-	// =====================================
-	// LAST PROCESS -> FINISHED GOODS
-	// =====================================
+	// Standar: tandai proses ini menunggu QC Final (Round 3). Barang belum
+	// masuk WIP/FG sampai QC Round 3 selesai.
+	item.Status = "WAITING_FINAL_QC"
+	item.LastScannedProcess = ""
+	return tx.Save(item).Error
+}
+
+// advanceProcessAfterQCFinish dijalankan saat QC Process Round 3 (QCFinish)
+// selesai. Berdasarkan Total Production Quantity, ia memutuskan tujuan barang:
+//   - jika MASIH ADA proses berikutnya -> qty masuk ke WIP (queue) untuk proses
+//     berikutnya, step dinaikkan, item kembali PENDING (siap Scan In lagi).
+//   - jika ini proses TERAKHIR          -> qty masuk ke Finished Goods.
+//
+// WIP proses saat ini (status "process") ditutup (status "done") di sini.
+func (s *service) advanceProcessAfterQCFinish(ctx context.Context, tx *gorm.DB, item *models.WorkOrderItem, wo models.WorkOrder, qtyProduced float64, performedBy string, now time.Time) error {
+	if qtyProduced <= 0 {
+		return nil
+	}
+
+	flow := resolveProcessFlow(*item)
+	totalStep := len(flow)
+	if totalStep == 0 {
+		return nil
+	}
+	currentIndex := getCurrentIndex(item.CurrentStepSeq, totalStep)
+	currentStep := flow[currentIndex]
+
+	// Tutup WIP proses saat ini.
+	var currentWIP models.WIPItem
+	haveCurrentWIP := false
+	// [wip-scope] WAJIB dibatasi ke WO ini. Tanpa filter wo_id, UNIQ yang sama
+	// di WO lain bisa ikut tertutup dan WIP proses berikutnya dibuat di header
+	// WO yang salah -> material WIP proses 2 tidak ketemu.
+	if err := tx.
+		Where(`wip_id IN (SELECT id FROM wips WHERE wo_id = ?)
+			AND uniq = ? AND process_name = ? AND status = ?`,
+			item.WOID, item.ItemUniqCode, currentStep.ProcessName, "process").
+		Order("id desc").
+		First(&currentWIP).Error; err == nil {
+		haveCurrentWIP = true
+		currentWIP.QtyOut += int(qtyProduced)
+		currentWIP.QtyRemaining = currentWIP.QtyIn - currentWIP.QtyOut
+		if currentWIP.QtyRemaining < 0 {
+			currentWIP.QtyRemaining = 0
+		}
+		currentWIP.Status = "done"
+		currentWIP.UpdatedAt = now
+		if err := tx.Save(&currentWIP).Error; err != nil {
+			return err
+		}
+		_ = tx.Create(&models.WIPLog{
+			WipItemID: currentWIP.ID,
+			Action:    "SCAN_OUT_DONE",
+			Qty:       int(qtyProduced),
+			CreatedAt: now,
+		}).Error
+	}
+
+	// Masih ada proses berikutnya -> masuk WIP (queue).
+	if currentIndex < totalStep-1 {
+		nextStep := flow[currentIndex+1]
+
+		wipHeaderID := int64(0)
+		if haveCurrentWIP {
+			wipHeaderID = currentWIP.WipID
+		} else {
+			wip, err := s.repoProduction.FindOrCreateWIP(ctx, item.WOID)
+			if err != nil {
+				return err
+			}
+			wipHeaderID = wip.ID
+		}
+
+		nextWIP := models.WIPItem{
+			WipID:         wipHeaderID,
+			Uniq:          item.ItemUniqCode,
+			PackingNumber: item.KanbanNumber,
+			WipType:       "production",
+			ProcessName:   nextStep.ProcessName,
+			// [wip-scope] stok ini HASIL proses sekarang, belum diproses oleh
+			// proses berikutnya. Dipakai untuk tampilan daftar WIP.
+			FromProcess: currentStep.ProcessName,
+			MachineName:   derefString(nextStep.MachineName),
+			OpSeq:         nextStep.OpSeq,
+			Seq:           currentIndex + 2,
+			UOM:           item.UOM,
+			Stock:         int(qtyProduced),
+			QtyIn:         int(qtyProduced),
+			QtyOut:        0,
+			QtyRemaining:  int(qtyProduced),
+			Status:        "queue",
+			CreatedAt:     now,
+			UpdatedAt:     now,
+		}
+		if err := tx.Create(&nextWIP).Error; err != nil {
+			return err
+		}
+		_ = tx.Create(&models.WIPLog{
+			WipItemID: nextWIP.ID,
+			Action:    "TRANSFER_IN",
+			Qty:       int(qtyProduced),
+			CreatedAt: now,
+		}).Error
+
+		item.CurrentStepSeq = currentIndex + 2
+		item.Status = "PENDING"
+		item.LastScannedProcess = ""
+		return tx.Save(item).Error
+	}
+
+	// Proses terakhir -> Finished Goods.
 	var fg models.FinishedGoods
-
-	err := tx.Where("uniq_code = ?", item.ItemUniqCode).
-		First(&fg).Error
-
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-
+	errFG := tx.Where("uniq_code = ?", item.ItemUniqCode).First(&fg).Error
+	if errors.Is(errFG, gorm.ErrRecordNotFound) {
 		fg = models.FinishedGoods{
 			UUID:       uuid.New().String(),
 			UniqCode:   item.ItemUniqCode,
@@ -1104,70 +1112,51 @@ func (s *service) advanceProcessAfterScanOut(ctx context.Context, tx *gorm.DB, i
 			PartName:   item.PartName,
 			Model:      item.Model,
 			WONumber:   wo.WONumber,
-			StockQty:   qtyPass,
+			StockQty:   qtyProduced,
 			UOM:        item.UOM,
 			Status:     "AVAILABLE",
 			CreatedAt:  now,
 			UpdatedAt:  now,
 		}
-
 		if err := tx.Create(&fg).Error; err != nil {
 			return err
 		}
-
-		if err := s.createInventoryMovementLog(
-			tx,
-			"finished_goods",
-			"incoming",
-			item.ItemUniqCode,
-			&fg.ID,
-			0,
-			qtyPass,
-			qtyPass,
-			&wo.WONumber,
-			stringPtr("SCAN_OUT"),
-			stringPtr("Create FG from final production process"),
-			stringPtr(performedBy),
-		); err != nil {
+		if err := s.createInventoryMovementLog(tx, "finished_goods", "incoming",
+			item.ItemUniqCode, &fg.ID, 0, qtyProduced, qtyProduced,
+			&wo.WONumber, stringPtr("QC_FINISH"),
+			stringPtr("Create FG from QC Finish (proses terakhir)"), stringPtr(performedBy)); err != nil {
 			return err
 		}
-
-	} else if err == nil {
-
+		if err := s.appendFGMovementLog(tx, fg.ID, item.ItemUniqCode, "incoming_production",
+			qtyProduced, 0, qtyProduced,
+			&wo.WONumber, nil, stringPtr("Masuk FG dari QC Finish (buat baru)"), stringPtr(performedBy)); err != nil {
+			return err
+		}
+	} else if errFG == nil {
 		beforeQty := fg.StockQty
-		afterQty := beforeQty + qtyPass
-
+		afterQty := beforeQty + qtyProduced
 		fg.StockQty = afterQty
 		fg.UpdatedAt = now
-
 		if err := tx.Save(&fg).Error; err != nil {
 			return err
 		}
-
-		if err := s.createInventoryMovementLog(
-			tx,
-			"finished_goods",
-			"incoming",
-			item.ItemUniqCode,
-			&fg.ID,
-			beforeQty,
-			qtyPass,
-			afterQty,
-			&wo.WONumber,
-			stringPtr("SCAN_OUT"),
-			stringPtr("Add stock from final production process"),
-			stringPtr(performedBy),
-		); err != nil {
+		if err := s.createInventoryMovementLog(tx, "finished_goods", "incoming",
+			item.ItemUniqCode, &fg.ID, beforeQty, qtyProduced, afterQty,
+			&wo.WONumber, stringPtr("QC_FINISH"),
+			stringPtr("Add FG stock from QC Finish (proses terakhir)"), stringPtr(performedBy)); err != nil {
 			return err
 		}
-
+		if err := s.appendFGMovementLog(tx, fg.ID, item.ItemUniqCode, "incoming_production",
+			qtyProduced, beforeQty, afterQty,
+			&wo.WONumber, nil, stringPtr("Masuk FG dari QC Finish (tambah stok)"), stringPtr(performedBy)); err != nil {
+			return err
+		}
 	} else {
-		return err
+		return errFG
 	}
 
 	item.Status = "FINISHED"
 	item.LastScannedProcess = ""
-
 	return tx.Save(item).Error
 }
 
@@ -1338,60 +1327,12 @@ func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, perform
 			return err
 		}
 
-		// ===== 1. FINISHED GOODS dari Total Production Quantity =====
+		// ===== 1. ROUTING PRODUKSI (QC Round 3): WIP proses berikutnya / Finished Goods =====
+		// [bug4] Total Production Quantity menentukan tujuan barang:
+		//   - masih ada proses berikutnya -> masuk WIP (queue) & step dinaikkan
+		//   - proses terakhir             -> masuk Finished Goods
 		if req.TotalProductionQty > 0 {
-			var fg models.FinishedGoods
-			err := tx.Where("uniq_code = ?", item.ItemUniqCode).First(&fg).Error
-
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				fg = models.FinishedGoods{
-					UUID:       uuid.New().String(),
-					UniqCode:   item.ItemUniqCode,
-					ItemID:     item.ID,
-					PartNumber: item.PartNumber,
-					PartName:   item.PartName,
-					Model:      item.Model,
-					WONumber:   wo.WONumber,
-					StockQty:   req.TotalProductionQty,
-					UOM:        item.UOM,
-					Status:     "AVAILABLE",
-					CreatedAt:  now,
-					UpdatedAt:  now,
-				}
-				if err := tx.Create(&fg).Error; err != nil {
-					return err
-				}
-				if err := s.createInventoryMovementLog(tx, "finished_goods", "incoming",
-					item.ItemUniqCode, &fg.ID, 0, req.TotalProductionQty, req.TotalProductionQty,
-					&wo.WONumber, stringPtr("QC_FINISH"),
-					stringPtr("Create FG from QC Finish"), stringPtr(performedBy)); err != nil {
-					return err
-				}
-				if err := s.appendFGMovementLog(tx, fg.ID, item.ItemUniqCode, "incoming_production",
-					req.TotalProductionQty, 0, req.TotalProductionQty,
-					&wo.WONumber, nil, stringPtr("Masuk FG dari QC Finish (buat baru)"), stringPtr(performedBy)); err != nil {
-					return err
-				}
-			} else if err == nil {
-				beforeQty := fg.StockQty
-				afterQty := beforeQty + req.TotalProductionQty
-				fg.StockQty = afterQty
-				fg.UpdatedAt = now
-				if err := tx.Save(&fg).Error; err != nil {
-					return err
-				}
-				if err := s.createInventoryMovementLog(tx, "finished_goods", "incoming",
-					item.ItemUniqCode, &fg.ID, beforeQty, req.TotalProductionQty, afterQty,
-					&wo.WONumber, stringPtr("QC_FINISH"),
-					stringPtr("Add FG stock from QC Finish"), stringPtr(performedBy)); err != nil {
-					return err
-				}
-				if err := s.appendFGMovementLog(tx, fg.ID, item.ItemUniqCode, "incoming_production",
-					req.TotalProductionQty, beforeQty, afterQty,
-					&wo.WONumber, nil, stringPtr("Masuk FG dari QC Finish (tambah stok)"), stringPtr(performedBy)); err != nil {
-					return err
-				}
-			} else {
+			if err := s.advanceProcessAfterQCFinish(ctx, tx, &item, wo, req.TotalProductionQty, performedBy, now); err != nil {
 				return err
 			}
 		}
@@ -1417,13 +1358,10 @@ func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, perform
 			}
 		}
 
-		// ===== 4. MOVE WIP -> FINISHED GOODS (kurangi WIP + tulis history) =====
-		moveWIPQty := req.TotalProductionQty + req.NGDefectQty + req.TotalScrapInBox
-		if moveWIPQty > 0 {
-			if err := s.reduceWIPToFinishedGoods(tx, req.WOID, item.ItemUniqCode, wo.WONumber, moveWIPQty, performedBy, now); err != nil {
-				return err
-			}
-		}
+		// ===== 4. (dihapus) MOVE WIP -> FG kini ditangani advanceProcessAfterQCFinish =====
+		// [bug4] Perpindahan WIP -> Finished Goods (atau ke WIP proses berikutnya)
+		// sudah ditangani di advanceProcessAfterQCFinish (section 1), jadi tidak ada
+		// lagi reduceWIPToFinishedGoods di sini.
 
 		// [qc-reason] keterangan defect (NG) / scrap dari Final Inspection.
 		// Hanya ditulis kalau memang diisi, supaya alur lama tetap jalan.
@@ -1537,20 +1475,20 @@ func (s *service) createReworkWorkOrder(tx *gorm.DB, item models.WorkOrderItem, 
 
 	woUUID := uuid.New().String()
 	woRow := map[string]interface{}{
-		"uuid":            woUUID,
-		"wo_number":       woNumber,
-		"wo_type":         "Rework", // enum work_orders: New | Assembly | Rework | Addendum
-		"wo_kind":         "standard",
-		"reference_wo":    srcWO.WONumber,
+		"uuid":         woUUID,
+		"wo_number":    woNumber,
+		"wo_type":      "Rework", // enum work_orders: New | Assembly | Rework | Addendum
+		"wo_kind":      "standard",
+		"reference_wo": srcWO.WONumber,
 		// [wo-defect-reason-scope] simpan wo_item SUMBER (kanban spesifik) agar detail WO
 		// rework hanya menampilkan Reason/Info Defect milik kanban ini, bukan gabungan
 		// semua kanban dengan uniq yang sama.
 		"reference_wo_item_id": item.ID,
-		"status":          "Draft",
-		"approval_status": "Pending",
-		"created_date":    now,
-		"operator_name":   performedBy,
-		"model":           item.Model,
+		"status":               "Draft",
+		"approval_status":      "Pending",
+		"created_date":         now,
+		"operator_name":        performedBy,
+		"model":                item.Model,
 		"notes": fmt.Sprintf("Auto Re-Work dari QC Finish WO %s (UNIQ %s), NG %.4f",
 			srcWO.WONumber, item.ItemUniqCode, qty),
 		"created_at": now,
@@ -2019,6 +1957,7 @@ func (s *service) WOList(ctx context.Context, search string) ([]dto.WOListItem, 
 			WOID:           r.ID,
 			WONumber:       r.WONumber,
 			Status:         r.Status,
+			WOType:         r.WOType,
 			Model:          r.Model,
 			PartName:       r.PartName,
 			ProductionLine: r.ProductionLine,
@@ -2058,6 +1997,28 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 		nextProcess := ""
 		if currentIndex+1 < totalStep {
 			nextProcess = flow[currentIndex+1].ProcessName
+		}
+
+		// [wip-source] Untuk process >= 2, sediakan WIP UNIQ dari proses sebelumnya
+		// sebagai material input (menggantikan daftar BOM yang fix).
+		var wipMaterial *dto.WIPMaterialDTO
+		if currentIndex >= 1 {
+			prevProcess := flow[currentIndex-1].ProcessName
+			if wi, e := s.repoProduction.FindIncomingWIPForItem(ctx, item.WOID, item.ItemUniqCode, currentProcess); e == nil {
+				qtyAvail := float64(wi.QtyRemaining)
+				if qtyAvail <= 0 {
+					qtyAvail = float64(wi.QtyIn)
+				}
+				wipMaterial = &dto.WIPMaterialDTO{
+					Uniq:         item.ItemUniqCode,
+					ProcessName:  currentProcess,
+					PrevProcess:  prevProcess,
+					OpSeq:        wi.OpSeq,
+					QtyAvailable: qtyAvail,
+					UOM:          item.UOM,
+					PartName:     item.PartName,
+				}
+			}
 		}
 
 		machineNumber := ""
@@ -2113,6 +2074,7 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 			SetupQCTime:    setupQC,
 			RawMaterials:   rmList,
 			BomMaterials:   bomList,
+			WIPMaterial:    wipMaterial,
 		})
 	}
 
@@ -2141,27 +2103,84 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 // NEW — Lookup RM (Scan RM 2.2)
 // =====================================
 func (s *service) RawMaterialLookup(ctx context.Context, code string) (*dto.RawMaterialLookupResponse, error) {
-	rm, err := s.repoProduction.FindRawMaterialByCode(ctx, code)
-	if err != nil {
-		return nil, err
+	codeStr := strings.TrimSpace(code)
+
+	derefStr := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
 	}
-	var weight float64
-	if rm.StockWeightKg != nil {
-		weight = *rm.StockWeightKg
+
+	// 1. Try to find as WO Number (for wip type assembly)
+	if wo, err := s.repoProduction.FindWOByNumber(ctx, codeStr); err == nil && wo.ID != 0 {
+		items, err := s.repoProduction.FindWOItemsByWOID(ctx, wo.ID)
+		if err == nil && len(items) > 0 {
+			firstItem := items[0]
+			return &dto.RawMaterialLookupResponse{
+				RMID:              0,
+				RMUUID:            "",
+				UniqCode:          firstItem.ItemUniqCode,
+				PartNumber:        firstItem.PartNumber,
+				PartName:          firstItem.PartName,
+				RawMaterialType:   "wip",
+				TypeLabel:         "WIP",
+				UOM:               firstItem.UOM,
+				AvailableStock:    firstItem.TotalGoodQty,
+				StockWeightKg:     0,
+				WarehouseLocation: "",
+			}, nil
+		}
 	}
-	return &dto.RawMaterialLookupResponse{
-		RMID:              rm.ID,
-		RMUUID:            rm.UUID,
-		UniqCode:          rm.UniqCode,
-		PartNumber:        rm.PartNumber,
-		PartName:          rm.PartName,
-		RawMaterialType:   rm.RawMaterialType,
-		TypeLabel:         rawMaterialTypeLabel(rm.RawMaterialType),
-		UOM:               rm.UOM,
-		AvailableStock:    rm.StockQty,
-		StockWeightKg:     weight,
-		WarehouseLocation: rm.WarehouseLocation,
-	}, nil
+
+	searchCode := codeStr
+	// 2. Try to find by packing number
+	if uniq, err := s.repoProduction.LookupItemUniqByPacking(ctx, codeStr); err == nil && uniq != "" {
+		searchCode = uniq
+	}
+
+	// 3. Try to find as master RM
+	rm, err := s.repoProduction.FindRawMaterialByCode(ctx, searchCode)
+	if err == nil {
+		var weight float64
+		if rm.StockWeightKg != nil {
+			weight = *rm.StockWeightKg
+		}
+		return &dto.RawMaterialLookupResponse{
+			RMID:              rm.ID,
+			RMUUID:            rm.UUID,
+			UniqCode:          rm.UniqCode,
+			PartNumber:        rm.PartNumber,
+			PartName:          rm.PartName,
+			RawMaterialType:   rm.RawMaterialType,
+			TypeLabel:         rawMaterialTypeLabel(rm.RawMaterialType),
+			UOM:               rm.UOM,
+			AvailableStock:    rm.StockQty,
+			StockWeightKg:     weight,
+			WarehouseLocation: rm.WarehouseLocation,
+		}, nil
+	}
+
+	// 4. If not found in RM, try to find as Finished Goods / Item
+	item, errItem := s.repoProduction.FindItemByUniq(ctx, searchCode)
+	if errItem == nil {
+		return &dto.RawMaterialLookupResponse{
+			RMID:              item.ID,
+			RMUUID:            "",
+			UniqCode:          item.UniqCode,
+			PartNumber:        derefStr(item.PartNumber),
+			PartName:          derefStr(item.PartName),
+			RawMaterialType:   "wip", // Label as WIP so frontend treats it correctly
+			TypeLabel:         "WIP",
+			UOM:               derefStr(item.UOM),
+			AvailableStock:    item.StockQty,
+			StockWeightKg:     0,
+			WarehouseLocation: "",
+		}, nil
+	}
+
+	// Return original error if not found anywhere
+	return nil, err
 }
 
 func rawMaterialTypeLabel(t string) string {
@@ -2182,9 +2201,30 @@ func rawMaterialTypeLabel(t string) string {
 // =====================================
 // NEW — helper simpan pemakaian RM (scan in: planned)
 // =====================================
-func (s *service) saveRawMaterialLogs(ctx context.Context, item models.WorkOrderItem, rms []dto.RawMaterialInput, scannedBy string, now time.Time) error {
+// [proc-scope] Nomor step proses yang sedang berjalan pada satu WO item.
+func currentStepSeqOf(item models.WorkOrderItem) int {
+	flow := resolveProcessFlow(item)
+	if len(flow) == 0 {
+		return 1
+	}
+	return getCurrentIndex(item.CurrentStepSeq, len(flow)) + 1
+}
 
-	if err := s.repoProduction.DeleteRawMaterialLogsByWOItemID(ctx, item.ID); err != nil {
+// [proc-scope] Nama proses yang sedang berjalan pada satu WO item.
+func currentProcessNameOf(item models.WorkOrderItem) string {
+	flow := resolveProcessFlow(item)
+	if len(flow) == 0 {
+		return ""
+	}
+	return flow[getCurrentIndex(item.CurrentStepSeq, len(flow))].ProcessName
+}
+
+func (s *service) saveRawMaterialLogs(ctx context.Context, item models.WorkOrderItem, rms []dto.RawMaterialInput, scannedBy string, now time.Time) error {
+	// [proc-scope] Hanya log milik step proses ini yang ditimpa.
+	stepSeq := currentStepSeqOf(item)
+	procName := currentProcessNameOf(item)
+
+	if err := s.repoProduction.DeleteRawMaterialLogsByWOItemStep(ctx, item.ID, stepSeq); err != nil {
 		return err
 	}
 
@@ -2202,18 +2242,20 @@ func (s *service) saveRawMaterialLogs(ctx context.Context, item models.WorkOrder
 			}
 		}
 		if err := s.repoProduction.InsertRawMaterial(ctx, models.RawMaterialLog{
-			UUID:       uuid.New().String(),
-			WOID:       item.WOID,
-			WOItemID:   item.ID,
-			UniqCode:   rm.UniqCode,
-			RMUUID:     rm.RMUUID,
-			PartNumber: partNumber,
-			PartName:   partName,
-			UOM:        uom,
-			QtyUsed:    rm.Qty,
-			ScannedBy:  scannedBy,
-			ScannedAt:  now,
-			CreatedAt:  now,
+			UUID:        uuid.New().String(),
+			WOID:        item.WOID,
+			WOItemID:    item.ID,
+			UniqCode:    rm.UniqCode,
+			RMUUID:      rm.RMUUID,
+			PartNumber:  partNumber,
+			PartName:    partName,
+			UOM:         uom,
+			QtyUsed:     rm.Qty,
+			ProcessName: procName,
+			StepSeq:     stepSeq,
+			ScannedBy:   scannedBy,
+			ScannedAt:   now,
+			CreatedAt:   now,
 		}); err != nil {
 			return err
 		}
@@ -2230,7 +2272,11 @@ func sumScanOutRM(rms []dto.ScanOutRawMaterial) float64 {
 }
 
 func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrderItem, rms []dto.ScanOutRawMaterial, scannedBy, woNumber string, now time.Time) error {
-	if err := s.repoProduction.DeleteRawMaterialLogsByWOItemID(ctx, item.ID); err != nil {
+	// [proc-scope] Log RM dipisah per step proses.
+	stepSeq := currentStepSeqOf(item)
+	procName := currentProcessNameOf(item)
+
+	if err := s.repoProduction.DeleteRawMaterialLogsByWOItemStep(ctx, item.ID, stepSeq); err != nil {
 		return err
 	}
 
@@ -2262,49 +2308,128 @@ func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrder
 		// 1) catat pemakaian RM — SEMUA RM dicatat (termasuk qty 0) supaya
 		//    tetap tampil di done-view sesuai yang benar-benar discan-out.
 		if err := s.repoProduction.InsertRawMaterial(ctx, models.RawMaterialLog{
-			UUID:       uuid.New().String(),
-			WOID:       item.WOID,
-			WOItemID:   item.ID,
-			UniqCode:   code,
-			RMUUID:     rm.RMUUID,
-			PartNumber: partNumber,
-			PartName:   master.PartName,
-			UOM:        master.UOM,
-			QtyUsed:    rm.QtyUsed,
-			ScannedBy:  scannedBy,
-			ScannedAt:  now,
-			CreatedAt:  now,
+			UUID:        uuid.New().String(),
+			WOID:        item.WOID,
+			WOItemID:    item.ID,
+			UniqCode:    code,
+			RMUUID:      rm.RMUUID,
+			PartNumber:  partNumber,
+			PartName:    master.PartName,
+			UOM:         master.UOM,
+			QtyUsed:     rm.QtyUsed,
+			ProcessName: procName,
+			StepSeq:     stepSeq,
+			ScannedBy:   scannedBy,
+			ScannedAt:   now,
+			CreatedAt:   now,
 		}); err != nil {
 			return err
 		}
 
-		// Stok hanya dikurangi kalau qty > 0 dan RM dikenal di master.
-		if rm.QtyUsed <= 0 || !found {
+		// [repacking] Terapkan penyesuaian qty per packing/kanban dari UI Repacking.
+		// FinalQty = qty_current packing setelah repack (nilai absolut).
+		if len(rm.Packings) > 0 {
+			uniqToDeduct := code
+			if found && master.UniqCode != "" {
+				uniqToDeduct = master.UniqCode
+			}
+			for _, p := range rm.Packings {
+				if strings.TrimSpace(p.PackingNumber) == "" {
+					continue
+				}
+				// [packing-deduct] DeductOnly = packing dipakai apa adanya dari
+				// alokasi Step 1 (tanpa Repacking): qty packing dikurangi
+				// relatif terhadap qty berjalan saat ini.
+				if p.DeductOnly {
+					if p.DeductQty <= 0 {
+						continue
+					}
+					if err := s.repoProduction.DeductPackingQty(ctx, uniqToDeduct, p.PackingNumber, p.DeductQty, now); err != nil {
+						return err
+					}
+					continue
+				}
+				if err := s.repoProduction.ApplyPackingQtyOpname(ctx, uniqToDeduct, p.PackingNumber, p.FinalQty, now); err != nil {
+					return err
+				}
+			}
+		}
+
+		// Stok hanya dikurangi kalau qty > 0.
+		// [wip-source] Material WIP tidak memotong stok.
+		if rm.QtyUsed <= 0 || rm.IsWIP {
 			continue
 		}
 
-		// 2) kurangi stok RM
-		if _, _, err := s.repoProduction.DecreaseRawMaterialStock(ctx, master.ID, rm.QtyUsed); err != nil {
-			return err
-		}
+		if found {
+			// 2) kurangi stok RM
+			if _, _, err := s.repoProduction.DecreaseRawMaterialStock(ctx, master.ID, rm.QtyUsed); err != nil {
+				return err
+			}
 
-		// 3) audit trail inventory
-		ref := woNumber
-		src := "wo_scan"
-		entityID := master.ID
-		by := scannedBy
-		if err := s.repoProduction.InsertInventoryMovementLog(ctx, models.InventoryMovementLog{
-			MovementCategory: "raw_material",
-			MovementType:     "outgoing",
-			UniqCode:         master.UniqCode,
-			EntityID:         &entityID,
-			QtyChange:        -rm.QtyUsed,
-			ReferenceID:      &ref,
-			SourceFlag:       &src,
-			LoggedBy:         &by,
-			LoggedAt:         now,
-		}); err != nil {
-			return err
+			// 3) audit trail inventory
+			ref := woNumber
+			src := "wo_scan"
+			entityID := master.ID
+			by := scannedBy
+			if err := s.repoProduction.InsertInventoryMovementLog(ctx, models.InventoryMovementLog{
+				MovementCategory: "raw_material",
+				MovementType:     "outgoing",
+				UniqCode:         master.UniqCode,
+				EntityID:         &entityID,
+				QtyChange:        -rm.QtyUsed,
+				ReferenceID:      &ref,
+				SourceFlag:       &src,
+				LoggedBy:         &by,
+				LoggedAt:         now,
+			}); err != nil {
+				return err
+			}
+		} else if code != "" {
+			// FG fallback: jika material tidak ditemukan di master RM, asumsikan Finished Goods
+			var fg struct {
+				ID       int64
+				StockQty float64
+			}
+			err := s.db.WithContext(ctx).Raw("SELECT id, stock_qty FROM finished_goods WHERE uniq_code = ?", code).Scan(&fg).Error
+			if err == nil && fg.ID > 0 {
+				before := fg.StockQty
+				after := before - rm.QtyUsed
+				if after < 0 {
+					after = 0
+				}
+				if err := s.db.WithContext(ctx).Exec(`
+					UPDATE finished_goods
+					SET stock_qty = ?, updated_at = ?
+					WHERE id = ?
+				`, after, now, fg.ID).Error; err != nil {
+					return err
+				}
+				ref := woNumber
+				src := "wo_scan"
+				by := scannedBy
+				notes := "Used in production scan out"
+				
+				// 1. Tulis ke inventory_movement_logs
+				if err := s.repoProduction.InsertInventoryMovementLog(ctx, models.InventoryMovementLog{
+					MovementCategory: "finished_goods",
+					MovementType:     "outgoing",
+					UniqCode:         code,
+					EntityID:         &fg.ID,
+					QtyChange:        -rm.QtyUsed,
+					ReferenceID:      &ref,
+					SourceFlag:       &src,
+					LoggedBy:         &by,
+					LoggedAt:         now,
+				}); err != nil {
+					return err
+				}
+				
+				// 2. Tulis ke fg_movement_logs
+				if err := s.appendFGMovementLog(s.db.WithContext(ctx), fg.ID, code, "outgoing", -rm.QtyUsed, before, after, &ref, nil, &notes, &by); err != nil {
+					return err
+				}
+			}
 		}
 	}
 	return nil
@@ -2474,7 +2599,9 @@ func (s *service) ScanOutContext(
 	}
 
 	for _, item := range items {
-		logs, err := s.repoProduction.FindProductionRawMaterialLogsByWOItemID(ctx, item.ID)
+		// [proc-scope] Log RM proses sebelumnya tidak boleh muncul di Step 2
+		// proses berikutnya (sebelum "Mulai Produksi" ditekan).
+		logs, err := s.repoProduction.FindProductionRawMaterialLogsByWOItemStep(ctx, item.ID, currentStepSeqOf(item))
 		if err != nil {
 			return nil, err
 		}
@@ -2539,6 +2666,21 @@ func (s *service) ScanOutContext(
 				typeLabel = rmTypeLabel(meta.RawMaterialType)
 				avail = meta.StockQty
 				weight = meta.StockWeightKg
+			} else if l.UniqCode != "" {
+				if fgItem, err := s.repoProduction.FindItemByUniq(ctx, l.UniqCode); err == nil {
+					if fgItem.UOM != nil && *fgItem.UOM != "" {
+						uom = *fgItem.UOM
+					}
+					avail = fgItem.StockQty
+				}
+			}
+
+			// [wip-source] Material hasil proses sebelumnya memakai UNIQ yang
+			// sama dengan item WO ini, tetapi type_label-nya bisa "OTHER".
+			isWIP := strings.EqualFold(typeLabel, "WIP") ||
+				(currentStepSeqOf(item) > 1 && strings.EqualFold(l.UniqCode, item.ItemUniqCode))
+			if isWIP {
+				typeLabel = "WIP"
 			}
 
 			rms = append(rms, dto.ScanOutContextRawMaterial{
@@ -2549,7 +2691,7 @@ func (s *service) ScanOutContext(
 				QtyPerUniq:     bm.QtyPerUniq,
 				SpecWeightKg:   specWeight,
 				TypeLabel:      typeLabel,
-				IsWIP:          strings.EqualFold(typeLabel, "WIP"),
+				IsWIP:          isWIP,
 				UOM:            uom,
 				AvailableStock: avail,
 				StockWeightKg:  weight,
@@ -3107,7 +3249,9 @@ func (s *service) SubmitReturnValidation(ctx context.Context, req models.SubmitR
 }
 
 func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrderItem) ([]dto.ScanOutContextRawMaterial, error) {
-	logs, err := s.repoProduction.FindProductionRawMaterialLogsByWOItemID(ctx, item.ID)
+	// [proc-scope] Ambil hanya log RM milik step proses yang sedang berjalan,
+	// supaya daftar material proses 2 tidak diisi RM sisa proses 1.
+	logs, err := s.repoProduction.FindProductionRawMaterialLogsByWOItemStep(ctx, item.ID, currentStepSeqOf(item))
 	if err != nil {
 		return nil, err
 	}
@@ -3181,7 +3325,7 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 			QtyPerUniq:     bm.QtyPerUniq,
 			SpecWeightKg:   specWeight,
 			TypeLabel:      typeLabel,
-			IsWIP:          strings.EqualFold(typeLabel, "WIP"),
+			IsWIP:          strings.EqualFold(typeLabel, "WIP") || (currentStepSeqOf(item) > 1 && strings.EqualFold(l.UniqCode, item.ItemUniqCode)),
 			UOM:            uom,
 			AvailableStock: avail,
 			StockWeightKg:  weight,
@@ -3189,4 +3333,187 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 		})
 	}
 	return rms, nil
+}
+
+// RMPackingList mengembalikan daftar packing/kanban milik satu Raw Material.
+// rmUUID diprioritaskan; kalau kosong pakai code (packing_list_rm / material code)
+// untuk resolve master RM lalu ambil uniq_code-nya.
+func (s *service) RMPackingList(ctx context.Context, rmUUID, code string) (*dto.RMPackingListResponse, error) {
+	uniqCode := ""
+	if rmUUID != "" {
+		if m, err := s.repoProduction.FindRawMaterialByUUID(ctx, rmUUID); err == nil && m.UniqCode != "" {
+			uniqCode = m.UniqCode
+		}
+	}
+	if uniqCode == "" && strings.TrimSpace(code) != "" {
+		if m, err := s.repoProduction.FindRawMaterialByCode(ctx, strings.TrimSpace(code)); err == nil && m.UniqCode != "" {
+			uniqCode = m.UniqCode
+		}
+	}
+	if uniqCode == "" {
+		uniqCode = strings.TrimSpace(code)
+	}
+	if uniqCode == "" {
+		return &dto.RMPackingListResponse{Items: []dto.RMPackingItem{}}, nil
+	}
+
+	rows, err := s.repoProduction.ListRMPackingList(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]dto.RMPackingItem, 0, len(rows))
+	var totalCurrent, totalMax float64
+	for _, row := range rows {
+		progress := 0
+		if row.QtyMax > 0 {
+			p := int((row.QtyCurrent / row.QtyMax) * 100)
+			if p < 0 {
+				p = 0
+			}
+			if p > 100 {
+				p = 100
+			}
+			progress = p
+		}
+		totalCurrent += row.QtyCurrent
+		totalMax += row.QtyMax
+		items = append(items, dto.RMPackingItem{
+			DNNumber:      row.DNNumber,
+			PackingNumber: row.PackingNumber,
+			Quantity:      row.Quantity,
+			QtyCurrent:    row.QtyCurrent,
+			QtyMax:        row.QtyMax,
+			Progress:      progress,
+			Status:        row.Status,
+			WONumber:      row.WONumber,
+			Source:        row.Source,
+		})
+	}
+
+	return &dto.RMPackingListResponse{
+		UniqCode:        uniqCode,
+		Items:           items,
+		TotalPacking:    len(items),
+		TotalQtyCurrent: totalCurrent,
+		TotalQtyMax:     totalMax,
+	}, nil
+}
+
+// [repack-sisa] resolveRMUniqCode mencari uniq_code master Raw Material dari
+// rm_uuid, atau dari code (packing_list_rm / material code).
+func (s *service) resolveRMUniqCode(ctx context.Context, rmUUID, code string) string {
+	if strings.TrimSpace(rmUUID) != "" {
+		if m, err := s.repoProduction.FindRawMaterialByUUID(ctx, strings.TrimSpace(rmUUID)); err == nil && m.UniqCode != "" {
+			return m.UniqCode
+		}
+	}
+	if strings.TrimSpace(code) != "" {
+		if m, err := s.repoProduction.FindRawMaterialByCode(ctx, strings.TrimSpace(code)); err == nil && m.UniqCode != "" {
+			return m.UniqCode
+		}
+	}
+	return strings.TrimSpace(code)
+}
+
+// RMRepack memindahkan sisa material dari packing asal ke satu/lebih packing
+// tujuan yang masih punya slot.
+//
+// Contoh: packing 001 sisa 100/500, packing 002 sekarang 400/500.
+// Moves = [{002, 100}] -> 002 jadi 500/500, 001 jadi 0/500.
+//
+// Qty yang melebihi slot packing tujuan ditolak; frontend menawarkan opsi
+// scan packing lain atau menyimpan sisanya di packing asal.
+func (s *service) RMRepack(ctx context.Context, req dto.RMRepackRequest) (*dto.RMRepackResponse, error) {
+	type packSlot struct {
+		current float64
+		max     float64
+	}
+
+	const eps = 0.000001
+
+	source := strings.TrimSpace(req.SourcePackingNumber)
+	if source == "" {
+		return nil, apperror.BadRequest("source_packing_number wajib diisi")
+	}
+	if len(req.Moves) == 0 {
+		return nil, apperror.BadRequest("moves (packing tujuan) wajib diisi")
+	}
+
+	uniqCode := s.resolveRMUniqCode(ctx, req.RMUUID, req.Code)
+	if uniqCode == "" {
+		return nil, apperror.BadRequest("raw material tidak ditemukan")
+	}
+
+	rows, err := s.repoProduction.ListRMPackingList(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	slots := make(map[string]packSlot, len(rows))
+	for _, row := range rows {
+		slots[strings.TrimSpace(row.PackingNumber)] = packSlot{current: row.QtyCurrent, max: row.QtyMax}
+	}
+
+	src, ok := slots[source]
+	if !ok {
+		return nil, apperror.BadRequest("packing asal " + source + " tidak ditemukan pada raw material ini")
+	}
+
+	// Validasi semua tujuan dulu supaya tidak ada perubahan setengah jalan.
+	total := 0.0
+	seen := make(map[string]bool, len(req.Moves))
+	for _, mv := range req.Moves {
+		dest := strings.TrimSpace(mv.PackingNumber)
+		if dest == "" || mv.Qty <= 0 {
+			return nil, apperror.BadRequest("packing tujuan & qty repack wajib diisi")
+		}
+		if dest == source {
+			return nil, apperror.BadRequest("packing tujuan tidak boleh sama dengan packing asal")
+		}
+		if seen[dest] {
+			return nil, apperror.BadRequest("packing tujuan " + dest + " dikirim lebih dari sekali")
+		}
+		seen[dest] = true
+
+		row, found := slots[dest]
+		if !found {
+			return nil, apperror.BadRequest("packing tujuan " + dest + " tidak ditemukan pada raw material ini")
+		}
+		free := row.max - row.current
+		if free < 0 {
+			free = 0
+		}
+		if mv.Qty > free+eps {
+			return nil, apperror.BadRequest(fmt.Sprintf(
+				"qty %.2f melebihi slot packing %s (tersisa %.2f). Simpan di packing asal atau scan packing lain yang masih available.",
+				mv.Qty, dest, free))
+		}
+		total += mv.Qty
+	}
+	if total > src.current+eps {
+		return nil, apperror.BadRequest(fmt.Sprintf(
+			"total qty repack %.2f melebihi sisa packing %s (%.2f)", total, source, src.current))
+	}
+
+	now := time.Now()
+	for _, mv := range req.Moves {
+		if err := s.repoProduction.AddPackingQty(ctx, uniqCode, strings.TrimSpace(mv.PackingNumber), mv.Qty, now); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.repoProduction.DeductPackingQty(ctx, uniqCode, source, total, now); err != nil {
+		return nil, err
+	}
+
+	fresh, err := s.RMPackingList(ctx, req.RMUUID, req.Code)
+	if err != nil {
+		return nil, err
+	}
+
+	return &dto.RMRepackResponse{
+		UniqCode: uniqCode,
+		Moved:    total,
+		Items:    fresh.Items,
+	}, nil
 }

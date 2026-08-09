@@ -39,6 +39,8 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	supplierGroup.Use(authMiddleware.JWTMiddleware(m.authenticator))
 	{
 		supplierGroup.POST("", m.base.RunAction(m.handler.Create))
+		// Bulk import: accepts { "items": [CreateSupplierRequest, ...] }
+		supplierGroup.POST("/bulk", m.base.RunAction(m.handler.BulkCreate))
 		supplierGroup.GET("", m.base.RunAction(m.handler.List))
 		supplierGroup.GET("/:id", m.base.RunAction(m.handler.GetByID))
 		supplierGroup.PUT("/:id", m.base.RunAction(m.handler.Update))

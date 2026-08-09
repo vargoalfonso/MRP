@@ -93,7 +93,14 @@ func (r *repository) FindAllWIPPaginated(ctx context.Context, page, limit int) (
 		Table("wips").
 		Select(`
 			wips.id AS id,
-			wip_items.process_name AS process,
+			CASE
+				WHEN wip_items.status = 'queue'
+					AND COALESCE(wip_items.from_process, '') <> ''
+				THEN wip_items.from_process
+				ELSE wip_items.process_name
+			END AS process,
+			wip_items.status AS status,
+			wip_items.process_name AS waiting_process,
 			wip_items.uniq AS uniq,
 			items.part_number AS part_number,
 			items.part_name AS part_info,

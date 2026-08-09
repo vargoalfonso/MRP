@@ -68,7 +68,11 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	production.GET("/scan-context-machine", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.ScanContextMachine))
 	production.POST("/scan-machine", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.ScanMachine))
 	production.GET("/scan-out-context", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.ScanOutContext))
-	
+	// [repacking] list packing/kanban per Raw Material untuk modal Repacking.
+	production.GET("/rm-packing-list", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.RMPackingList))
+	// [repack-sisa] pindahkan sisa material antar packing list RM.
+	production.POST("/rm-repack", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.RMRepack))
+
 	// NEW: list WO (dropdown), detail WO (semua uniq), lookup RM (scan RM)
 	production.GET("/wo-list", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.WOList))
 	production.GET("/wo-detail", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.WODetail))
@@ -80,9 +84,9 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	// ⏹️ Scan Out (finish process)
 	// POST /api/v1/action-ui/production/scan-out
 	production.POST("/scan-out", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.ScanOut))
-	
+
 	production.POST("/wo-complete", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.CompleteProduction))
-	
+
 	// ⏹️ Issue List
 	// POST /api/v1/action-ui/production/scan-out
 	production.GET("/issue/list", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.IssueList))
@@ -116,5 +120,3 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	qcReturn.GET("/pending-tasks", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.PendingReturnTasks))
 	qcReturn.POST("/submit-validation", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.SubmitReturnValidation))
 }
-
-
