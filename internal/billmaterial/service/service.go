@@ -468,16 +468,21 @@ func (s *service) resolveOrCreateItem(ctx context.Context, c models.ChildInput) 
 	if c.UniqCode == nil || c.PartName == nil {
 		return 0, nil, apperror.BadRequest("child must have item_id or uniq_code + part_name")
 	}
-	if c.Uom == nil {
-		return 0, nil, apperror.BadRequest("child requires uom when creating new item: " + *c.UniqCode)
-	}
 
+	// Child UNIQ tidak perlu unik antar BoM: jika item dengan uniq_code yang sama
+	// sudah ada di database, reuse item tersebut (termasuk untuk parent BoM lain).
+	// Cek existing HARUS dilakukan sebelum guard UOM agar user tidak dipaksa
+	// mengirim UOM ulang ketika child yang direferensikan memang sudah ada.
 	if existing, err := s.repo.GetItemByUniq(ctx, *c.UniqCode); err == nil && existing != nil {
 		rev, _ := s.repo.GetLatestRevision(ctx, existing.ID)
 		if rev != nil {
 			return existing.ID, &rev.ID, nil
 		}
 		return existing.ID, nil, nil
+	}
+
+	if c.Uom == nil {
+		return 0, nil, apperror.BadRequest("child requires uom when creating new item: " + *c.UniqCode)
 	}
 
 	item := &models.Item{
@@ -2421,11 +2426,17 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 			errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "uniq_code", Message: "wajib diisi", RawData: raw})
 			continue
 		}
-		if prev, ok := uniqSeen[row.UniqCode]; ok {
-			errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "uniq_code", Message: fmt.Sprintf("duplikat dengan baris %d", prev), RawData: raw})
-			continue
+		// Duplicate uniq_code check hanya diberlakukan untuk baris ROOT (parent BoM
+		// wajib unik). Untuk baris CHILD, uniq boleh diulang — satu child part
+		// boleh dipakai kembali oleh beberapa parent yang berbeda di file upload
+		// yang sama (backend `resolveOrCreateItem` akan me-reuse item existing).
+		if row.RowType == "ROOT" {
+			if prev, ok := uniqSeen[row.UniqCode]; ok {
+				errRows = append(errRows, bulkimport.RowError{Sheet: "Items", Row: sheetRow, Field: "uniq_code", Message: fmt.Sprintf("duplikat dengan baris %d", prev), RawData: raw})
+				continue
+			}
+			uniqSeen[row.UniqCode] = sheetRow
 		}
-		uniqSeen[row.UniqCode] = sheetRow
 
 		// ROOT item must not already exist — CreateBom always inserts a new item
 		// (unlike children which use resolveOrCreateItem and tolerate existing rows).
