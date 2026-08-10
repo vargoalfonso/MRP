@@ -824,7 +824,7 @@ func poBudgetRef(e models.POBudgetEntry) string {
 	}
 
 	// id is already unique; we just format it nicely.
-	return fmt.Sprintf("POB-%04d-%s-%06d", y, code, e.ID)
+	return fmt.Sprintf("PRB-%04d-%s-%06d", y, code, e.ID)
 }
 
 func toSettingResponse(s models.POSplitSetting) models.SplitSettingResponse {
