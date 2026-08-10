@@ -13,7 +13,7 @@ import (
 type EntryResponse struct {
 	ID int64 `json:"id"`
 	// PoBudgetRef is a server-generated human-friendly identifier.
-	// Format: POB-{YYYY}-{TYPE}-{id}, e.g. POB-2026-RM-000123
+	// Format: PRB-{YYYY}-{TYPE}-{id}, e.g. PRB-2026-RM-000123
 	PoBudgetRef  string  `json:"po_budget_ref"`
 	BudgetType   string  `json:"budget_type"`
 	CustomerID   *int64  `json:"customer_id"`
