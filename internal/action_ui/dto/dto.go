@@ -36,9 +36,15 @@ type ScanContextRawMaterial struct {
 }
 
 type RawMaterialInput struct {
-	RMUUID        string  `json:"rm_uuid"`
-	UniqCode      string  `json:"uniq_code"`       // opsional: hasil scan RM
-	PackingListRM string  `json:"packing_list_rm"` // opsional
+	RMUUID        string                         `json:"rm_uuid"`
+	UniqCode      string                         `json:"uniq_code"`       // opsional: hasil scan RM
+	PackingListRM string                         `json:"packing_list_rm"` // opsional
+	Qty           float64                        `json:"qty"`
+	Packings      []RawMaterialPackingAllocation `json:"packings"`
+}
+
+type RawMaterialPackingAllocation struct {
+	PackingNumber string  `json:"packing_number"`
 	Qty           float64 `json:"qty"`
 }
 
@@ -429,18 +435,19 @@ type ScanMachineResponse struct {
 }
 
 type ScanOutContextRawMaterial struct {
-	RMUUID         string  `json:"rm_uuid"`
-	PackingListRM  string  `json:"packing_list_rm"`
-	MaterialCode   string  `json:"material_code"`
-	Form           string  `json:"form"`
-	QtyPerUniq     float64 `json:"qty_per_uniq"`
-	SpecWeightKg   float64 `json:"spec_weight_kg"`
-	TypeLabel      string  `json:"type_label"`
-	IsWIP          bool    `json:"is_wip"`
-	UOM            string  `json:"uom"`
-	AvailableStock float64 `json:"available_stock"`
-	StockWeightKg  float64 `json:"stock_weight_kg"`
-	QtyUsed        float64 `json:"qty_used"`
+	RMUUID         string                         `json:"rm_uuid"`
+	PackingListRM  string                         `json:"packing_list_rm"`
+	MaterialCode   string                         `json:"material_code"`
+	Form           string                         `json:"form"`
+	QtyPerUniq     float64                        `json:"qty_per_uniq"`
+	SpecWeightKg   float64                        `json:"spec_weight_kg"`
+	TypeLabel      string                         `json:"type_label"`
+	IsWIP          bool                           `json:"is_wip"`
+	UOM            string                         `json:"uom"`
+	AvailableStock float64                        `json:"available_stock"`
+	StockWeightKg  float64                        `json:"stock_weight_kg"`
+	QtyUsed        float64                        `json:"qty_used"`
+	Packings       []RawMaterialPackingAllocation `json:"packings"`
 }
 
 type ScanOutContextItem struct {
