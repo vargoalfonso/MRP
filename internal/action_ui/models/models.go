@@ -196,6 +196,8 @@ type RawMaterialLog struct {
 	ScannedBy string    `gorm:"column:scanned_by"`
 	ScannedAt time.Time `gorm:"column:scanned_at"`
 	CreatedAt time.Time `gorm:"column:created_at"`
+
+	Packings string `gorm:"column:packings;type:text"`
 }
 
 func (RawMaterialLog) TableName() string { return "raw_material_logs" }

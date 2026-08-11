@@ -39,7 +39,7 @@ type IProductionRepository interface {
 
 	// WIP
 	FindOrCreateWIP(ctx context.Context, woID int64) (models.WIP, error)
-	FindQueueWIPItem(ctx context.Context, wipID int64, uniq string, processName string) (models.WIPItem, error)
+	FindQueueWIPItem(ctx context.Context, wipID int64, uniq string, processName string, seq int) (models.WIPItem, error)
 	// [wip-source] cari WIP item proses saat ini (queue/process) untuk material input.
 	FindIncomingWIPForItem(ctx context.Context, woID int64, uniq string, processName string) (models.WIPItem, error)
 	CreateWIPItem(ctx context.Context, data *models.WIPItem) error
@@ -146,7 +146,7 @@ func (r *productionRepo) FindOrCreateWIP(ctx context.Context, woID int64) (model
 	return row, err
 }
 
-func (r *productionRepo) FindQueueWIPItem(ctx context.Context, wipID int64, uniq string, processName string) (models.WIPItem, error) {
+func (r *productionRepo) FindQueueWIPItem(ctx context.Context, wipID int64, uniq string, processName string, seq int) (models.WIPItem, error) {
 	var row models.WIPItem
 
 	err := r.db.WithContext(ctx).
@@ -155,7 +155,8 @@ func (r *productionRepo) FindQueueWIPItem(ctx context.Context, wipID int64, uniq
 			AND uniq = ?
 			AND process_name = ?
 			AND status = ?
-		`, wipID, uniq, processName, "queue").
+			AND seq = ?
+		`, wipID, uniq, processName, "queue", seq).
 		Order("id asc").
 		First(&row).Error
 

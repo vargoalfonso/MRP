@@ -222,6 +222,8 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 		return errors.New("wo item tidak ditemukan")
 	}
 
+	fmt.Printf("DEBUG SCAN_IN -> ID: %d | ScanInCount: %d | ScanOutCount: %d\n", item.ID, item.ScanInCount, item.ScanOutCount)
+
 	// =====================================
 	// PROCESS FLOW
 	// =====================================
@@ -308,47 +310,59 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 	}
 
 	// =====================================
-	// FIND QUEUE WIP ITEM (hasil dari process sebelumnya)
-	// =====================================
 	wipItem, err := s.repoProduction.FindQueueWIPItem(
 		ctx,
 		wip.ID,
 		item.ItemUniqCode,
 		currentProcess,
+		currentIndex+1,
 	)
 
 	if err != nil {
+		// Cek apakah sudah ada status 'process' untuk seq ini
+		var existingWIP models.WIPItem
+		errExist := s.db.WithContext(ctx).
+			Where("wip_id = ? AND uniq = ? AND process_name = ? AND seq = ? AND status = ?",
+				wip.ID, item.ItemUniqCode, currentProcess, currentIndex+1, "process").
+			First(&existingWIP).Error
 
-		// kalau belum ada, create fresh (process pertama)
-		wipItem = models.WIPItem{
-			WipID:         wip.ID,
-			Uniq:          item.ItemUniqCode,
-			PackingNumber: item.KanbanNumber,
-			WipType:       "production",
+		if errExist == nil {
+			wipItem = existingWIP
+		} else {
+			// kalau benar-benar belum ada (hanya boleh di step pertama), baru create fresh
+			if currentIndex > 0 {
+				return errors.New("WIP item tidak ditemukan untuk proses ini")
+			}
 
-			ProcessName: currentProcess,
-			MachineName: derefString(currentStep.MachineName),
-			OpSeq:       currentStep.OpSeq,
-			Seq:         currentIndex + 1,
+			wipItem = models.WIPItem{
+				WipID:         wip.ID,
+				Uniq:          item.ItemUniqCode,
+				PackingNumber: item.KanbanNumber,
+				WipType:       "production",
 
-			UOM: item.UOM,
+				ProcessName: currentProcess,
+				MachineName: derefString(currentStep.MachineName),
+				OpSeq:       currentStep.OpSeq,
+				Seq:         currentIndex + 1,
 
-			Stock: int(req.Qty),
+				UOM: item.UOM,
 
-			QtyIn:        int(req.Qty),
-			QtyOut:       0,
-			QtyRemaining: int(req.Qty),
+				Stock: int(req.Qty),
 
-			Status: "process",
+				QtyIn:        int(req.Qty),
+				QtyOut:       0,
+				QtyRemaining: int(req.Qty),
 
-			CreatedAt: now,
-			UpdatedAt: now,
+				Status: "process",
+
+				CreatedAt: now,
+				UpdatedAt: now,
+			}
+
+			if err := s.repoProduction.CreateWIPItem(ctx, &wipItem); err != nil {
+				return err
+			}
 		}
-
-		if err := s.repoProduction.CreateWIPItem(ctx, &wipItem); err != nil {
-			return err
-		}
-
 	} else {
 		// kalau sudah ada queue -> ubah ke process
 		wipItem.Status = "process"
@@ -400,6 +414,10 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 	item.Status = "IN_PROGRESS"
 	item.ScanInCount++
 	item.LastScannedProcess = currentProcess
+
+	if err := s.repoProduction.UpdateWOItem(ctx, item); err != nil {
+		return err
+	}
 
 	if err := s.createQCTaskIfNeeded(ctx, item, log, req); err != nil {
 		return err
@@ -990,11 +1008,15 @@ func (s *service) advanceProcessAfterScanOut(ctx context.Context, tx *gorm.DB, i
 		return tx.Save(item).Error
 	}
 
-	// Standar: tandai proses ini menunggu QC Final (Round 3). Barang belum
-	// masuk WIP/FG sampai QC Round 3 selesai.
-	item.Status = "WAITING_FINAL_QC"
-	item.LastScannedProcess = ""
-	return tx.Save(item).Error
+	// [REVERT bug4] Scan Out KEMBALI memindahkan barang ke WIP / Finished Goods
+	// dan menaikkan step proses. User ingin bisa lanjut proses di POKA YOKE 
+	// segera setelah Scan Out (tanpa menunggu QC Round 3 selesai).
+	var wo models.WorkOrder
+	if err := tx.Where("id = ?", item.WOID).First(&wo).Error; err != nil {
+		return err
+	}
+
+	return s.advanceProcessAfterQCFinish(ctx, tx, item, wo, qtyPass, performedBy, time.Now())
 }
 
 // advanceProcessAfterQCFinish dijalankan saat QC Process Round 3 (QCFinish)
@@ -1025,8 +1047,8 @@ func (s *service) advanceProcessAfterQCFinish(ctx context.Context, tx *gorm.DB, 
 	// WO yang salah -> material WIP proses 2 tidak ketemu.
 	if err := tx.
 		Where(`wip_id IN (SELECT id FROM wips WHERE wo_id = ?)
-			AND uniq = ? AND process_name = ? AND status = ?`,
-			item.WOID, item.ItemUniqCode, currentStep.ProcessName, "process").
+			AND uniq = ? AND process_name = ? AND status = ? AND seq = ?`,
+			item.WOID, item.ItemUniqCode, currentStep.ProcessName, "process", currentIndex+1).
 		Order("id desc").
 		First(&currentWIP).Error; err == nil {
 		haveCurrentWIP = true
@@ -1328,14 +1350,15 @@ func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, perform
 		}
 
 		// ===== 1. ROUTING PRODUKSI (QC Round 3): WIP proses berikutnya / Finished Goods =====
-		// [bug4] Total Production Quantity menentukan tujuan barang:
-		//   - masih ada proses berikutnya -> masuk WIP (queue) & step dinaikkan
-		//   - proses terakhir             -> masuk Finished Goods
-		if req.TotalProductionQty > 0 {
-			if err := s.advanceProcessAfterQCFinish(ctx, tx, &item, wo, req.TotalProductionQty, performedBy, now); err != nil {
-				return err
-			}
-		}
+		// [REVERT bug4] Perpindahan barang ke WIP / FG KINI dilakukan di saat Scan Out
+		// (advanceProcessAfterScanOut), BUKAN lagi di sini, agar user tidak perlu
+		// menunggu QC untuk lanjut ke proses selanjutnya.
+		//
+		// if req.TotalProductionQty > 0 {
+		// 	if err := s.advanceProcessAfterQCFinish(ctx, tx, &item, wo, req.TotalProductionQty, performedBy, now); err != nil {
+		// 		return err
+		// 	}
+		// }
 
 		// ===== 2. INCOMING SCRAP dari Total Scrap in Scrap Box =====
 		if req.TotalScrapInBox > 0 {
@@ -2241,6 +2264,14 @@ func (s *service) saveRawMaterialLogs(ctx context.Context, item models.WorkOrder
 				uom = master.UOM
 			}
 		}
+
+		packingsJSON := ""
+		if len(rm.Packings) > 0 {
+			if b, err := json.Marshal(rm.Packings); err == nil {
+				packingsJSON = string(b)
+			}
+		}
+
 		if err := s.repoProduction.InsertRawMaterial(ctx, models.RawMaterialLog{
 			UUID:        uuid.New().String(),
 			WOID:        item.WOID,
@@ -2256,6 +2287,7 @@ func (s *service) saveRawMaterialLogs(ctx context.Context, item models.WorkOrder
 			ScannedBy:   scannedBy,
 			ScannedAt:   now,
 			CreatedAt:   now,
+			Packings:    packingsJSON,
 		}); err != nil {
 			return err
 		}
@@ -2681,6 +2713,16 @@ func (s *service) ScanOutContext(
 				(currentStepSeqOf(item) > 1 && strings.EqualFold(l.UniqCode, item.ItemUniqCode))
 			if isWIP {
 				typeLabel = "WIP"
+				flow := resolveProcessFlow(item)
+				idx := getCurrentIndex(item.CurrentStepSeq, len(flow))
+				if idx >= 0 && idx < len(flow) {
+					avail = s.getWIPAvailableStock(ctx, item.WOID, l.UniqCode, flow[idx].ProcessName, item.CurrentStepSeq)
+				}
+			}
+
+			var packingsAlloc []dto.RawMaterialPackingAllocation
+			if l.Packings != "" {
+				_ = json.Unmarshal([]byte(l.Packings), &packingsAlloc)
 			}
 
 			rms = append(rms, dto.ScanOutContextRawMaterial{
@@ -2696,6 +2738,7 @@ func (s *service) ScanOutContext(
 				AvailableStock: avail,
 				StockWeightKg:  weight,
 				QtyUsed:        l.QtyUsed,
+				Packings:       packingsAlloc,
 			})
 		}
 
@@ -3248,6 +3291,17 @@ func (s *service) SubmitReturnValidation(ctx context.Context, req models.SubmitR
 	})
 }
 
+func (s *service) getWIPAvailableStock(ctx context.Context, woID int64, uniqCode string, processName string, seq int) float64 {
+	var stock float64
+	s.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(wi.qty_remaining), 0)
+		FROM wip_items wi
+		JOIN wips w ON w.id = wi.wip_id
+		WHERE w.wo_id = ? AND wi.uniq = ? AND wi.process_name = ? AND wi.seq = ? AND wi.status IN ('queue', 'process')
+	`, woID, uniqCode, processName, seq).Scan(&stock)
+	return stock
+}
+
 func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrderItem) ([]dto.ScanOutContextRawMaterial, error) {
 	// [proc-scope] Ambil hanya log RM milik step proses yang sedang berjalan,
 	// supaya daftar material proses 2 tidak diisi RM sisa proses 1.
@@ -3317,6 +3371,21 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 			avail = meta.StockQty
 			weight = meta.StockWeightKg
 		}
+		isWIP := strings.EqualFold(typeLabel, "WIP") || (currentStepSeqOf(item) > 1 && strings.EqualFold(l.UniqCode, item.ItemUniqCode))
+		if isWIP {
+			typeLabel = "WIP"
+			flow := resolveProcessFlow(item)
+			idx := getCurrentIndex(item.CurrentStepSeq, len(flow))
+			if idx >= 0 && idx < len(flow) {
+				avail = s.getWIPAvailableStock(ctx, item.WOID, l.UniqCode, flow[idx].ProcessName, item.CurrentStepSeq)
+			}
+		}
+
+		var packingsAlloc []dto.RawMaterialPackingAllocation
+		if l.Packings != "" {
+			_ = json.Unmarshal([]byte(l.Packings), &packingsAlloc)
+		}
+
 		rms = append(rms, dto.ScanOutContextRawMaterial{
 			RMUUID:         l.RMUUID,
 			PackingListRM:  packing,
@@ -3325,11 +3394,12 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 			QtyPerUniq:     bm.QtyPerUniq,
 			SpecWeightKg:   specWeight,
 			TypeLabel:      typeLabel,
-			IsWIP:          strings.EqualFold(typeLabel, "WIP") || (currentStepSeqOf(item) > 1 && strings.EqualFold(l.UniqCode, item.ItemUniqCode)),
+			IsWIP:          isWIP,
 			UOM:            uom,
 			AvailableStock: avail,
 			StockWeightKg:  weight,
 			QtyUsed:        l.QtyUsed,
+			Packings:       packingsAlloc,
 		})
 	}
 	return rms, nil
