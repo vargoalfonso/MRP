@@ -238,9 +238,7 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 		return errors.New("item already finished")
 	}
 
-	if item.Status == "WAITING_FINAL_QC" {
-		return errors.New("cannot scan in before final qc completed")
-	}
+	// (dihapus) Validasi WAITING_FINAL_QC dihapus karena sekarang Scan Out langsung memajukan proses.
 
 	if item.ScanInCount > item.ScanOutCount {
 		now := time.Now()
@@ -990,11 +988,15 @@ func (s *service) advanceProcessAfterScanOut(ctx context.Context, tx *gorm.DB, i
 		return tx.Save(item).Error
 	}
 
-	// Standar: tandai proses ini menunggu QC Final (Round 3). Barang belum
-	// masuk WIP/FG sampai QC Round 3 selesai.
-	item.Status = "WAITING_FINAL_QC"
-	item.LastScannedProcess = ""
-	return tx.Save(item).Error
+	// [REVERT bug4] Scan Out KEMBALI memindahkan barang ke WIP / Finished Goods
+	// dan menaikkan step proses. User ingin bisa lanjut proses di POKA YOKE 
+	// segera setelah Scan Out (tanpa menunggu QC Round 3 selesai).
+	var wo models.WorkOrder
+	if err := tx.Where("id = ?", item.WOID).First(&wo).Error; err != nil {
+		return err
+	}
+
+	return s.advanceProcessAfterQCFinish(ctx, tx, item, wo, qtyPass, performedBy, time.Now())
 }
 
 // advanceProcessAfterQCFinish dijalankan saat QC Process Round 3 (QCFinish)
@@ -1328,14 +1330,15 @@ func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, perform
 		}
 
 		// ===== 1. ROUTING PRODUKSI (QC Round 3): WIP proses berikutnya / Finished Goods =====
-		// [bug4] Total Production Quantity menentukan tujuan barang:
-		//   - masih ada proses berikutnya -> masuk WIP (queue) & step dinaikkan
-		//   - proses terakhir             -> masuk Finished Goods
-		if req.TotalProductionQty > 0 {
-			if err := s.advanceProcessAfterQCFinish(ctx, tx, &item, wo, req.TotalProductionQty, performedBy, now); err != nil {
-				return err
-			}
-		}
+		// [REVERT bug4] Perpindahan barang ke WIP / FG KINI dilakukan di saat Scan Out
+		// (advanceProcessAfterScanOut), BUKAN lagi di sini, agar user tidak perlu
+		// menunggu QC untuk lanjut ke proses selanjutnya.
+		//
+		// if req.TotalProductionQty > 0 {
+		// 	if err := s.advanceProcessAfterQCFinish(ctx, tx, &item, wo, req.TotalProductionQty, performedBy, now); err != nil {
+		// 		return err
+		// 	}
+		// }
 
 		// ===== 2. INCOMING SCRAP dari Total Scrap in Scrap Box =====
 		if req.TotalScrapInBox > 0 {
