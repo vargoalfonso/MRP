@@ -34,7 +34,7 @@ func (POSplitSetting) TableName() string { return "po_split_settings" }
 // Multiple rows with the same uniq_code + period are aggregated for the summary view.
 type POBudgetEntry struct {
 	ID int64 `gorm:"primaryKey;autoIncrement"`
-	// PoBudgetRef is a DB-generated identifier: POB-{YYYY}-{TYPE}-{id}
+	// PoBudgetRef is a DB-generated identifier: PRB-{YYYY}-{TYPE}-{id}
 	PoBudgetRef     string    `gorm:"size:32;->"`
 	BudgetType      string    `gorm:"size:32;not null"` // raw_material | subcon | indirect
 	CustomerID      *int64    `gorm:"index"`
