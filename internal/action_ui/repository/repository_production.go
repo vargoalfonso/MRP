@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -950,6 +951,21 @@ func (r *productionRepo) DeductPackingQty(ctx context.Context, itemUniqCode, pac
 	packingNumber = strings.TrimSpace(packingNumber)
 	if packingNumber == "" || deductQty <= 0 {
 		return nil
+	}
+	// [packing-guard] Tolak over-deduction: bila qty yang diminta melebihi stok
+	// berjalan packing (qty_opname / quantity), kembalikan error alih-alih diam-diam
+	// floor ke 0. Ini mencegah alokasi packing yang sama ke banyak kanban
+	// (auto-apply Step 1 POKA YOKE) menghabiskan stok tanpa peringatan.
+	var cur struct{ Qty float64 }
+	if e := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(qty_opname, quantity, 0) AS qty
+		FROM delivery_note_items
+		WHERE item_uniq_code = ? AND packing_number = ?
+		LIMIT 1
+	`, itemUniqCode, packingNumber).Scan(&cur).Error; e == nil {
+		if deductQty > cur.Qty+1e-6 {
+			return fmt.Errorf("stok packing %s tidak cukup: butuh %.4f, tersedia %.4f", packingNumber, deductQty, cur.Qty)
+		}
 	}
 	err := r.db.WithContext(ctx).Exec(`
 		UPDATE delivery_note_items

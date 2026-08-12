@@ -620,7 +620,31 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	item.LastScannedProcess = currentProcess
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return s.advanceProcessAfterScanOut(ctx, tx, &item, qtyOut, req.ScannedBy)
+		// [overflow-kanban] Jika Total Production melebihi qty rencana kanban DAN
+		// ini PROSES TERAKHIR, kelebihannya dipecah menjadi kanban baru yang
+		// otomatis FINISHED dan MELEWATI QC Process (tidak dibuatkan QC task).
+		// Di proses non-terakhir kelebihan tetap mengalir ke WIP seperti biasa.
+		routedQty := qtyOut
+		overflowQty := 0.0
+		if currentIndex == totalStep-1 {
+			planned := item.Quantity
+			if planned > 0 && qtyOut > planned+1e-9 {
+				routedQty = planned
+				overflowQty = qtyOut - planned
+			}
+		}
+		item.TotalGoodQty = routedQty
+
+		if err := s.advanceProcessAfterScanOut(ctx, tx, &item, routedQty, req.ScannedBy); err != nil {
+			return err
+		}
+
+		if overflowQty > 0 {
+			if err := s.createOverflowKanban(ctx, tx, item, woRef, overflowQty, req.ScannedBy, now); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -981,6 +1005,73 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 
 		return nil
 	})
+}
+
+// [overflow-kanban] createOverflowKanban membuat kanban baru untuk kelebihan
+// produksi (Total Production > qty rencana) pada PROSES TERAKHIR. Kanban ini
+// langsung FINISHED, TIDAK dibuatkan QC task (skip QC Process), dan qty-nya
+// langsung masuk Finished Goods lewat advanceProcessAfterQCFinish.
+func (s *service) createOverflowKanban(ctx context.Context, tx *gorm.DB, base models.WorkOrderItem, wo models.WorkOrder, excess float64, performedBy string, now time.Time) error {
+	if excess <= 0 {
+		return nil
+	}
+
+	newKanban := s.nextOverflowKanbanNumber(tx, base)
+
+	newItem := models.WorkOrderItem{
+		UUID:               uuid.New().String(),
+		WOID:               base.WOID,
+		ItemUniqCode:       base.ItemUniqCode,
+		PartName:           base.PartName,
+		PartNumber:         base.PartNumber,
+		UOM:                base.UOM,
+		Quantity:           excess,
+		ProcessName:        base.ProcessName,
+		KanbanNumber:       newKanban,
+		ProcessFlowJSON:    base.ProcessFlowJSON,
+		CurrentStepSeq:     base.CurrentStepSeq,
+		Status:             "PENDING",
+		LastScannedProcess: "",
+		ScanInCount:        0,
+		ScanOutCount:       1,
+		TotalGoodQty:       excess,
+		Model:              base.Model,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if err := tx.Create(&newItem).Error; err != nil {
+		return err
+	}
+
+	// Catat scan-out untuk jejak audit. Tidak ada createQCTaskIfNeeded -> skip QC.
+	if err := tx.Create(&models.ProductionScanLog{
+		UUID:         uuid.New().String(),
+		WOID:         base.WOID,
+		WOItemID:     newItem.ID,
+		KanbanNumber: newKanban,
+		ProcessName:  currentProcessNameOf(base),
+		ScanType:     "SCAN_OUT",
+		QtyOutput:    excess,
+		ScannedBy:    performedBy,
+		ScannedAt:    now,
+		CreatedAt:    now,
+	}).Error; err != nil {
+		return err
+	}
+
+	// Masukkan kelebihan langsung ke Finished Goods (proses terakhir).
+	return s.advanceProcessAfterQCFinish(ctx, tx, &newItem, wo, excess, performedBy, now)
+}
+
+// [overflow-kanban] nextOverflowKanbanNumber menghasilkan nomor kanban unik
+// untuk kanban kelebihan, pola "<kanban asli>-OF01", "-OF02", dst.
+func (s *service) nextOverflowKanbanNumber(tx *gorm.DB, base models.WorkOrderItem) string {
+	var cnt int64
+	_ = tx.Model(&models.WorkOrderItem{}).
+		Where("wo_id = ? AND item_uniq_code = ? AND kanban_number LIKE ?",
+			base.WOID, base.ItemUniqCode, base.KanbanNumber+"-OF%").
+		Count(&cnt).Error
+	return fmt.Sprintf("%s-OF%02d", base.KanbanNumber, cnt+1)
 }
 
 func (s *service) advanceProcessAfterScanOut(ctx context.Context, tx *gorm.DB, item *models.WorkOrderItem, qtyPass float64, performedBy string) error {
