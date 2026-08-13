@@ -418,9 +418,13 @@ func (s *service) createChildren(ctx context.Context, bomID, parentItemID int64,
 		if err != nil {
 			return err
 		}
-		if childID == parentItemID {
-			return apperror.BadRequest("child cannot be the same as parent")
-		}
+		// NOTE: Guard "child cannot be the same as parent" SENGAJA DILEPAS.
+		// Child part boleh memakai uniq_code yang sama dengan parent BoM
+		// (mis. sebuah part multi-fungsi yang juga menjadi salah satu
+		// komponen dirinya sendiri di tingkat sub-assembly, atau sekadar
+		// re-use item existing). resolveOrCreateItem sudah me-reuse item
+		// existing, sehingga tidak menimbulkan duplikat di tabel items.
+		// Berlaku untuk create, edit, dan bulk import.
 
 		line := &models.BomLine{
 			BomItemID:           bomID,
