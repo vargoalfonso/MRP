@@ -65,6 +65,10 @@ type IService interface {
 	RMPackingList(ctx context.Context, rmUUID, code string) (*dto.RMPackingListResponse, error)
 	// [repack-sisa] pindahkan sisa material ke packing list RM lain.
 	RMRepack(ctx context.Context, req dto.RMRepackRequest) (*dto.RMRepackResponse, error)
+	// [scanin-draft-db] draft scan-in (seed) bersama lintas gadget.
+	ListScanInDrafts(ctx context.Context, woID int64, currentStep int) (*dto.ListScanInDraftsResponse, error)
+	UpsertScanInDraft(ctx context.Context, req dto.UpsertScanInDraftRequest, updatedBy string) error
+	DeleteScanInDraft(ctx context.Context, req dto.DeleteScanInDraftRequest) error
 
 	// =============================
 	// Product Return (BRD)
@@ -620,7 +624,31 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	item.LastScannedProcess = currentProcess
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return s.advanceProcessAfterScanOut(ctx, tx, &item, qtyOut, req.ScannedBy)
+		// [overflow-kanban] Jika Total Production melebihi qty rencana kanban DAN
+		// ini PROSES TERAKHIR, kelebihannya dipecah menjadi kanban baru yang
+		// otomatis FINISHED dan MELEWATI QC Process (tidak dibuatkan QC task).
+		// Di proses non-terakhir kelebihan tetap mengalir ke WIP seperti biasa.
+		routedQty := qtyOut
+		overflowQty := 0.0
+		if currentIndex == totalStep-1 {
+			planned := item.Quantity
+			if planned > 0 && qtyOut > planned+1e-9 {
+				routedQty = planned
+				overflowQty = qtyOut - planned
+			}
+		}
+		item.TotalGoodQty = routedQty
+
+		if err := s.advanceProcessAfterScanOut(ctx, tx, &item, routedQty, req.ScannedBy); err != nil {
+			return err
+		}
+
+		if overflowQty > 0 {
+			if err := s.createOverflowKanban(ctx, tx, item, woRef, overflowQty, req.ScannedBy, now); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -983,6 +1011,73 @@ func (s *service) QCSubmit(ctx context.Context, req dto.QCSubmitRequest, perform
 	})
 }
 
+// [overflow-kanban] createOverflowKanban membuat kanban baru untuk kelebihan
+// produksi (Total Production > qty rencana) pada PROSES TERAKHIR. Kanban ini
+// langsung FINISHED, TIDAK dibuatkan QC task (skip QC Process), dan qty-nya
+// langsung masuk Finished Goods lewat advanceProcessAfterQCFinish.
+func (s *service) createOverflowKanban(ctx context.Context, tx *gorm.DB, base models.WorkOrderItem, wo models.WorkOrder, excess float64, performedBy string, now time.Time) error {
+	if excess <= 0 {
+		return nil
+	}
+
+	newKanban := s.nextOverflowKanbanNumber(tx, base)
+
+	newItem := models.WorkOrderItem{
+		UUID:               uuid.New().String(),
+		WOID:               base.WOID,
+		ItemUniqCode:       base.ItemUniqCode,
+		PartName:           base.PartName,
+		PartNumber:         base.PartNumber,
+		UOM:                base.UOM,
+		Quantity:           excess,
+		ProcessName:        base.ProcessName,
+		KanbanNumber:       newKanban,
+		ProcessFlowJSON:    base.ProcessFlowJSON,
+		CurrentStepSeq:     base.CurrentStepSeq,
+		Status:             "PENDING",
+		LastScannedProcess: "",
+		ScanInCount:        0,
+		ScanOutCount:       1,
+		TotalGoodQty:       excess,
+		Model:              base.Model,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+	}
+	if err := tx.Create(&newItem).Error; err != nil {
+		return err
+	}
+
+	// Catat scan-out untuk jejak audit. Tidak ada createQCTaskIfNeeded -> skip QC.
+	if err := tx.Create(&models.ProductionScanLog{
+		UUID:         uuid.New().String(),
+		WOID:         base.WOID,
+		WOItemID:     newItem.ID,
+		KanbanNumber: newKanban,
+		ProcessName:  currentProcessNameOf(base),
+		ScanType:     "SCAN_OUT",
+		QtyOutput:    excess,
+		ScannedBy:    performedBy,
+		ScannedAt:    now,
+		CreatedAt:    now,
+	}).Error; err != nil {
+		return err
+	}
+
+	// Masukkan kelebihan langsung ke Finished Goods (proses terakhir).
+	return s.advanceProcessAfterQCFinish(ctx, tx, &newItem, wo, excess, performedBy, now)
+}
+
+// [overflow-kanban] nextOverflowKanbanNumber menghasilkan nomor kanban unik
+// untuk kanban kelebihan, pola "<kanban asli>-OF01", "-OF02", dst.
+func (s *service) nextOverflowKanbanNumber(tx *gorm.DB, base models.WorkOrderItem) string {
+	var cnt int64
+	_ = tx.Model(&models.WorkOrderItem{}).
+		Where("wo_id = ? AND item_uniq_code = ? AND kanban_number LIKE ?",
+			base.WOID, base.ItemUniqCode, base.KanbanNumber+"-OF%").
+		Count(&cnt).Error
+	return fmt.Sprintf("%s-OF%02d", base.KanbanNumber, cnt+1)
+}
+
 func (s *service) advanceProcessAfterScanOut(ctx context.Context, tx *gorm.DB, item *models.WorkOrderItem, qtyPass float64, performedBy string) error {
 	_ = qtyPass
 	_ = performedBy
@@ -1009,7 +1104,7 @@ func (s *service) advanceProcessAfterScanOut(ctx context.Context, tx *gorm.DB, i
 	}
 
 	// [REVERT bug4] Scan Out KEMBALI memindahkan barang ke WIP / Finished Goods
-	// dan menaikkan step proses. User ingin bisa lanjut proses di POKA YOKE 
+	// dan menaikkan step proses. User ingin bisa lanjut proses di POKA YOKE
 	// segera setelah Scan Out (tanpa menunggu QC Round 3 selesai).
 	var wo models.WorkOrder
 	if err := tx.Where("id = ?", item.WOID).First(&wo).Error; err != nil {
@@ -1093,18 +1188,18 @@ func (s *service) advanceProcessAfterQCFinish(ctx context.Context, tx *gorm.DB, 
 			ProcessName:   nextStep.ProcessName,
 			// [wip-scope] stok ini HASIL proses sekarang, belum diproses oleh
 			// proses berikutnya. Dipakai untuk tampilan daftar WIP.
-			FromProcess: currentStep.ProcessName,
-			MachineName:   derefString(nextStep.MachineName),
-			OpSeq:         nextStep.OpSeq,
-			Seq:           currentIndex + 2,
-			UOM:           item.UOM,
-			Stock:         int(qtyProduced),
-			QtyIn:         int(qtyProduced),
-			QtyOut:        0,
-			QtyRemaining:  int(qtyProduced),
-			Status:        "queue",
-			CreatedAt:     now,
-			UpdatedAt:     now,
+			FromProcess:  currentStep.ProcessName,
+			MachineName:  derefString(nextStep.MachineName),
+			OpSeq:        nextStep.OpSeq,
+			Seq:          currentIndex + 2,
+			UOM:          item.UOM,
+			Stock:        int(qtyProduced),
+			QtyIn:        int(qtyProduced),
+			QtyOut:       0,
+			QtyRemaining: int(qtyProduced),
+			Status:       "queue",
+			CreatedAt:    now,
+			UpdatedAt:    now,
 		}
 		if err := tx.Create(&nextWIP).Error; err != nil {
 			return err
@@ -2337,6 +2432,29 @@ func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrder
 			partNumber = code
 		}
 
+		// [qty-tersedia-scanout] simpan alokasi packing pada log scan out juga,
+		// agar done-view bisa menghitung Qty Tersedia dari stok berjalan packing
+		// (bukan stok master). Tanpa ini, log hasil scan out kehilangan packings.
+		packingsJSON := ""
+		if len(rm.Packings) > 0 {
+			alloc := make([]dto.RawMaterialPackingAllocation, 0, len(rm.Packings))
+			for _, p := range rm.Packings {
+				if strings.TrimSpace(p.PackingNumber) == "" {
+					continue
+				}
+				q := p.FinalQty
+				if p.DeductOnly {
+					q = p.DeductQty
+				}
+				alloc = append(alloc, dto.RawMaterialPackingAllocation{PackingNumber: p.PackingNumber, Qty: q})
+			}
+			if len(alloc) > 0 {
+				if b, err := json.Marshal(alloc); err == nil {
+					packingsJSON = string(b)
+				}
+			}
+		}
+
 		// 1) catat pemakaian RM — SEMUA RM dicatat (termasuk qty 0) supaya
 		//    tetap tampil di done-view sesuai yang benar-benar discan-out.
 		if err := s.repoProduction.InsertRawMaterial(ctx, models.RawMaterialLog{
@@ -2354,6 +2472,7 @@ func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrder
 			ScannedBy:   scannedBy,
 			ScannedAt:   now,
 			CreatedAt:   now,
+			Packings:    packingsJSON,
 		}); err != nil {
 			return err
 		}
@@ -2441,7 +2560,7 @@ func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrder
 				src := "wo_scan"
 				by := scannedBy
 				notes := "Used in production scan out"
-				
+
 				// 1. Tulis ke inventory_movement_logs
 				if err := s.repoProduction.InsertInventoryMovementLog(ctx, models.InventoryMovementLog{
 					MovementCategory: "finished_goods",
@@ -2456,7 +2575,7 @@ func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrder
 				}); err != nil {
 					return err
 				}
-				
+
 				// 2. Tulis ke fg_movement_logs
 				if err := s.appendFGMovementLog(s.db.WithContext(ctx), fg.ID, code, "outgoing", -rm.QtyUsed, before, after, &ref, nil, &notes, &by); err != nil {
 					return err
@@ -2723,6 +2842,24 @@ func (s *service) ScanOutContext(
 			var packingsAlloc []dto.RawMaterialPackingAllocation
 			if l.Packings != "" {
 				_ = json.Unmarshal([]byte(l.Packings), &packingsAlloc)
+			}
+
+			// [qty-tersedia-scanout] Qty Tersedia mengikuti stok BERJALAN packing/
+			// kanban (qty_opname) yang sudah berkurang setelah scan out, bukan alokasi
+			// Step 1 maupun stok master RM. Nilainya sama dengan "Qty saat ini" pada
+			// detail Raw Material di ERP.
+			if !isWIP && len(packingsAlloc) > 0 {
+				pkNumbers := make([]string, 0, len(packingsAlloc))
+				for _, pa := range packingsAlloc {
+					pkNumbers = append(pkNumbers, pa.PackingNumber)
+				}
+				rmUniq := l.UniqCode
+				if ok && meta.UniqCode != "" {
+					rmUniq = meta.UniqCode
+				}
+				if live, found, e := s.repoProduction.SumLivePackingQty(ctx, rmUniq, pkNumbers); e == nil && found {
+					avail = live
+				}
 			}
 
 			rms = append(rms, dto.ScanOutContextRawMaterial{
@@ -3386,6 +3523,26 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 			_ = json.Unmarshal([]byte(l.Packings), &packingsAlloc)
 		}
 
+		// [qty-tersedia-step1] Qty Tersedia di Step 1 (WODetail/Scan In) juga
+		// mengikuti stok BERJALAN packing/kanban (qty_opname) untuk packing yang
+		// benar-benar discan, BUKAN stok master RM yang menjumlahkan SEMUA
+		// packing. Tanpa ini, setelah scan out lalu kembali ke Step 1, Qty
+		// Tersedia salah menjadi total seluruh packing (mis. 600) alih-alih
+		// packing yang bersangkutan (mis. 100). Mirror perbaikan ScanOutContext.
+		if !isWIP && len(packingsAlloc) > 0 {
+			pkNumbers := make([]string, 0, len(packingsAlloc))
+			for _, pa := range packingsAlloc {
+				pkNumbers = append(pkNumbers, pa.PackingNumber)
+			}
+			rmUniq := l.UniqCode
+			if ok && meta.UniqCode != "" {
+				rmUniq = meta.UniqCode
+			}
+			if live, found, e := s.repoProduction.SumLivePackingQty(ctx, rmUniq, pkNumbers); e == nil && found {
+				avail = live
+			}
+		}
+
 		rms = append(rms, dto.ScanOutContextRawMaterial{
 			RMUUID:         l.RMUUID,
 			PackingListRM:  packing,
@@ -3586,4 +3743,52 @@ func (s *service) RMRepack(ctx context.Context, req dto.RMRepackRequest) (*dto.R
 		Moved:    total,
 		Items:    fresh.Items,
 	}, nil
+}
+
+// ================================
+// [scanin-draft-db] Draft Scan-In (seed) bersama lintas gadget
+// ================================
+
+func (s *service) ListScanInDrafts(ctx context.Context, woID int64, currentStep int) (*dto.ListScanInDraftsResponse, error) {
+	rows, err := s.repoProduction.ListScanInDrafts(ctx, woID, currentStep)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]dto.ScanInDraftItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, dto.ScanInDraftItem{
+			WOItemID:    r.WOItemID,
+			CurrentStep: r.CurrentStep,
+			Payload:     json.RawMessage(r.Payload),
+			UpdatedBy:   r.UpdatedBy,
+			UpdatedAt:   r.UpdatedAt,
+		})
+	}
+	return &dto.ListScanInDraftsResponse{WOID: woID, Items: items}, nil
+}
+
+func (s *service) UpsertScanInDraft(ctx context.Context, req dto.UpsertScanInDraftRequest, updatedBy string) error {
+	if len(req.Payload) == 0 || !json.Valid(req.Payload) {
+		return apperror.BadRequest("payload draft tidak valid")
+	}
+	step := req.CurrentStep
+	if step <= 0 {
+		step = 1
+	}
+	var by *string
+	if strings.TrimSpace(updatedBy) != "" {
+		v := updatedBy
+		by = &v
+	}
+	return s.repoProduction.UpsertScanInDraft(ctx, models.ProductionScaninDraft{
+		WOID:        req.WOID,
+		WOItemID:    req.WOItemID,
+		CurrentStep: step,
+		Payload:     datatypes.JSON(req.Payload),
+		UpdatedBy:   by,
+	})
+}
+
+func (s *service) DeleteScanInDraft(ctx context.Context, req dto.DeleteScanInDraftRequest) error {
+	return s.repoProduction.DeleteScanInDraft(ctx, req.WOID, req.WOItemID, req.CurrentStep)
 }

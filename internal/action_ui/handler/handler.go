@@ -640,3 +640,71 @@ func (h *HTTPHandler) RMPackingList(ctx *app.Context) *app.CostumeResponse {
 		Data:      result,
 	}
 }
+
+// ================================
+// [scanin-draft-db] Draft Scan-In (seed) bersama lintas gadget
+// ================================
+
+// GET /api/v1/action-ui/production/scanin-draft?wo_id=123&current_step=1
+func (h *HTTPHandler) ListScanInDrafts(ctx *app.Context) *app.CostumeResponse {
+	woID, _ := strconv.ParseInt(ctx.Query("wo_id"), 10, 64)
+	if woID <= 0 {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "wo_id is required",
+		}
+	}
+	currentStep, _ := strconv.Atoi(ctx.Query("current_step"))
+	result, err := h.svc.ListScanInDrafts(ctx.Request.Context(), woID, currentStep)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data:      result,
+	}
+}
+
+// PUT /api/v1/action-ui/production/scanin-draft
+func (h *HTTPHandler) UpsertScanInDraft(ctx *app.Context) *app.CostumeResponse {
+	var req dto.UpsertScanInDraftRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	if err := h.svc.UpsertScanInDraft(ctx.Request.Context(), req, userCtx.UserID); err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+	}
+}
+
+// DELETE /api/v1/action-ui/production/scanin-draft
+func (h *HTTPHandler) DeleteScanInDraft(ctx *app.Context) *app.CostumeResponse {
+	var req dto.DeleteScanInDraftRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "invalid request body: " + err.Error(),
+		}
+	}
+	if err := h.svc.DeleteScanInDraft(ctx.Request.Context(), req); err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+	}
+}

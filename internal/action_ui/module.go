@@ -87,6 +87,12 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 
 	production.POST("/wo-complete", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.CompleteProduction))
 
+	// [scanin-draft-db] Draft scan-in (seed) bersama lintas gadget.
+	// GET list draft satu WO, PUT upsert 1 draft, DELETE hapus draft (saat Mulai Produksi).
+	production.GET("/scanin-draft", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.ListScanInDrafts))
+	production.PUT("/scanin-draft", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.UpsertScanInDraft))
+	production.DELETE("/scanin-draft", roleMiddleware.RequirePermission(m.roleService, "action_ui", "create"), m.base.RunAction(m.handler.DeleteScanInDraft))
+
 	// ⏹️ Issue List
 	// POST /api/v1/action-ui/production/scan-out
 	production.GET("/issue/list", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.IssueList))

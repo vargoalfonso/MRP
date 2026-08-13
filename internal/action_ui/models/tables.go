@@ -48,3 +48,19 @@ type QCTask struct {
 }
 
 func (QCTask) TableName() string { return "qc_tasks" }
+
+// ProductionScaninDraft maps to production_scanin_drafts.
+// [scanin-draft-db] Draft scan-in (seed) per kanban+step, dibagikan ke semua
+// gadget. Dibuat oleh migration scripts/migrations/0096_create_production_scanin_drafts_up.sql
+type ProductionScaninDraft struct {
+	ID          int64          `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
+	WOID        int64          `gorm:"column:wo_id;not null" json:"wo_id"`
+	WOItemID    int64          `gorm:"column:wo_item_id;not null" json:"wo_item_id"`
+	CurrentStep int            `gorm:"column:current_step;not null;default:1" json:"current_step"`
+	Payload     datatypes.JSON `gorm:"column:payload;type:jsonb;not null" json:"payload"`
+	UpdatedBy   *string        `gorm:"column:updated_by" json:"updated_by"`
+	CreatedAt   time.Time      `gorm:"column:created_at;not null;default:now()" json:"created_at"`
+	UpdatedAt   time.Time      `gorm:"column:updated_at;not null;default:now()" json:"updated_at"`
+}
+
+func (ProductionScaninDraft) TableName() string { return "production_scanin_drafts" }

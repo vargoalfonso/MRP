@@ -1,6 +1,9 @@
 package dto
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type ScanContextResponse struct {
 	WOID           int64   `json:"wo_id"`
@@ -466,4 +469,35 @@ type ScanOutContextItem struct {
 type ScanOutContextResponse struct {
 	WOID  int64                `json:"wo_id"`
 	Items []ScanOutContextItem `json:"items"`
+}
+
+// ================================
+// [scanin-draft-db] Draft Scan-In (seed) bersama lintas gadget
+// ================================
+
+// ScanInDraftItem = satu draft kanban (payload berisi ProductionScanOutSeed FE).
+type ScanInDraftItem struct {
+	WOItemID    int64           `json:"wo_item_id"`
+	CurrentStep int             `json:"current_step"`
+	Payload     json.RawMessage `json:"payload"`
+	UpdatedBy   *string         `json:"updated_by,omitempty"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+type ListScanInDraftsResponse struct {
+	WOID  int64             `json:"wo_id"`
+	Items []ScanInDraftItem `json:"items"`
+}
+
+type UpsertScanInDraftRequest struct {
+	WOID        int64           `json:"wo_id" binding:"required"`
+	WOItemID    int64           `json:"wo_item_id" binding:"required"`
+	CurrentStep int             `json:"current_step"`
+	Payload     json.RawMessage `json:"payload" binding:"required"`
+}
+
+type DeleteScanInDraftRequest struct {
+	WOID        int64 `json:"wo_id" binding:"required"`
+	WOItemID    int64 `json:"wo_item_id" binding:"required"`
+	CurrentStep int   `json:"current_step"`
 }

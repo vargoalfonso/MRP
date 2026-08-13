@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -77,6 +78,13 @@ type IProductionRepository interface {
 	ApplyPackingQtyOpname(ctx context.Context, itemUniqCode, packingNumber string, finalQty float64, at time.Time) error
 	// [packing-deduct] pengurangan qty packing (relatif) saat scan out.
 	DeductPackingQty(ctx context.Context, itemUniqCode, packingNumber string, deductQty float64, at time.Time) error
+	// [qty-tersedia-scanout] total stok berjalan (qty_opname/quantity) untuk
+	// sekumpulan packing/kanban milik satu RM; found=false bila tak ada baris.
+	SumLivePackingQty(ctx context.Context, itemUniqCode string, packingNumbers []string) (total float64, found bool, err error)
+	// [scanin-draft-db] draft scan-in (seed) bersama lintas gadget.
+	ListScanInDrafts(ctx context.Context, woID int64, currentStep int) ([]models.ProductionScaninDraft, error)
+	UpsertScanInDraft(ctx context.Context, draft models.ProductionScaninDraft) error
+	DeleteScanInDraft(ctx context.Context, woID, woItemID int64, currentStep int) error
 	// [repack-sisa] tambah qty packing tujuan saat repacking sisa material.
 	AddPackingQty(ctx context.Context, itemUniqCode, packingNumber string, addQty float64, at time.Time) error
 }
@@ -832,6 +840,37 @@ type RMPackingRow struct {
 // delivery_notes untuk DN number & kanban_parameters (kanban_qty = qty maksimal).
 // qty_current diambil dari qty_opname (hasil repack) bila ada, jika tidak dari
 // quantity pada DN. Sama dengan branch 'delivery_note' packing list RM di ERP.
+// [qty-tersedia-scanout] SumLivePackingQty menjumlahkan stok berjalan
+// (qty_opname bila ada, jika tidak quantity) dari delivery_note_items untuk
+// packing/kanban tertentu. Dipakai Scan Out agar Qty Tersedia mengikuti stok
+// yang sudah berkurang, sama seperti "Qty saat ini" di detail RM ERP.
+func (r *productionRepo) SumLivePackingQty(ctx context.Context, itemUniqCode string, packingNumbers []string) (float64, bool, error) {
+	cleaned := make([]string, 0, len(packingNumbers))
+	for _, pn := range packingNumbers {
+		if strings.TrimSpace(pn) != "" {
+			cleaned = append(cleaned, strings.TrimSpace(pn))
+		}
+	}
+	if len(cleaned) == 0 {
+		return 0, false, nil
+	}
+	var res struct {
+		Total float64 `gorm:"column:total"`
+		Cnt   int64   `gorm:"column:cnt"`
+	}
+	q := r.db.WithContext(ctx).
+		Table("delivery_note_items").
+		Select("COALESCE(SUM(COALESCE(qty_opname, quantity, 0)), 0) AS total, COUNT(*) AS cnt").
+		Where("packing_number IN ?", cleaned)
+	if strings.TrimSpace(itemUniqCode) != "" {
+		q = q.Where("item_uniq_code = ?", strings.TrimSpace(itemUniqCode))
+	}
+	if err := q.Scan(&res).Error; err != nil {
+		return 0, false, err
+	}
+	return res.Total, res.Cnt > 0, nil
+}
+
 func (r *productionRepo) ListRMPackingList(ctx context.Context, uniqCode string) ([]RMPackingRow, error) {
 	uniqCode = strings.TrimSpace(uniqCode)
 	if uniqCode == "" {
@@ -951,6 +990,21 @@ func (r *productionRepo) DeductPackingQty(ctx context.Context, itemUniqCode, pac
 	if packingNumber == "" || deductQty <= 0 {
 		return nil
 	}
+	// [packing-guard] Tolak over-deduction: bila qty yang diminta melebihi stok
+	// berjalan packing (qty_opname / quantity), kembalikan error alih-alih diam-diam
+	// floor ke 0. Ini mencegah alokasi packing yang sama ke banyak kanban
+	// (auto-apply Step 1 POKA YOKE) menghabiskan stok tanpa peringatan.
+	var cur struct{ Qty float64 }
+	if e := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(qty_opname, quantity, 0) AS qty
+		FROM delivery_note_items
+		WHERE item_uniq_code = ? AND packing_number = ?
+		LIMIT 1
+	`, itemUniqCode, packingNumber).Scan(&cur).Error; e == nil {
+		if deductQty > cur.Qty+1e-6 {
+			return fmt.Errorf("stok packing %s tidak cukup: butuh %.4f, tersedia %.4f", packingNumber, deductQty, cur.Qty)
+		}
+	}
 	err := r.db.WithContext(ctx).Exec(`
 		UPDATE delivery_note_items
 		SET qty_opname = GREATEST(COALESCE(qty_opname, quantity, 0) - ?, 0),
@@ -993,4 +1047,47 @@ func (r *productionRepo) AddPackingQty(ctx context.Context, itemUniqCode, packin
 		    updated_at = ?
 		WHERE item_uniq_code = ? AND kanban_number = ?
 	`, addQty, at, itemUniqCode, packingNumber).Error
+}
+
+// ================================
+// [scanin-draft-db] Draft Scan-In (seed) bersama lintas gadget
+// ================================
+
+// ListScanInDrafts mengambil draft scan-in satu WO. Bila currentStep > 0,
+// hanya draft step tersebut yang dikembalikan; bila <= 0, semua step.
+func (r *productionRepo) ListScanInDrafts(ctx context.Context, woID int64, currentStep int) ([]models.ProductionScaninDraft, error) {
+	var rows []models.ProductionScaninDraft
+	q := r.db.WithContext(ctx).Where("wo_id = ?", woID)
+	if currentStep > 0 {
+		q = q.Where("current_step = ?", currentStep)
+	}
+	err := q.Order("wo_item_id asc").Find(&rows).Error
+	return rows, err
+}
+
+// UpsertScanInDraft menyimpan (insert/update) satu draft berdasarkan
+// (wo_id, wo_item_id, current_step).
+func (r *productionRepo) UpsertScanInDraft(ctx context.Context, draft models.ProductionScaninDraft) error {
+	now := time.Now()
+	if draft.CurrentStep <= 0 {
+		draft.CurrentStep = 1
+	}
+	draft.UpdatedAt = now
+	if draft.CreatedAt.IsZero() {
+		draft.CreatedAt = now
+	}
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "wo_id"}, {Name: "wo_item_id"}, {Name: "current_step"}},
+		DoUpdates: clause.AssignmentColumns([]string{"payload", "updated_by", "updated_at"}),
+	}).Create(&draft).Error
+}
+
+// DeleteScanInDraft menghapus draft. Bila currentStep <= 0, semua step milik
+// wo_item tersebut dihapus (dipakai saat "Mulai Produksi").
+func (r *productionRepo) DeleteScanInDraft(ctx context.Context, woID, woItemID int64, currentStep int) error {
+	q := r.db.WithContext(ctx).Where("wo_id = ? AND wo_item_id = ?", woID, woItemID)
+	if currentStep > 0 {
+		q = q.Where("current_step = ?", currentStep)
+	}
+	return q.Delete(&models.ProductionScaninDraft{}).Error
 }
