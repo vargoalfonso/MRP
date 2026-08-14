@@ -39,6 +39,11 @@ type IRepository interface {
 	// Core writes
 	CreateItem(ctx context.Context, item *models.Item) error
 	UpdateItem(ctx context.Context, item *models.Item) error
+	// SoftDeleteItem menandai item sebagai terhapus dengan mengisi
+	// `items.deleted_at = NOW()`. Digunakan oleh flow DeleteBom supaya
+	// item parent otomatis dianggap terhapus dan `uniq_code`-nya bisa
+	// dipakai ulang (lihat migration 0096 untuk partial unique index).
+	SoftDeleteItem(ctx context.Context, itemID int64) error
 	CreateRevision(ctx context.Context, rev *models.ItemRevision) error
 	CreateAsset(ctx context.Context, asset *models.ItemAsset) error
 	UpdateAsset(ctx context.Context, assetID int64, fileURL, assetType string) error
@@ -165,6 +170,23 @@ func (r *repository) CreateItem(ctx context.Context, item *models.Item) error {
 func (r *repository) UpdateItem(ctx context.Context, item *models.Item) error {
 	if err := r.db.WithContext(ctx).Save(item).Error; err != nil {
 		return apperror.InternalWrap("Update Item Error", err)
+	}
+	return nil
+}
+
+// SoftDeleteItem mengisi kolom `deleted_at` pada baris item yang masih
+// aktif (deleted_at IS NULL). Idempotent — memanggil pada item yang
+// sudah soft-delete tidak error dan tidak mengubah baris manapun.
+// Setelah dipanggil, uniq_code item ini otomatis bebas dipakai ulang
+// karena partial unique index `uq_items_uniq_code_active` hanya berlaku
+// untuk baris dengan deleted_at IS NULL.
+func (r *repository) SoftDeleteItem(ctx context.Context, itemID int64) error {
+	res := r.db.WithContext(ctx).
+		Model(&models.Item{}).
+		Where("id = ? AND deleted_at IS NULL", itemID).
+		Update("deleted_at", gorm.Expr("NOW()"))
+	if res.Error != nil {
+		return apperror.InternalWrap("SoftDeleteItem", res.Error)
 	}
 	return nil
 }
