@@ -1520,10 +1520,31 @@ func (s *service) UpdateBomChild(ctx context.Context, bomID, lineID int64, req m
 }
 
 func (s *service) DeleteBom(ctx context.Context, bomID int64) error {
-	if _, err := s.repo.GetBomByID(ctx, bomID); err != nil {
+	// [items-soft-delete]
+	// Sebelumnya DeleteBom hanya menghapus baris `bom_item`, sehingga
+	// baris `items` yang bersangkutan tetap ada dengan `deleted_at = NULL`.
+	// Akibatnya user tidak bisa membuat item baru dengan `uniq_code`
+	// yang sama karena constraint UNIQUE `items.uniq_code`.
+	//
+	// Sekarang:
+	//   1. Ambil bom_item untuk tahu `item_id` parent.
+	//   2. Hapus bom_item (hard delete — history tetap terjaga di
+	//      approval_audits/logs kalau ada).
+	//   3. Soft-delete item parent (isi `deleted_at = NOW()`).
+	// Dengan migration 0096 yang mengubah UNIQUE constraint jadi partial
+	// unique index `WHERE deleted_at IS NULL`, uniq_code otomatis bebas
+	// dipakai ulang setelah item di-soft-delete.
+	bom, err := s.repo.GetBomByID(ctx, bomID)
+	if err != nil {
 		return err
 	}
-	return s.repo.DeleteBomItem(ctx, bomID)
+	if err := s.repo.DeleteBomItem(ctx, bomID); err != nil {
+		return err
+	}
+	if err := s.repo.SoftDeleteItem(ctx, bom.ItemID); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *service) DeleteBomChild(ctx context.Context, bomID, childItemID int64) (int64, error) {
