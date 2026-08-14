@@ -57,6 +57,8 @@ type WorkOrderItem struct {
 	TotalGoodQty       float64
 	TotalNGQty         float64
 	TotalScrapQty      float64
+	// [overflow-qc] kanban sumber (self-ref work_order_items.id) utk kanban kelebihan QC
+	OverflowSourceItemID *int64
 	Model              string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
