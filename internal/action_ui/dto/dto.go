@@ -152,6 +152,10 @@ type QCFinishRequest struct {
 	// [qc-issue-table] daftar reason/info NG & scrap (bisa lebih dari 1)
 	NGReasons    []QCReasonInput `json:"ng_reasons"`
 	ScrapReasons []QCReasonInput `json:"scrap_reasons"`
+
+	// [overflow-topup] true bila user pilih Batal di modal top-up: jangan isi
+	// slot kanban existing, langsung buat kanban baru penuh.
+	SkipOverflowTopUp bool `json:"skip_overflow_topup"`
 }
 
 type FinishedGoodsResponse struct {
@@ -500,4 +504,24 @@ type DeleteScanInDraftRequest struct {
 	WOID        int64 `json:"wo_id" binding:"required"`
 	WOItemID    int64 `json:"wo_item_id" binding:"required"`
 	CurrentStep int   `json:"current_step"`
+}
+
+
+// [overflow-topup] QCOverflowTopUp satu rencana pengisian slot kanban existing.
+type QCOverflowTopUp struct {
+	WOItemID     int64   `json:"wo_item_id"`
+	KanbanNumber string  `json:"kanban_number"`
+	WONumber     string  `json:"wo_number"`
+	FreeBefore   float64 `json:"free_before"`
+	Fill         float64 `json:"fill"`
+}
+
+// [overflow-topup] QCOverflowPreview hasil PreviewQCOverflow (utk modal FE).
+type QCOverflowPreview struct {
+	MaxKanban    float64           `json:"max_kanban"`
+	MainGood     float64           `json:"main_good"`
+	Excess       float64           `json:"excess"`
+	HasTopUp     bool              `json:"has_top_up"`
+	TopUps       []QCOverflowTopUp `json:"top_ups"`
+	NewKanbanQty float64           `json:"new_kanban_qty"`
 }

@@ -47,6 +47,9 @@ type IService interface {
 
 	QCFinish(ctx context.Context, req dto.QCFinishRequest, performedBy string) error
 
+	// [overflow-topup] rencana penempatan kelebihan (utk modal konfirmasi FE)
+	PreviewQCOverflow(ctx context.Context, qcTaskID int64, tpq float64) (dto.QCOverflowPreview, error)
+
 	ListQCTask(ctx context.Context, req dto.ListQCTaskRequest) (map[string]interface{}, error)
 
 	// [qc-round-db] ambil ronde tersubmit per qc_task_id (unik per kanban) dari DB
@@ -1562,7 +1565,8 @@ func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, perform
 		}
 		if maxKanban > 0 && tpq > maxKanban {
 			excess := tpq - maxKanban
-			if err := s.createQCOverflowKanban(ctx, tx, item, wo, excess, performedBy, now); err != nil {
+			// [overflow-topup] isi slot kanban overflow existing dulu, sisanya kanban baru
+			if err := s.distributeQCOverflow(ctx, tx, item, wo, excess, maxKanban, req.SkipOverflowTopUp, performedBy, now); err != nil {
 				return err
 			}
 		}
@@ -1593,8 +1597,22 @@ func (s *service) createQCOverflowKanban(ctx context.Context, tx *gorm.DB, base 
 
 	newKanban := s.nextOverflowKanbanNumber(tx, base)
 	srcID := base.ID
+	// [overflow-topup] catat sumber kelebihan pada kanban baru (array, bisa
+	// bertambah bila kanban ini kelak di-top-up dari sumber lain).
+	ofSources, ofErr := appendOverflowSource(nil, overflowSourceEntry{
+		SourceWOItemID: base.ID,
+		SourceKanban:   base.KanbanNumber,
+		WOID:           base.WOID,
+		WONumber:       wo.WONumber,
+		Qty:            excess,
+		CreatedAt:      now,
+	})
+	if ofErr != nil {
+		return ofErr
+	}
 	newItem := models.WorkOrderItem{
 		OverflowSourceItemID: &srcID,
+		OverflowSources:      ofSources,
 		UUID:                 uuid.New().String(),
 		WOID:                 base.WOID,
 		ItemUniqCode:         base.ItemUniqCode,
@@ -1706,6 +1724,165 @@ func (s *service) createQCOverflowKanban(ctx context.Context, tx *gorm.DB, base 
 	}
 
 	return nil
+}
+
+// [overflow-topup] overflowSourceEntry satu catatan sumber kelebihan.
+type overflowSourceEntry struct {
+	SourceWOItemID int64     `json:"source_wo_item_id"`
+	SourceKanban   string    `json:"source_kanban"`
+	WOID           int64     `json:"wo_id"`
+	WONumber       string    `json:"wo_number"`
+	Qty            float64   `json:"qty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// [overflow-topup] findOverflowSlots: kanban overflow (FG/uniq sama, lintas
+// SEMUA WO) yang masih punya slot kosong (quantity < maxKanban), urut terlama.
+func (s *service) findOverflowSlots(tx *gorm.DB, uniq string, maxKanban float64, excludeItemID int64) ([]models.WorkOrderItem, error) {
+	var rows []models.WorkOrderItem
+	q := tx.Model(&models.WorkOrderItem{}).
+		Where("item_uniq_code = ?", uniq).
+		Where("overflow_source_item_id IS NOT NULL").
+		Where("quantity < ?", maxKanban).
+		Order("created_at ASC, id ASC")
+	if excludeItemID > 0 {
+		q = q.Where("id <> ?", excludeItemID)
+	}
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// [overflow-topup] appendOverflowSource menambah 1 entry sumber ke JSON array.
+func appendOverflowSource(existing datatypes.JSON, entry overflowSourceEntry) (datatypes.JSON, error) {
+	var arr []overflowSourceEntry
+	if len(existing) > 0 {
+		_ = json.Unmarshal(existing, &arr)
+	}
+	arr = append(arr, entry)
+	b, err := json.Marshal(arr)
+	if err != nil {
+		return nil, err
+	}
+	return datatypes.JSON(b), nil
+}
+
+// [overflow-topup] distributeQCOverflow membagi kelebihan (excess) ke kanban
+// overflow existing yang masih ada slot (top-up) lalu sisanya jadi kanban baru.
+// Bila skipTopUp true (user pilih Batal di modal) lewati top-up.
+func (s *service) distributeQCOverflow(ctx context.Context, tx *gorm.DB, base models.WorkOrderItem, wo models.WorkOrder, excess, maxKanban float64, skipTopUp bool, performedBy string, now time.Time) error {
+	if excess <= 0 {
+		return nil
+	}
+	remaining := excess
+	if !skipTopUp && maxKanban > 0 {
+		slots, err := s.findOverflowSlots(tx, base.ItemUniqCode, maxKanban, base.ID)
+		if err != nil {
+			return err
+		}
+		for i := range slots {
+			if remaining <= 0 {
+				break
+			}
+			free := maxKanban - slots[i].Quantity
+			if free <= 0 {
+				continue
+			}
+			fill := free
+			if fill > remaining {
+				fill = remaining
+			}
+			nextSrc, err := appendOverflowSource(slots[i].OverflowSources, overflowSourceEntry{
+				SourceWOItemID: base.ID,
+				SourceKanban:   base.KanbanNumber,
+				WOID:           base.WOID,
+				WONumber:       wo.WONumber,
+				Qty:            fill,
+				CreatedAt:      now,
+			})
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(&models.WorkOrderItem{}).
+				Where("id = ?", slots[i].ID).
+				Updates(map[string]interface{}{
+					"quantity":         slots[i].Quantity + fill,
+					"total_good_qty":   slots[i].TotalGoodQty + fill,
+					"overflow_sources": nextSrc,
+					"updated_at":       now,
+				}).Error; err != nil {
+				return err
+			}
+			remaining -= fill
+		}
+	}
+	if remaining <= 0 {
+		return nil
+	}
+	return s.createQCOverflowKanban(ctx, tx, base, wo, remaining, performedBy, now)
+}
+
+// [overflow-topup] PreviewQCOverflow menghitung rencana penempatan kelebihan
+// Total Production Quantity saat QC Round 3 finish TANPA menulis apa pun.
+func (s *service) PreviewQCOverflow(ctx context.Context, qcTaskID int64, tpq float64) (dto.QCOverflowPreview, error) {
+	var out dto.QCOverflowPreview
+	if qcTaskID == 0 {
+		return out, apperror.BadRequest("qc_task_id is required")
+	}
+	var task models.QCTask
+	if err := s.db.WithContext(ctx).Where("id = ?", qcTaskID).First(&task).Error; err != nil {
+		return out, err
+	}
+	if task.WOItemID == nil {
+		return out, apperror.BadRequest("qc task tidak punya wo_item")
+	}
+	var item models.WorkOrderItem
+	if err := s.db.WithContext(ctx).Where("id = ?", *task.WOItemID).First(&item).Error; err != nil {
+		return out, err
+	}
+	maxKanban := item.Quantity
+	out.MaxKanban = maxKanban
+	out.MainGood = tpq
+	if maxKanban > 0 && out.MainGood > maxKanban {
+		out.MainGood = maxKanban
+	}
+	if maxKanban <= 0 || tpq <= maxKanban {
+		return out, nil
+	}
+	excess := tpq - maxKanban
+	out.Excess = excess
+	slots, err := s.findOverflowSlots(s.db.WithContext(ctx), item.ItemUniqCode, maxKanban, item.ID)
+	if err != nil {
+		return out, err
+	}
+	remaining := excess
+	for i := range slots {
+		if remaining <= 0 {
+			break
+		}
+		free := maxKanban - slots[i].Quantity
+		if free <= 0 {
+			continue
+		}
+		fill := free
+		if fill > remaining {
+			fill = remaining
+		}
+		var woNumber string
+		_ = s.db.WithContext(ctx).Table("work_orders").Select("wo_number").Where("id = ?", slots[i].WOID).Take(&woNumber).Error
+		out.TopUps = append(out.TopUps, dto.QCOverflowTopUp{
+			WOItemID:     slots[i].ID,
+			KanbanNumber: slots[i].KanbanNumber,
+			WONumber:     woNumber,
+			FreeBefore:   free,
+			Fill:         fill,
+		})
+		remaining -= fill
+	}
+	out.HasTopUp = len(out.TopUps) > 0
+	out.NewKanbanQty = remaining
+	return out, nil
 }
 
 func (s *service) insertIncomingScrap(tx *gorm.DB, item models.WorkOrderItem, woNumber string, qty float64, performedBy string, now time.Time) (int64, error) {
