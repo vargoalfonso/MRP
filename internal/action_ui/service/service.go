@@ -47,6 +47,9 @@ type IService interface {
 
 	QCFinish(ctx context.Context, req dto.QCFinishRequest, performedBy string) error
 
+	// [overflow-topup] rencana penempatan kelebihan (utk modal konfirmasi FE)
+	PreviewQCOverflow(ctx context.Context, qcTaskID int64, tpq float64) (dto.QCOverflowPreview, error)
+
 	ListQCTask(ctx context.Context, req dto.ListQCTaskRequest) (map[string]interface{}, error)
 
 	// [qc-round-db] ambil ronde tersubmit per qc_task_id (unik per kanban) dari DB
@@ -624,29 +627,14 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	item.LastScannedProcess = currentProcess
 
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// [overflow-kanban] Jika Total Production melebihi qty rencana kanban DAN
-		// ini PROSES TERAKHIR, kelebihannya dipecah menjadi kanban baru yang
-		// otomatis FINISHED dan MELEWATI QC Process (tidak dibuatkan QC task).
-		// Di proses non-terakhir kelebihan tetap mengalir ke WIP seperti biasa.
-		routedQty := qtyOut
-		overflowQty := 0.0
-		if currentIndex == totalStep-1 {
-			planned := item.Quantity
-			if planned > 0 && qtyOut > planned+1e-9 {
-				routedQty = planned
-				overflowQty = qtyOut - planned
-			}
-		}
-		item.TotalGoodQty = routedQty
+		// [overflow-qc] Pemecahan kanban kelebihan TIDAK lagi dilakukan di Scan Out.
+		// Seluruh qty scan-out diteruskan (ke FG pada proses terakhir / ke WIP proses
+		// berikutnya). Pembuatan kanban baru untuk kelebihan kini terjadi di QC
+		// Process Round 3 (QCFinish) berdasarkan Total Production Quantity.
+		item.TotalGoodQty = qtyOut
 
-		if err := s.advanceProcessAfterScanOut(ctx, tx, &item, routedQty, req.ScannedBy); err != nil {
+		if err := s.advanceProcessAfterScanOut(ctx, tx, &item, qtyOut, req.ScannedBy); err != nil {
 			return err
-		}
-
-		if overflowQty > 0 {
-			if err := s.createOverflowKanban(ctx, tx, item, woRef, overflowQty, req.ScannedBy, now); err != nil {
-				return err
-			}
 		}
 		return nil
 	})
@@ -1555,8 +1543,346 @@ func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, perform
 			return err
 		}
 
+		// [overflow-qc] Buat kanban baru bila Total Production Quantity (TPQ) melebihi
+		// qty rencana kanban (maks kanban). Kelebihannya jadi kanban baru murni good
+		// yang otomatis ter-QC (mengikuti kanban utama). Kanban utama dibatasi good =
+		// min(TPQ, maksKanban); NG & scrap tetap di kanban utama.
+		maxKanban := item.Quantity
+		tpq := req.TotalProductionQty
+		mainGood := tpq
+		if maxKanban > 0 && mainGood > maxKanban {
+			mainGood = maxKanban
+		}
+		if err := tx.Model(&models.WorkOrderItem{}).
+			Where("id = ?", item.ID).
+			Updates(map[string]interface{}{
+				"total_good_qty":  mainGood,
+				"total_ng_qty":    req.NGDefectQty,
+				"total_scrap_qty": req.TotalScrapInBox,
+				"updated_at":      now,
+			}).Error; err != nil {
+			return err
+		}
+		if maxKanban > 0 && tpq > maxKanban {
+			excess := tpq - maxKanban
+			// [overflow-topup] isi slot kanban overflow existing dulu, sisanya kanban baru
+			if err := s.distributeQCOverflow(ctx, tx, item, wo, excess, maxKanban, req.SkipOverflowTopUp, performedBy, now); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	})
+}
+
+// [overflow-qc] createQCOverflowKanban membuat kanban baru dari kelebihan Total
+// Production Quantity saat QC Finish. Kanban ini MURNI good, langsung FINISHED,
+// mewarisi data Step-1 (mesin, dandori, setup QC) & hasil QC (pass) dari kanban
+// sumber. TIDAK menambah Finished Goods (qty sudah masuk FG saat Scan Out);
+// ini hanya pemecahan record kanban. Idempoten via overflow_source_item_id.
+func (s *service) createQCOverflowKanban(ctx context.Context, tx *gorm.DB, base models.WorkOrderItem, wo models.WorkOrder, excess float64, performedBy string, now time.Time) error {
+	if excess <= 0 {
+		return nil
+	}
+
+	var existing int64
+	if err := tx.Model(&models.WorkOrderItem{}).
+		Where("overflow_source_item_id = ?", base.ID).
+		Count(&existing).Error; err != nil {
+		return err
+	}
+	if existing > 0 {
+		return nil
+	}
+
+	newKanban := s.nextOverflowKanbanNumber(tx, base)
+	srcID := base.ID
+	// [overflow-topup] catat sumber kelebihan pada kanban baru (array, bisa
+	// bertambah bila kanban ini kelak di-top-up dari sumber lain).
+	ofSources, ofErr := appendOverflowSource(nil, overflowSourceEntry{
+		SourceWOItemID: base.ID,
+		SourceKanban:   base.KanbanNumber,
+		WOID:           base.WOID,
+		WONumber:       wo.WONumber,
+		Qty:            excess,
+		CreatedAt:      now,
+	})
+	if ofErr != nil {
+		return ofErr
+	}
+	newItem := models.WorkOrderItem{
+		OverflowSourceItemID: &srcID,
+		OverflowSources:      ofSources,
+		UUID:                 uuid.New().String(),
+		WOID:                 base.WOID,
+		ItemUniqCode:         base.ItemUniqCode,
+		PartName:             base.PartName,
+		PartNumber:           base.PartNumber,
+		UOM:                  base.UOM,
+		Quantity:             excess,
+		ProcessName:          base.ProcessName,
+		KanbanNumber:         newKanban,
+		MachineID:            base.MachineID,
+		ProcessFlowJSON:      base.ProcessFlowJSON,
+		CurrentStepSeq:       base.CurrentStepSeq,
+		Status:               "FINISHED",
+		LastScannedProcess:   "",
+		ScanInCount:          1,
+		ScanOutCount:         1,
+		TotalGoodQty:         excess,
+		Model:                base.Model,
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	if err := tx.Create(&newItem).Error; err != nil {
+		return err
+	}
+
+	// Bawa data Step-1 (dandori & setup QC): WODetail membaca dari SCAN_IN log
+	// terakhir. Buat SCAN_IN tiruan dari snapshot scan-in kanban sumber.
+	if srcIn, e := s.repoProduction.FindLatestScanInLog(ctx, base.ID); e == nil {
+		if err := tx.Create(&models.ProductionScanLog{
+			UUID:           uuid.New().String(),
+			WOID:           base.WOID,
+			WOItemID:       newItem.ID,
+			MachineID:      srcIn.MachineID,
+			KanbanNumber:   newKanban,
+			ProcessName:    currentProcessNameOf(base),
+			ProductionLine: srcIn.ProductionLine,
+			ScanType:       "SCAN_IN",
+			QtyInput:       excess,
+			Shift:          srcIn.Shift,
+			DandoriTime:    srcIn.DandoriTime,
+			SetupQCTime:    srcIn.SetupQCTime,
+			ScannedBy:      performedBy,
+			ScannedAt:      now,
+			CreatedAt:      now,
+		}).Error; err != nil {
+			return err
+		}
+	}
+
+	// SCAN_OUT log untuk jejak audit kanban baru.
+	if err := tx.Create(&models.ProductionScanLog{
+		UUID:         uuid.New().String(),
+		WOID:         base.WOID,
+		WOItemID:     newItem.ID,
+		MachineID:    int64(base.MachineID),
+		KanbanNumber: newKanban,
+		ProcessName:  currentProcessNameOf(base),
+		ScanType:     "SCAN_OUT",
+		QtyOutput:    excess,
+		ScannedBy:    performedBy,
+		ScannedAt:    now,
+		CreatedAt:    now,
+	}).Error; err != nil {
+		return err
+	}
+
+	// Mirror QC (pass) ke kanban baru: QCTask done + QCLog round 3 FINISH,
+	// good = excess, tanpa NG/scrap.
+	gq := int(excess)
+	zero := 0
+	// [overflow-qc-rr] qc_tasks.round_results NOT NULL -> isi JSON ringkas.
+	rrOF := fmt.Sprintf(`{"uniq":%q,"kanban_number":%q,"process_name":%q,"wo_id":%d,"wo_item_id":%d,"qty":%g,"auto_overflow":true}`,
+		newItem.ItemUniqCode, newKanban, currentProcessNameOf(base), newItem.WOID, newItem.ID, excess)
+	mirrorTask := models.QCTask{
+		TaskType:      "production_qc",
+		Status:        "done",
+		RoundResults:  datatypes.JSON([]byte(rrOF)),
+		WOID:          &newItem.WOID,
+		WOItemID:      &newItem.ID,
+		ProcessName:   currentProcessNameOf(base),
+		Round:         3,
+		GoodQuantity:  &gq,
+		NgQuantity:    &zero,
+		ScrapQuantity: &zero,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}
+	if err := tx.Create(&mirrorTask).Error; err != nil {
+		return err
+	}
+	if err := tx.Create(&models.QCLog{
+		UUID:        uuid.New().String(),
+		QCTaskID:    &mirrorTask.ID,
+		WOID:        &newItem.WOID,
+		WOItemID:    &newItem.ID,
+		UniqCode:    newItem.ItemUniqCode,
+		QCRound:     3,
+		QtyChecked:  excess,
+		QtyPass:     excess,
+		QtyDefect:   0,
+		QtyScrap:    0,
+		Status:      "FINISH",
+		ProcessName: currentProcessNameOf(base),
+		CheckedBy:   performedBy,
+		CheckedAt:   now,
+		CreatedAt:   now,
+	}).Error; err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// [overflow-topup] overflowSourceEntry satu catatan sumber kelebihan.
+type overflowSourceEntry struct {
+	SourceWOItemID int64     `json:"source_wo_item_id"`
+	SourceKanban   string    `json:"source_kanban"`
+	WOID           int64     `json:"wo_id"`
+	WONumber       string    `json:"wo_number"`
+	Qty            float64   `json:"qty"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// [overflow-topup] findOverflowSlots: kanban overflow (FG/uniq sama, lintas
+// SEMUA WO) yang masih punya slot kosong (quantity < maxKanban), urut terlama.
+func (s *service) findOverflowSlots(tx *gorm.DB, uniq string, maxKanban float64, excludeItemID int64) ([]models.WorkOrderItem, error) {
+	var rows []models.WorkOrderItem
+	q := tx.Model(&models.WorkOrderItem{}).
+		Where("item_uniq_code = ?", uniq).
+		Where("overflow_source_item_id IS NOT NULL").
+		Where("quantity < ?", maxKanban).
+		Order("created_at ASC, id ASC")
+	if excludeItemID > 0 {
+		q = q.Where("id <> ?", excludeItemID)
+	}
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// [overflow-topup] appendOverflowSource menambah 1 entry sumber ke JSON array.
+func appendOverflowSource(existing datatypes.JSON, entry overflowSourceEntry) (datatypes.JSON, error) {
+	var arr []overflowSourceEntry
+	if len(existing) > 0 {
+		_ = json.Unmarshal(existing, &arr)
+	}
+	arr = append(arr, entry)
+	b, err := json.Marshal(arr)
+	if err != nil {
+		return nil, err
+	}
+	return datatypes.JSON(b), nil
+}
+
+// [overflow-topup] distributeQCOverflow membagi kelebihan (excess) ke kanban
+// overflow existing yang masih ada slot (top-up) lalu sisanya jadi kanban baru.
+// Bila skipTopUp true (user pilih Batal di modal) lewati top-up.
+func (s *service) distributeQCOverflow(ctx context.Context, tx *gorm.DB, base models.WorkOrderItem, wo models.WorkOrder, excess, maxKanban float64, skipTopUp bool, performedBy string, now time.Time) error {
+	if excess <= 0 {
+		return nil
+	}
+	remaining := excess
+	if !skipTopUp && maxKanban > 0 {
+		slots, err := s.findOverflowSlots(tx, base.ItemUniqCode, maxKanban, base.ID)
+		if err != nil {
+			return err
+		}
+		for i := range slots {
+			if remaining <= 0 {
+				break
+			}
+			free := maxKanban - slots[i].Quantity
+			if free <= 0 {
+				continue
+			}
+			fill := free
+			if fill > remaining {
+				fill = remaining
+			}
+			nextSrc, err := appendOverflowSource(slots[i].OverflowSources, overflowSourceEntry{
+				SourceWOItemID: base.ID,
+				SourceKanban:   base.KanbanNumber,
+				WOID:           base.WOID,
+				WONumber:       wo.WONumber,
+				Qty:            fill,
+				CreatedAt:      now,
+			})
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(&models.WorkOrderItem{}).
+				Where("id = ?", slots[i].ID).
+				Updates(map[string]interface{}{
+					"quantity":         slots[i].Quantity + fill,
+					"total_good_qty":   slots[i].TotalGoodQty + fill,
+					"overflow_sources": nextSrc,
+					"updated_at":       now,
+				}).Error; err != nil {
+				return err
+			}
+			remaining -= fill
+		}
+	}
+	if remaining <= 0 {
+		return nil
+	}
+	return s.createQCOverflowKanban(ctx, tx, base, wo, remaining, performedBy, now)
+}
+
+// [overflow-topup] PreviewQCOverflow menghitung rencana penempatan kelebihan
+// Total Production Quantity saat QC Round 3 finish TANPA menulis apa pun.
+func (s *service) PreviewQCOverflow(ctx context.Context, qcTaskID int64, tpq float64) (dto.QCOverflowPreview, error) {
+	var out dto.QCOverflowPreview
+	if qcTaskID == 0 {
+		return out, apperror.BadRequest("qc_task_id is required")
+	}
+	var task models.QCTask
+	if err := s.db.WithContext(ctx).Where("id = ?", qcTaskID).First(&task).Error; err != nil {
+		return out, err
+	}
+	if task.WOItemID == nil {
+		return out, apperror.BadRequest("qc task tidak punya wo_item")
+	}
+	var item models.WorkOrderItem
+	if err := s.db.WithContext(ctx).Where("id = ?", *task.WOItemID).First(&item).Error; err != nil {
+		return out, err
+	}
+	maxKanban := item.Quantity
+	out.MaxKanban = maxKanban
+	out.MainGood = tpq
+	if maxKanban > 0 && out.MainGood > maxKanban {
+		out.MainGood = maxKanban
+	}
+	if maxKanban <= 0 || tpq <= maxKanban {
+		return out, nil
+	}
+	excess := tpq - maxKanban
+	out.Excess = excess
+	slots, err := s.findOverflowSlots(s.db.WithContext(ctx), item.ItemUniqCode, maxKanban, item.ID)
+	if err != nil {
+		return out, err
+	}
+	remaining := excess
+	for i := range slots {
+		if remaining <= 0 {
+			break
+		}
+		free := maxKanban - slots[i].Quantity
+		if free <= 0 {
+			continue
+		}
+		fill := free
+		if fill > remaining {
+			fill = remaining
+		}
+		var woNumber string
+		_ = s.db.WithContext(ctx).Table("work_orders").Select("wo_number").Where("id = ?", slots[i].WOID).Take(&woNumber).Error
+		out.TopUps = append(out.TopUps, dto.QCOverflowTopUp{
+			WOItemID:     slots[i].ID,
+			KanbanNumber: slots[i].KanbanNumber,
+			WONumber:     woNumber,
+			FreeBefore:   free,
+			Fill:         fill,
+		})
+		remaining -= fill
+	}
+	out.HasTopUp = len(out.TopUps) > 0
+	out.NewKanbanQty = remaining
+	return out, nil
 }
 
 func (s *service) insertIncomingScrap(tx *gorm.DB, item models.WorkOrderItem, woNumber string, qty float64, performedBy string, now time.Time) (int64, error) {
@@ -2883,6 +3209,29 @@ func (s *service) ScanOutContext(
 		soTotalStep := len(soFlow)
 		soCurrentIndex := getCurrentIndex(item.CurrentStepSeq, soTotalStep)
 
+		// [overflow-qc-so-total] Total Produksi di layar Scan Out = qty saat kejadian
+		// SCAN_OUT (fakta scan-out), BUKAN total_good_qty yang bisa berubah setelah QC
+		// Round 3 memecah kelebihan ke kanban overflow. Ini menjaga Total Produksi tetap
+		// match dengan Qty Aktual Dipakai (RM). Fallback ke TotalGoodQty bila log SCAN_OUT
+		// belum ada (mis. proses saat ini belum di-scan-out).
+		soTotalOutput := item.TotalGoodQty
+		soProcName := ""
+		if soCurrentIndex >= 0 && soCurrentIndex < len(soFlow) {
+			soProcName = soFlow[soCurrentIndex].ProcessName
+		}
+		{
+			soQ := s.db.WithContext(ctx).
+				Model(&models.ProductionScanLog{}).
+				Where("wo_item_id = ? AND scan_type = ?", item.ID, "SCAN_OUT")
+			if soProcName != "" {
+				soQ = soQ.Where("process_name = ?", soProcName)
+			}
+			var soLog models.ProductionScanLog
+			if err := soQ.Order("id DESC").First(&soLog).Error; err == nil {
+				soTotalOutput = soLog.QtyOutput
+			}
+		}
+
 		resp.Items = append(resp.Items, dto.ScanOutContextItem{
 			WOItemID:       item.ID,
 			Uniq:           item.ItemUniqCode,
@@ -2892,7 +3241,7 @@ func (s *service) ScanOutContext(
 			TotalStep:      soTotalStep,
 			ScanInCount:    item.ScanInCount,
 			ScanOutCount:   item.ScanOutCount,
-			TotalOutput:    item.TotalGoodQty,
+			TotalOutput:    soTotalOutput,
 			RawMaterials:   rms,
 		})
 	}

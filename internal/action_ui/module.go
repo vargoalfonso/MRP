@@ -105,6 +105,8 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	qc.GET("/list", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.ListQCTask))
 	// GET /api/v1/action-ui/qc/rounds?wo_id=&wo_item_id= - ronde tersubmit dari DB
 	qc.GET("/rounds", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.QCRounds))
+	// [overflow-topup] GET rencana penempatan kelebihan (modal konfirmasi)
+	qc.GET("/overflow-preview", roleMiddleware.RequirePermission(m.roleService, "action_ui", "view"), m.base.RunAction(m.handler.QCOverflowPreview))
 
 	// ✅ QC Process (round 1 / 2 / Scan Out Baru Lanjut Round 3/Round Final)
 	qcGroup := qc.Group("/process")

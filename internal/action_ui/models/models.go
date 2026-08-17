@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/datatypes"
+)
 
 type WorkOrder struct {
 	ID             int64
@@ -57,6 +61,10 @@ type WorkOrderItem struct {
 	TotalGoodQty       float64
 	TotalNGQty         float64
 	TotalScrapQty      float64
+	// [overflow-qc] kanban sumber (self-ref work_order_items.id) utk kanban kelebihan QC
+	OverflowSourceItemID *int64
+	// [overflow-topup] daftar sumber kelebihan yg mengisi kanban ini (bisa >1)
+	OverflowSources datatypes.JSON `gorm:"column:overflow_sources;type:jsonb" json:"overflow_sources"`
 	Model              string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time

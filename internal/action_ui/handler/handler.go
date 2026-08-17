@@ -391,6 +391,35 @@ func (h *HTTPHandler) QCRounds(ctx *app.Context) *app.CostumeResponse {
 	}
 }
 
+// GET /api/v1/action-ui/qc/overflow-preview?qc_task_id=&total_production_qty=
+// [overflow-topup] rencana penempatan kelebihan Total Production Quantity utk modal FE.
+func (h *HTTPHandler) QCOverflowPreview(ctx *app.Context) *app.CostumeResponse {
+	qcTaskID, err := strconv.ParseInt(ctx.Query("qc_task_id"), 10, 64)
+	if err != nil || qcTaskID == 0 {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusBadRequest,
+			Message:   "qc_task_id is required",
+		}
+	}
+	tpq, _ := strconv.ParseFloat(ctx.Query("total_production_qty"), 64)
+	data, err := h.svc.PreviewQCOverflow(ctx.Request.Context(), qcTaskID, tpq)
+	if err != nil {
+		return &app.CostumeResponse{
+			RequestID: ctx.APIReqID,
+			Status:    http.StatusUnprocessableEntity,
+			Message:   "failed preview overflow",
+			Data:      map[string]interface{}{"errors": err.Error()},
+		}
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "QC Overflow Preview Success",
+		Data:      data,
+	}
+}
+
 func (h *HTTPHandler) ListQCTask(ctx *app.Context) *app.CostumeResponse {
 	var req dto.ListQCTaskRequest
 
