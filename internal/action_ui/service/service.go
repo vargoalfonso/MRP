@@ -2492,7 +2492,10 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 			return nil, e
 		}
 
-		bomList, e := s.buildBomMaterials(ctx, item.ItemUniqCode)
+		// [rm-per-uniq] Daftar RM Step 1 memakai Material Spec milik UNIQ
+		// sendiri (bukan flatten anak/cucu). buildBomMaterials lama tetap
+		// dipakai oleh bomByUniq untuk enrichment Scan Out.
+		bomList, e := s.buildOwnBomMaterials(ctx, item.ItemUniqCode)
 		if e != nil {
 			return nil, e
 		}
@@ -3253,6 +3256,101 @@ func (s *service) ScanOutContext(
 	return resp, nil
 }
 
+// [rm-per-uniq] buildOwnBomMaterials menyusun daftar Raw Material yang benar-
+// benar milik UNIQ tersebut (Material Spec node itu sendiri), BUKAN hasil
+// flatten anak/cucu BOM. Node tanpa Material Spec sendiri (mis. parent
+// perakitan murni) menghasilkan daftar KOSONG. Setiap baris ditandai
+// IsOwnMaterial=true agar FE dapat memilih baris tanpa bergantung pada level.
+func (s *service) buildOwnBomMaterials(ctx context.Context, uniq string) ([]dto.BomMaterial, error) {
+	if strings.TrimSpace(uniq) == "" {
+		return []dto.BomMaterial{}, nil
+	}
+
+	rows, err := s.repoProduction.FindOwnBomMaterialsByUniq(ctx, uniq)
+	if err != nil {
+		return nil, err
+	}
+
+	derefStr := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return strings.TrimSpace(*p)
+	}
+	derefFloat := func(p *float64) float64 {
+		if p == nil {
+			return 0
+		}
+		return *p
+	}
+	// hasOwnSpec: node punya Material Spec sendiri bila ada salah satu penanda
+	// spesifikasi (grade/type/form/dimensi/berat) atau sudah ter-resolve ke
+	// master Raw Material. Tanpa ini, node perakitan tanpa spec ikut tampil.
+	hasOwnSpec := func(row repository.BomMaterialRow) bool {
+		if derefStr(row.MaterialGrade) != "" || derefStr(row.Grade) != "" ||
+			derefStr(row.TypeMaterial) != "" || derefStr(row.Form) != "" {
+			return true
+		}
+		if row.WidthMm != nil || row.DiameterMm != nil || row.ThicknessMm != nil ||
+			row.LengthMm != nil || row.WeightKg != nil {
+			return true
+		}
+		if row.RMUUID != nil && strings.TrimSpace(*row.RMUUID) != "" {
+			return true
+		}
+		return false
+	}
+
+	out := make([]dto.BomMaterial, 0, len(rows))
+	for _, row := range rows {
+		if !hasOwnSpec(row) {
+			continue
+		}
+		// UOM: pakai UOM master RM bila ada, lalu UOM di bom_lines, lalu UOM item.
+		uom := deref(row.RMUom)
+		if uom == "" {
+			uom = deref(row.LineUom)
+		}
+		if uom == "" {
+			uom = strings.TrimSpace(row.ItemUom)
+		}
+
+		inInventory := row.RMUUID != nil && strings.TrimSpace(*row.RMUUID) != ""
+		rawType := deref(row.RawMaterialType)
+		typeLabel := ""
+		if inInventory {
+			typeLabel = rawMaterialTypeLabel(rawType)
+		}
+
+		out = append(out, dto.BomMaterial{
+			Uniq:            row.UniqCode,
+			PartName:        row.PartName,
+			PartNumber:      derefStr(row.PartNumber),
+			Level:           row.Level,
+			QtyPerUniq:      derefFloat(row.QtyPerUniq),
+			UOM:             uom,
+			MaterialGrade:   derefStr(row.MaterialGrade),
+			Grade:           derefStr(row.Grade),
+			TypeMaterial:    derefStr(row.TypeMaterial),
+			Form:            derefStr(row.Form),
+			WidthMm:         row.WidthMm,
+			DiameterMm:      row.DiameterMm,
+			ThicknessMm:     row.ThicknessMm,
+			LengthMm:        row.LengthMm,
+			WeightKg:        row.WeightKg,
+			SupplierName:    derefStr(row.SupplierName),
+			RMUUID:          deref(row.RMUUID),
+			RMUniqCode:      derefStr(row.RMUniqCode),
+			RawMaterialType: rawType,
+			TypeLabel:       typeLabel,
+			InInventory:     inInventory,
+			AvailableStock:  derefFloat(row.StockQty),
+			StockWeightKg:   derefFloat(row.StockWeightKg),
+			IsOwnMaterial:   true,
+		})
+	}
+	return out, nil
+}
 func (s *service) buildBomMaterials(ctx context.Context, rootUniq string) ([]dto.BomMaterial, error) {
 	if strings.TrimSpace(rootUniq) == "" {
 		return []dto.BomMaterial{}, nil
