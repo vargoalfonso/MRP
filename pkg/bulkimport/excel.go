@@ -190,10 +190,49 @@ func BuildBomTemplate(md *BomTemplateMasterData) (*excelize.File, error) {
 			"cycle_time_sec_"+s, "setup_time_min_"+s, "machine_stroke_"+s, "tooling_ref_"+s,
 		)
 	}
+	kategoriColIdx := -1
 	for colIdx, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
 		if err := f.SetCellValue("Items", cell, h); err != nil {
 			return nil, err
+		}
+		if h == "kategori" {
+			kategoriColIdx = colIdx + 1
+		}
+	}
+
+	// Highlight kolom kategori supaya jelas terlihat di file yang di-download
+	// dan tambahkan dropdown validasi sesuai enum di backend
+	// (item_material_specs.type_material: raw | indirect | subcon, boleh kosong).
+	if kategoriColIdx > 0 {
+		kategoriCol, _ := excelize.ColumnNumberToName(kategoriColIdx)
+		_ = f.SetColWidth("Items", kategoriCol, kategoriCol, 14)
+
+		headerStyle, styleErr := f.NewStyle(&excelize.Style{
+			Font: &excelize.Font{Bold: true},
+			Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"FFF4CE"}},
+			Alignment: &excelize.Alignment{
+				Horizontal: "center",
+				Vertical:   "center",
+			},
+		})
+		if styleErr == nil {
+			headerCell, _ := excelize.CoordinatesToCellName(kategoriColIdx, 1)
+			_ = f.SetCellStyle("Items", headerCell, headerCell, headerStyle)
+		}
+
+		dv := excelize.NewDataValidation(true) // true = allow blank (nullable)
+		dv.Sqref = fmt.Sprintf("%s2:%s1048576", kategoriCol, kategoriCol)
+		if err := dv.SetDropList([]string{"raw", "indirect", "subcon"}); err != nil {
+			return nil, fmt.Errorf("set kategori droplist: %w", err)
+		}
+		dv.SetError(
+			excelize.DataValidationErrorStyleStop,
+			"Nilai kategori tidak valid",
+			"Gunakan salah satu: raw, indirect, subcon (atau kosongkan).",
+		)
+		if err := f.AddDataValidation("Items", dv); err != nil {
+			return nil, fmt.Errorf("add kategori data validation: %w", err)
 		}
 	}
 
@@ -223,6 +262,7 @@ func BuildBomTemplate(md *BomTemplateMasterData) (*excelize.File, error) {
 			materialGrade: "STKM550", grade: "Grade-A", form: "Plate",
 			widthMM: "200", thicknessMM: "5", lengthMM: "300", weightKG: "2.34",
 			supplierCode: supplierCode, customerCycle: "daily",
+			typeMaterial: "raw",
 			routes: []bomSampleRoute{
 				{opSeq: "10", processCode: "STAMP", machineNum: "PM-A1-001", cycleTimeSec: "45", setupTimeMin: "10", machineStroke: "220 spm", toolingRef: "Dies"},
 				{opSeq: "20", processCode: "WELD", machineNum: "M-WELD-01", cycleTimeSec: "60", setupTimeMin: "15", machineStroke: "200 spm", toolingRef: "JIG"},
