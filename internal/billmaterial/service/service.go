@@ -2043,7 +2043,7 @@ var bomImportItemHeaders = func() []string {
 		"bom_group", "row_type", "uniq_code", "parent_uniq_code", "part_name", "part_number", "model", "uom", "level",
 		"qty_per_uniq",
 		"status", "description", "material_grade", "grade", "form",
-		"width_mm", "thickness_mm", "length_mm", "diameter_mm", "weight_kg", "supplier_code", "customer_cycle", "type_material",
+		"width_mm", "thickness_mm", "length_mm", "diameter_mm", "weight_kg", "supplier_code", "customer_cycle", "kategori",
 	}
 	for n := 1; n <= bomMaxRoutes; n++ {
 		s := fmt.Sprintf("%d", n)
@@ -2535,7 +2535,7 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 		row.WeightKG = parseOptionalFloat(getImportValue(raw, headerIndex, "weight_kg"))
 		row.CustomerCycle = strings.TrimSpace(getImportValue(raw, headerIndex, "customer_cycle"))
 
-		if tm := strings.ToLower(strings.TrimSpace(getImportValue(raw, headerIndex, "type_material"))); tm != "" {
+		if tm := strings.ToLower(strings.TrimSpace(getImportValue(raw, headerIndex, "kategori"))); tm != "" {
 			switch tm {
 			case "subcon", "raw", "indirect":
 				row.TypeMaterial = tm
@@ -2543,8 +2543,8 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 				errRows = append(errRows, bulkimport.RowError{
 					Sheet:   "Items",
 					Row:     sheetRow,
-					Field:   "type_material",
-					Message: fmt.Sprintf("nilai type_material '%s' tidak dikenal. Gunakan salah satu: subcon, raw, indirect", tm),
+					Field:   "kategori",
+					Message: fmt.Sprintf("nilai kategori '%s' tidak dikenal. Gunakan salah satu: subcon, raw, indirect", tm),
 					RawData: raw,
 				})
 				continue
