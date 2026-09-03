@@ -322,6 +322,11 @@ type BomMaterial struct {
 	InInventory     bool    `json:"in_inventory"`
 	AvailableStock  float64 `json:"available_stock"`
 	StockWeightKg   float64 `json:"stock_weight_kg"`
+	// [rm-per-uniq] true bila baris ini adalah material milik UNIQ node
+	// itu sendiri (bukan hasil flatten anak/cucu BOM). FE memakai flag ini
+	// untuk memilih baris yang ditampilkan di Step 1, menggantikan filter
+	// lama berbasis level>0 ([hide-bom-parent]).
+	IsOwnMaterial bool `json:"is_own_material"`
 }
 
 type RawMaterialLookupResponse struct {

@@ -71,6 +71,9 @@ type IProductionRepository interface {
 	FindRawMaterialMetaByKeys(ctx context.Context, uuids []string, uniqCodes []string) ([]RawMaterialMeta, error)
 
 	FindBomMaterialsByRootUniq(ctx context.Context, rootUniq string) ([]BomMaterialRow, error)
+	// [rm-per-uniq] material milik UNIQ node itu sendiri (root-only, tanpa
+	// flatten anak/cucu) untuk daftar RM Step 1 per-UNIQ.
+	FindOwnBomMaterialsByUniq(ctx context.Context, uniq string) ([]BomMaterialRow, error)
 
 	// [repacking] list packing/kanban milik satu Raw Material (uniq_code).
 	ListRMPackingList(ctx context.Context, uniqCode string) ([]RMPackingRow, error)
@@ -690,6 +693,76 @@ func (r *productionRepo) FindBomMaterialsByRootUniq(ctx context.Context, rootUni
 	return rows, nil
 }
 
+// [rm-per-uniq] bomMaterialsSelfQuery IDENTIK dengan bomMaterialsQuery, namun
+// CTE `nodes` HANYA berisi node root (UNIQ yang diminta) TANPA UNION ALL
+// bom_lines. Dengan begitu baris yang dikembalikan adalah Material Spec milik
+// UNIQ itu sendiri, bukan hasil flatten seluruh anak/cucu BOM.
+const bomMaterialsSelfQuery = `
+WITH root AS (
+	SELECT id
+	FROM items
+	WHERE uniq_code = ? AND deleted_at IS NULL
+	ORDER BY id DESC
+	LIMIT 1
+),
+cur_bom AS (
+	SELECT bi.id, bi.root_item_revision_id
+	FROM bom_item bi
+	JOIN root ON root.id = bi.item_id
+	ORDER BY bi.is_current DESC, bi.version DESC, bi.id DESC
+	LIMIT 1
+),
+nodes AS (
+	SELECT root.id AS item_id, 0 AS level, NULL::bigint AS line_id,
+	       NULL::numeric AS qty_per_uniq, NULL::text AS line_uom,
+	       (SELECT root_item_revision_id FROM cur_bom) AS revision_id
+	FROM root
+)
+SELECT
+	n.item_id, n.level, n.line_id, n.qty_per_uniq, n.line_uom,
+	it.uniq_code, it.part_name, it.part_number, it.uom AS item_uom,
+	ms.material_grade, ms.grade, ms.type_material, ms.form,
+	ms.width_mm, ms.diameter_mm, ms.thickness_mm, ms.length_mm, ms.weight_kg, ms.supplier_name,
+	CAST(rm.uuid AS TEXT) AS rm_uuid, rm.uniq_code AS rm_uniq_code,
+	rm.raw_material_type, rm.uom AS rm_uom,
+	rm.stock_qty, rm.stock_weight_kg
+FROM nodes n
+JOIN items it ON it.id = n.item_id
+LEFT JOIN LATERAL (
+	SELECT ir.id
+	FROM item_revisions ir
+	WHERE ir.item_id = n.item_id
+	ORDER BY ((ir.id = n.revision_id) IS TRUE) DESC, ir.id DESC
+	LIMIT 1
+) rev ON TRUE
+LEFT JOIN item_material_specs ms ON ms.item_revision_id = rev.id
+LEFT JOIN LATERAL (
+	SELECT r.uuid, r.uniq_code, r.raw_material_type, r.uom, r.stock_qty, r.stock_weight_kg
+	FROM raw_materials r
+	WHERE r.deleted_at IS NULL
+	  AND (
+		r.uniq_code = NULLIF(TRIM(ms.material_grade), '')
+		OR r.uniq_code = it.uniq_code
+	  )
+	ORDER BY ((r.uniq_code = NULLIF(TRIM(ms.material_grade), '')) IS TRUE) DESC, r.id DESC
+	LIMIT 1
+) rm ON TRUE
+ORDER BY n.level ASC, n.line_id ASC
+`
+
+// [rm-per-uniq] FindOwnBomMaterialsByUniq mengembalikan baris Material Spec
+// milik UNIQ node itu sendiri (root-only). Dipakai untuk daftar RM Step 1.
+func (r *productionRepo) FindOwnBomMaterialsByUniq(ctx context.Context, uniq string) ([]BomMaterialRow, error) {
+	uniq = strings.TrimSpace(uniq)
+	if uniq == "" {
+		return nil, nil
+	}
+	var rows []BomMaterialRow
+	if err := r.db.WithContext(ctx).Raw(bomMaterialsSelfQuery, uniq).Scan(&rows).Error; err != nil {
+		return nil, apperror.InternalWrap("FindOwnBomMaterialsByUniq", err)
+	}
+	return rows, nil
+}
 func (r *productionRepo) DecreaseRawMaterialStock(ctx context.Context, id int64, qty float64) (float64, float64, error) {
 	var before, after float64
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
