@@ -181,7 +181,7 @@ func BuildBomTemplate(md *BomTemplateMasterData) (*excelize.File, error) {
 		"qty_per_uniq",
 		"status", "description",
 		"material_grade", "grade", "form", "width_mm", "thickness_mm", "length_mm",
-		"diameter_mm", "weight_kg", "supplier_code", "customer_cycle", "type_material",
+		"diameter_mm", "weight_kg", "supplier_code", "customer_cycle", "kategori",
 	}
 	for n := 1; n <= bomTemplateMaxRoutes; n++ {
 		s := fmt.Sprintf("%d", n)
@@ -423,7 +423,7 @@ func writeMasterDataSheet(f *excelize.File, md *BomTemplateMasterData) error {
 			{"status", "Active | Inactive"},
 			{"level", "1 - 6 (1 = child, 2 = grand child, dst.)"},
 			{"form", "Plate | Coil | Pipe | Rod | Wire | Other"},
-			{"type_material", "raw | indirect | subcon"},
+			{"kategori", "raw | indirect | subcon"},
 			{"tooling_ref_n", "Dies | JIG | CF | Other"},
 		}},
 	}
