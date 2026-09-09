@@ -18,14 +18,19 @@ type WorkOrder struct {
 	WoType   string `gorm:"column:wo_type;not null;size:32"`
 	// wo_kind distinguishes multiple WO flows using the same table.
 	// Values: standard | bulk | rm_processing
-	WOKind         string  `gorm:"column:wo_kind;not null;size:32"`
-	ReferenceWO    *string `gorm:"column:reference_wo;size:64"`
+	WOKind      string  `gorm:"column:wo_kind;not null;size:32"`
+	ReferenceWO *string `gorm:"column:reference_wo;size:64"`
 	// [wo-defect-reason-scope] wo_item SUMBER (kanban spesifik) yang memicu rework ini.
 	// Diisi saat rework dibuat dari QC Finish, dipakai untuk memfilter Reason/Info Defect
 	// agar hanya menampilkan reason kanban sumber tsb (bukan gabungan uniq yang sama).
 	ReferenceWOItemID *int64 `gorm:"column:reference_wo_item_id"`
-	Status         string  `gorm:"column:status;not null;size:32"`
-	ApprovalStatus string  `gorm:"column:approval_status;not null;size:32"`
+	Status            string `gorm:"column:status;not null;size:32"`
+	ApprovalStatus    string `gorm:"column:approval_status;not null;size:32"`
+
+	// Robot automation metadata. Manual WOs keep source_system=manual.
+	SourceSystem    string  `gorm:"column:source_system;not null;size:32;default:manual"`
+	AutomationJobID *string `gorm:"column:automation_job_id;size:128"`
+	RobotName       *string `gorm:"column:robot_name;size:255"`
 
 	CreatedDate   time.Time  `gorm:"column:created_date;type:date;not null"`
 	TargetDate    *time.Time `gorm:"column:target_date;type:date"`

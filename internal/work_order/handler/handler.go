@@ -48,6 +48,31 @@ func (h *HTTPHandler) ListBulkSourceDocumentItems(ctx *app.Context) *app.Costume
 	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: data}
 }
 
+func (h *HTTPHandler) ListRobotTasks(ctx *app.Context) *app.CostumeResponse {
+	p := pagination.WorkOrderPagination(ctx)
+	data, err := h.svc.ListRobotTasks(ctx.Request.Context(), p)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: data}
+}
+
+func (h *HTTPHandler) ApprovalRobotTask(ctx *app.Context) *app.CostumeResponse {
+	var req woModels.WorkOrderApprovalRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body: " + err.Error()}
+	}
+	if errs := validator.Validate(req); errs != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusUnprocessableEntity, Message: "validation failed", Data: map[string]interface{}{"errors": errs}}
+	}
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	data, err := h.svc.ApprovalRobotTask(ctx.Request.Context(), ctx.Param("id"), req, userCtx.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: data}
+}
+
 func (h *HTTPHandler) ListBulkWorkOrders(ctx *app.Context) *app.CostumeResponse {
 	p := pagination.WorkOrderPagination(ctx)
 	data, err := h.svc.ListBulk(ctx.Request.Context(), p)

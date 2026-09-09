@@ -1071,18 +1071,18 @@ func (s *service) advanceProcessAfterQCFinish(ctx context.Context, tx *gorm.DB, 
 			ProcessName:   nextStep.ProcessName,
 			// [wip-scope] stok ini HASIL proses sekarang, belum diproses oleh
 			// proses berikutnya. Dipakai untuk tampilan daftar WIP.
-			FromProcess: currentStep.ProcessName,
-			MachineName:   derefString(nextStep.MachineName),
-			OpSeq:         nextStep.OpSeq,
-			Seq:           currentIndex + 2,
-			UOM:           item.UOM,
-			Stock:         int(qtyProduced),
-			QtyIn:         int(qtyProduced),
-			QtyOut:        0,
-			QtyRemaining:  int(qtyProduced),
-			Status:        "queue",
-			CreatedAt:     now,
-			UpdatedAt:     now,
+			FromProcess:  currentStep.ProcessName,
+			MachineName:  derefString(nextStep.MachineName),
+			OpSeq:        nextStep.OpSeq,
+			Seq:          currentIndex + 2,
+			UOM:          item.UOM,
+			Stock:        int(qtyProduced),
+			QtyIn:        int(qtyProduced),
+			QtyOut:       0,
+			QtyRemaining: int(qtyProduced),
+			Status:       "queue",
+			CreatedAt:    now,
+			UpdatedAt:    now,
 		}
 		if err := tx.Create(&nextWIP).Error; err != nil {
 			return err
@@ -2409,7 +2409,7 @@ func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrder
 				src := "wo_scan"
 				by := scannedBy
 				notes := "Used in production scan out"
-				
+
 				// 1. Tulis ke inventory_movement_logs
 				if err := s.repoProduction.InsertInventoryMovementLog(ctx, models.InventoryMovementLog{
 					MovementCategory: "finished_goods",
@@ -2424,7 +2424,7 @@ func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrder
 				}); err != nil {
 					return err
 				}
-				
+
 				// 2. Tulis ke fg_movement_logs
 				if err := s.appendFGMovementLog(s.db.WithContext(ctx), fg.ID, code, "outgoing", -rm.QtyUsed, before, after, &ref, nil, &notes, &by); err != nil {
 					return err

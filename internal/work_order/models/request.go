@@ -15,6 +15,12 @@ type CreateWorkOrderRequest struct {
 	EstimatedTimeMinutes *float64 `json:"estimated_time_minutes"`
 	CycleTimeMin         *float64 `json:"cycle_time_min"`
 	MachineCapacity      *float64 `json:"machine_capacity"`
+
+	// Optional service-to-service metadata. Robot Automation sends these fields
+	// when it creates a WO; browser-created WOs omit them and remain manual.
+	SourceSystem    *string `json:"source_system" validate:"omitempty,oneof=manual robot_automation"`
+	AutomationJobID *string `json:"automation_job_id"`
+	RobotName       *string `json:"robot_name"`
 }
 
 type CreateWorkOrderItem struct {

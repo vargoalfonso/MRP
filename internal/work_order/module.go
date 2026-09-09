@@ -71,6 +71,12 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	wo.POST("/:id/approval", perm("work_order", "approve"), m.base.RunAction(m.handler.Approval))
 	wo.GET("/:id/qr", perm("work_order", "view"), m.base.RunAction(m.handler.GetWorkOrderQR))
 
+	// Robot Automation creates standard WOs through the normal create endpoint.
+	// This surface only lists those tasks and accepts the user's approval decision.
+	robotTasks := g.Group("/robot-tasks")
+	robotTasks.GET("", perm("work_order", "view"), m.base.RunAction(m.handler.ListRobotTasks))
+	robotTasks.POST("/:id/approval", perm("work_order", "approve"), m.base.RunAction(m.handler.ApprovalRobotTask))
+
 	rm := g.Group("/rm-processing/work-orders")
 	rm.GET("/summary", perm("work_order", "view"), m.base.RunAction(m.handler.GetRMProcessingWorkOrderSummary))
 	rm.GET("", perm("work_order", "view"), m.base.RunAction(m.handler.ListRMProcessingWorkOrders))
