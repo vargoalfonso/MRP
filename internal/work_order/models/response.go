@@ -79,6 +79,9 @@ type WorkOrderListItem struct {
 	CreatedDate    string  `json:"created_date"` // YYYY-MM-DD
 	TargetDate     *string `json:"target_date"`  // YYYY-MM-DD
 	CreatedByName  *string `json:"created_by_name"`
+	SourceSystem    string  `json:"source_system"`
+	AutomationJobID *string `json:"automation_job_id"`
+	RobotName       *string `json:"robot_name"`
 	// Board summary fields
 	UniqCount   int                       `json:"uniq_count"`   // distinct uniq_codes in items
 	ItemCount   int                       `json:"item_count"`   // total kanban lines

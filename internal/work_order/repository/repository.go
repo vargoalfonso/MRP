@@ -305,6 +305,10 @@ func (r *repository) GetSummaryByKind(ctx context.Context, woKind string) (*Summ
 		innerKindFilter = " AND woi.wo_kind = ?"
 		outerKindFilter = " WHERE wo.wo_kind = ?"
 		args = append(args, woKind, woKind)
+		if woKind == "standard" {
+			innerKindFilter += " AND (COALESCE(woi.source_system, 'manual') <> 'robot_automation' OR woi.approval_status = 'Approved')"
+			outerKindFilter += " AND (COALESCE(wo.source_system, 'manual') <> 'robot_automation' OR wo.approval_status = 'Approved')"
+		}
 	}
 	err := r.db.WithContext(ctx).Raw(
 		strings.Replace(strings.Replace(query, "%s", innerKindFilter, 1), "%s", outerKindFilter, 1),
@@ -321,16 +325,18 @@ func (r *repository) GetSummaryByKind(ctx context.Context, woKind string) (*Summ
 // ---------------------------------------------------------------------------
 
 type ListFilter struct {
-	Search         string
-	Status         string
-	ApprovalStatus string
-	WOType         string
-	WOKind         string
-	Page           int
-	Limit          int
-	Offset         int
-	OrderBy        string
-	OrderDirection string
+	Search                   string
+	Status                   string
+	ApprovalStatus           string
+	WOType                   string
+	WOKind                   string
+	SourceSystem             string
+	HideUnapprovedRobotTasks bool
+	Page                     int
+	Limit                    int
+	Offset                   int
+	OrderBy                  string
+	OrderDirection           string
 }
 
 type WorkOrderRow struct {
@@ -345,6 +351,9 @@ type WorkOrderRow struct {
 	CreatedDate        string   `gorm:"column:created_date"`
 	TargetDate         *string  `gorm:"column:target_date"`
 	CreatedByName      *string  `gorm:"column:created_by_name"`
+	SourceSystem       string   `gorm:"column:source_system"`
+	AutomationJobID    *string  `gorm:"column:automation_job_id"`
+	RobotName          *string  `gorm:"column:robot_name"`
 	UniqCount          int      `gorm:"column:uniq_count"`
 	ItemCount          int      `gorm:"column:item_count"`
 	ClosedCount        int      `gorm:"column:closed_count"`
@@ -382,6 +391,12 @@ func (r *repository) ListWorkOrders(ctx context.Context, f ListFilter) ([]WorkOr
 	if f.WOKind != "" {
 		base = base.Where("wo_kind = ?", f.WOKind)
 	}
+	if f.SourceSystem != "" {
+		base = base.Where("source_system = ?", f.SourceSystem)
+	}
+	if f.HideUnapprovedRobotTasks {
+		base = base.Where("(COALESCE(source_system, 'manual') <> ? OR approval_status = ?)", "robot_automation", "Approved")
+	}
 
 	var total int64
 	if err := base.Count(&total).Error; err != nil {
@@ -415,6 +430,12 @@ func (r *repository) ListWorkOrders(ctx context.Context, f ListFilter) ([]WorkOr
 	if f.WOKind != "" {
 		dq = dq.Where("wo.wo_kind = ?", f.WOKind)
 	}
+	if f.SourceSystem != "" {
+		dq = dq.Where("wo.source_system = ?", f.SourceSystem)
+	}
+	if f.HideUnapprovedRobotTasks {
+		dq = dq.Where("(COALESCE(wo.source_system, 'manual') <> ? OR wo.approval_status = ?)", "robot_automation", "Approved")
+	}
 
 	var rows []WorkOrderRow
 	err := dq.
@@ -428,6 +449,9 @@ func (r *repository) ListWorkOrders(ctx context.Context, f ListFilter) ([]WorkOr
 			"wo.status",
 			"wo.approval_status",
 			"wo.created_by_name",
+			"COALESCE(wo.source_system, 'manual') AS source_system",
+			"wo.automation_job_id",
+			"wo.robot_name",
 			"wo.source_material_uniq",
 			"wo.target_material_uniq",
 			"wo.model",
