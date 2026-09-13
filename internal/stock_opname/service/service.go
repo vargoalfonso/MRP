@@ -69,7 +69,12 @@ func (s *service) ListUniqOptions(ctx context.Context, q stockModels.FormOptions
 	if err != nil {
 		return nil, err
 	}
-	rows, err := adj.SearchUniqs(ctx, s.db, strings.TrimSpace(q.Q), q.Limit)
+	var rows []adjuster.UniqSnapshotResult
+	if normalizeInventoryType(q.Type) == stockModels.InventoryTypeWIP && normalizeMethod(q.Method) == stockModels.MethodBulk {
+		rows, err = adjuster.SearchWIPBOMUniqs(ctx, s.db, strings.TrimSpace(q.Q), q.Limit)
+	} else {
+		rows, err = adj.SearchUniqs(ctx, s.db, strings.TrimSpace(q.Q), q.Limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -159,22 +164,27 @@ func (s *service) CreateSession(ctx context.Context, req stockModels.CreateSessi
 		if len(req.Items) == 0 {
 			return nil
 		}
-		if len(req.Items) > 1 {
-			return apperror.UnprocessableEntity("one stock opname row can contain only one item; create separate stock opname rows per uniq")
-		}
 		adj, err := s.getAdjuster(session.InventoryType)
 		if err != nil {
 			return err
 		}
-		entry, err := s.buildEntry(ctx, tx, session, adj, req.Items[0], actor)
-		if err != nil {
-			return err
-		}
-		if err := s.repo.CreateEntry(ctx, tx, entry); err != nil {
-			return err
-		}
-		if err := s.appendAuditLog(ctx, tx, session.ID, &entry.ID, session.InventoryType, stockModels.AuditActionAddEntry, stockModels.AuditEntityEntry, actor, entry.Remarks, map[string]interface{}{"uniq_code": entry.UniqCode, "counted_qty": entry.CountedQty, "source": "create_session"}); err != nil {
-			return err
+
+		// A session can contain multiple stock opname rows. This is required for
+		// manual multi-entry input and Excel uploads, where each uniq must be
+		// stored as its own stock_opname_entries row under the same session.
+		created := 0
+		for i := range req.Items {
+			entry, err := s.buildEntry(ctx, tx, session, adj, req.Items[i], actor)
+			if err != nil {
+				return apperror.UnprocessableEntity(fmt.Sprintf("items[%d]: %s", i, err.Error()))
+			}
+			if err := s.repo.CreateEntry(ctx, tx, entry); err != nil {
+				return err
+			}
+			if err := s.appendAuditLog(ctx, tx, session.ID, &entry.ID, session.InventoryType, stockModels.AuditActionAddEntry, stockModels.AuditEntityEntry, actor, entry.Remarks, map[string]interface{}{"uniq_code": entry.UniqCode, "counted_qty": entry.CountedQty, "source": "create_session"}); err != nil {
+				return err
+			}
+			created++
 		}
 		if err := s.repo.RecalculateSessionTotals(ctx, tx, session.ID); err != nil {
 			return err
@@ -188,7 +198,7 @@ func (s *service) CreateSession(ctx context.Context, req stockModels.CreateSessi
 		if err := s.repo.UpdateSession(ctx, tx, session); err != nil {
 			return err
 		}
-		return s.appendAuditLog(ctx, tx, session.ID, nil, session.InventoryType, stockModels.AuditActionBulkAddEntries, stockModels.AuditEntitySession, actor, session.Remarks, map[string]interface{}{"created": 1, "source": "create_session"})
+		return s.appendAuditLog(ctx, tx, session.ID, nil, session.InventoryType, stockModels.AuditActionBulkAddEntries, stockModels.AuditEntitySession, actor, session.Remarks, map[string]interface{}{"created": created, "source": "create_session"})
 	})
 	if err != nil {
 		return nil, err
@@ -580,7 +590,7 @@ func (s *service) ApproveSession(ctx context.Context, id int64, req stockModels.
 				if packingApplied {
 					adjEntry.CountedQty = entries[i].SystemQtySnapshot + delta
 				}
-				result, err := adj.ApplyAdjustment(ctx, tx, &adjEntry, session.SessionNumber, actor)
+				result, err := s.applyStockOpnameAdjustment(ctx, tx, session, adj, &adjEntry, actor)
 				if err != nil {
 					return err
 				}
@@ -691,7 +701,7 @@ func (s *service) ApproveEntry(ctx context.Context, sessionID, entryID int64, re
 			if packingApplied {
 				adjEntry.CountedQty = entry.SystemQtySnapshot + delta
 			}
-			result, err := adj.ApplyAdjustment(ctx, tx, &adjEntry, session.SessionNumber, actor)
+			result, err := s.applyStockOpnameAdjustment(ctx, tx, session, adj, &adjEntry, actor)
 			if err != nil {
 				return err
 			}
@@ -903,6 +913,13 @@ func (s *service) addEntryTx(ctx context.Context, sessionID int64, req stockMode
 	return created, nil
 }
 
+func (s *service) applyStockOpnameAdjustment(ctx context.Context, tx *gorm.DB, session *stockModels.StockOpnameSession, adj adjuster.InventoryAdjuster, entry *stockModels.StockOpnameEntry, actor string) (*adjuster.AdjustmentResult, error) {
+	if session.InventoryType == stockModels.InventoryTypeWIP && session.Method == stockModels.MethodBulk {
+		return adjuster.ApplyWIPBOMAdjustment(ctx, tx, entry)
+	}
+	return adj.ApplyAdjustment(ctx, tx, entry, session.SessionNumber, actor)
+}
+
 func (s *service) buildEntry(ctx context.Context, tx *gorm.DB, session *stockModels.StockOpnameSession, adj adjuster.InventoryAdjuster, req stockModels.CreateEntryRequest, actor string) (*stockModels.StockOpnameEntry, error) {
 	// [so-packing] Action UI men-scan packing list / DN dulu; dari situ backend
 	// me-resolve uniq, DN pemiliknya, dan qty maksimal packing tersebut.
@@ -926,7 +943,15 @@ func (s *service) buildEntry(ctx context.Context, tx *gorm.DB, session *stockMod
 	if uniqCode == "" {
 		return nil, apperror.BadRequest("uniq_code atau packing_number wajib diisi")
 	}
-	snapshot, err := adj.ResolveUniq(ctx, tx, uniqCode)
+	var snapshot *adjuster.UniqSnapshot
+	var err error
+	if session.InventoryType == stockModels.InventoryTypeWIP && session.Method == stockModels.MethodBulk {
+		// Bulk Excel WIP rows use active BOM items as their reference because
+		// wip_items is intentionally empty in this workflow.
+		snapshot, err = adjuster.ResolveWIPBOMUniq(ctx, tx, uniqCode)
+	} else {
+		snapshot, err = adj.ResolveUniq(ctx, tx, uniqCode)
+	}
 	if err != nil {
 		return nil, err
 	}
