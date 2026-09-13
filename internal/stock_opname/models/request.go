@@ -55,9 +55,10 @@ type ApproveRequest struct {
 }
 
 type FormOptionsQuery struct {
-	Type  string
-	Q     string
-	Limit int
+	Type   string
+	Method string
+	Q      string
+	Limit  int
 }
 
 type HistoryLogsQuery struct {
