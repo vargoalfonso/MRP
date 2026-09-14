@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/ganasa18/go-template/internal/safety_stock_parameter/constant"
 	"github.com/ganasa18/go-template/internal/safety_stock_parameter/models"
@@ -41,6 +42,7 @@ func (s *service) GetByID(ctx context.Context, id int64) (*models.SafetyStockPar
 }
 
 func (s *service) Create(ctx context.Context, req models.CreateSafetyStockRequest) (*models.SafetyStockParameter, error) {
+	req.CalculationType = normalizeCalculationType(req.CalculationType)
 
 	_, err := s.repo.FindByItemCode(ctx, req.ItemUniqCode)
 	if err == nil {
@@ -52,9 +54,9 @@ func (s *service) Create(ctx context.Context, req models.CreateSafetyStockReques
 		return nil, err
 	}
 
-	status := "active"
-	if req.Status != nil {
-		status = *req.Status
+	status := "Active"
+	if req.Status != nil && strings.TrimSpace(*req.Status) != "" {
+		status = strings.TrimSpace(*req.Status)
 	}
 
 	data := models.SafetyStockParameter{
@@ -73,8 +75,9 @@ func (s *service) Create(ctx context.Context, req models.CreateSafetyStockReques
 }
 
 func (s *service) Update(ctx context.Context, id int64, req models.UpdateSafetyStockRequest) (*models.SafetyStockParameter, error) {
+	req.CalculationType = normalizeCalculationType(req.CalculationType)
 
-	status := "active"
+	status := "Active"
 	if req.Status != nil {
 		status = *req.Status
 	}
@@ -102,8 +105,9 @@ func (s *service) BulkCreate(ctx context.Context, req models.BulkCreateSafetySto
 		data = append(data, models.SafetyStockParameter{
 			InventoryType:   item.InventoryType,
 			ItemUniqCode:    item.ItemUniqCode,
-			CalculationType: item.CalculationType,
+			CalculationType: normalizeCalculationType(item.CalculationType),
 			Constanta:       item.Constanta,
+			Status:          "Active",
 		})
 	}
 
