@@ -606,6 +606,7 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 			// [wo-estimated-time] snapshot estimasi waktu dari FE.
 			EstimatedTimeMinutes: req.EstimatedTimeMinutes,
 			CycleTimeMin:         req.CycleTimeMin,
+			SetupTimeMin:         req.SetupTimeMin,
 			MachineCapacity:      req.MachineCapacity,
 			QRImageBase64:        &woQR,
 		}
@@ -1510,6 +1511,7 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 		DefectReasons:        defectReasons,
 		EstimatedTimeMinutes: wo.EstimatedTimeMinutes,
 		CycleTimeMin:         wo.CycleTimeMin,
+		SetupTimeMin:         wo.SetupTimeMin,
 		MachineCapacity:      wo.MachineCapacity,
 		QRDataURL:            woQR,
 		Items:                items,
