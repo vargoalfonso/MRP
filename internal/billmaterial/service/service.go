@@ -120,8 +120,10 @@ func New(repo repository.IRepository, store bulkimport.ErrorStore) IService {
 func (s *service) ListBom(ctx context.Context, q models.ListBomQuery) (*models.ListBomResponse, error) {
 	// Normalise so Meta always reflects the values actually used
 	limit := q.Limit
-	if limit < 1 || limit > 200 {
+	if limit < 1 {
 		limit = 20
+	} else if limit > 1000 {
+		limit = 1000
 	}
 	page := q.Page
 	if page < 1 {
@@ -236,6 +238,8 @@ func (s *service) buildChildTree(lines []models.BomLine, preload *bomPreload, pa
 			Asset:      s.buildAssetInfo(preload.assetByItemID(child.ID)),
 			Status:     child.Status,
 		}
+		var specDetail *models.MaterialSpecDetail
+		matchesFilter := true
 		if rev, ok := preload.revisionForChild(line, child.ID); ok {
 			row.Version = &rev.Revision
 			// [wo-estimated-time] child juga butuh process route untuk kapasitas mesin.
@@ -243,22 +247,29 @@ func (s *service) buildChildTree(lines []models.BomLine, preload *bomPreload, pa
 				row.ProcessRoutes = routes
 			}
 			if spec, ok := preload.specs[rev.ID]; ok {
-				row.MaterialSpec = s.toSpecDetail(&spec)
+				specDetail = s.toSpecDetail(&spec)
+				row.MaterialSpec = specDetail
 				if typeMaterialFilter != "" {
 					if spec.TypeMaterial == nil || *spec.TypeMaterial != typeMaterialFilter {
-						continue
+						matchesFilter = false
 					}
 				}
 			} else if typeMaterialFilter != "" {
-				continue
+				matchesFilter = false
 			}
 		} else if typeMaterialFilter != "" {
-			continue
+			matchesFilter = false
 		}
+
+		var childRows []models.BomTreeRow
 		if level < 6 {
-			row.Children = s.buildChildTree(lines, preload, child.ID, level+1, typeMaterialFilter)
+			childRows = s.buildChildTree(lines, preload, child.ID, level+1, typeMaterialFilter)
 		}
-		rows = append(rows, row)
+
+		if matchesFilter || len(childRows) > 0 {
+			row.Children = childRows
+			rows = append(rows, row)
+		}
 	}
 	return rows
 }

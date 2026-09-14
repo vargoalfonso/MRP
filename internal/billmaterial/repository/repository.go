@@ -938,9 +938,30 @@ func (r *repository) ListBomItems(ctx context.Context, f ListFilter) ([]models.B
 						bom_item.root_item_revision_id,
 						(SELECT MAX(ir_s.id) FROM item_revisions ir_s WHERE ir_s.item_id = bom_item.item_id)
 					)
-				  AND (ims_s.material_grade ILIKE ? OR ims_s.grade ILIKE ?)
+				  AND (ims_s.material_grade ILIKE ? OR ims_s.grade ILIKE ? OR ims_s.material_code ILIKE ?)
 			)
-		)`, like, like, like, like, like, like)
+			OR EXISTS (
+				SELECT 1
+				FROM bom_lines bl
+				JOIN items ci ON ci.id = bl.child_item_id AND ci.deleted_at IS NULL
+				LEFT JOIN item_revisions cir ON cir.id = COALESCE(
+						bl.child_item_revision_id,
+						(SELECT MAX(ir_c.id) FROM item_revisions ir_c WHERE ir_c.item_id = bl.child_item_id)
+					)
+				LEFT JOIN item_material_specs cims ON cims.item_revision_id = cir.id
+				WHERE bl.bom_item_id = bom_item.id
+				  AND bl.deleted_at IS NULL
+				  AND (
+					ci.uniq_code ILIKE ?
+					OR ci.part_name ILIKE ?
+					OR ci.part_number ILIKE ?
+					OR ci.model ILIKE ?
+					OR cims.material_grade ILIKE ?
+					OR cims.grade ILIKE ?
+					OR cims.material_code ILIKE ?
+				  )
+			)
+		)`, like, like, like, like, like, like, like, like, like, like, like, like, like, like)
 	}
 	if needSpecJoin {
 		q = q.Joins(`JOIN item_revisions ON item_revisions.id = bom_item.root_item_revision_id`).
@@ -1144,8 +1165,10 @@ func (r *repository) GetImportHistoryErrorFile(ctx context.Context, id string) (
 
 // limitOffset returns SQL LIMIT and OFFSET from pagination input.
 func limitOffset(limit, page int) (int, int) {
-	if limit < 1 || limit > 200 {
+	if limit < 1 {
 		limit = 20
+	} else if limit > 1000 {
+		limit = 1000
 	}
 	if page < 1 {
 		page = 1
