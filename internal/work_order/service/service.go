@@ -306,12 +306,16 @@ func (s *service) CreateBulk(ctx context.Context, req woModels.CreateBulkWorkOrd
 			if err != nil {
 				return err
 			}
-			pcsPerKanban := it.KanbanQty
-			if pcsPerKanban <= 0 {
-				if kp == nil || kp.KanbanQty <= 0 {
-					return apperror.UnprocessableEntity(fmt.Sprintf("kanban_parameters tidak ditemukan for item_uniq_code %q", it.ItemUniqCode))
-				}
+			pcsPerKanban := 0
+			if kp != nil && kp.KanbanQty > 0 {
+				// System Settings is the source of truth for pcs per kanban.
 				pcsPerKanban = kp.KanbanQty
+			}
+			if pcsPerKanban <= 0 {
+				pcsPerKanban = it.KanbanQty
+			}
+			if pcsPerKanban <= 0 {
+				return apperror.UnprocessableEntity(fmt.Sprintf("kanban_parameters tidak ditemukan for item_uniq_code %q", it.ItemUniqCode))
 			}
 			if kp == nil || strings.TrimSpace(kp.KanbanNumber) == "" {
 				return apperror.UnprocessableEntity(fmt.Sprintf("kanban_parameters tidak ditemukan for item_uniq_code %q", it.ItemUniqCode))
@@ -606,6 +610,7 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 			// [wo-estimated-time] snapshot estimasi waktu dari FE.
 			EstimatedTimeMinutes: req.EstimatedTimeMinutes,
 			CycleTimeMin:         req.CycleTimeMin,
+			SetupTimeMin:         req.SetupTimeMin,
 			MachineCapacity:      req.MachineCapacity,
 			QRImageBase64:        &woQR,
 		}
@@ -749,12 +754,16 @@ func (s *service) Preview(ctx context.Context, req woModels.CreateWorkOrderReque
 		if err != nil {
 			return nil, err
 		}
-		pcsPerKanban := it.KanbanQty
-		if pcsPerKanban <= 0 {
-			if kp == nil || kp.KanbanQty <= 0 {
-				return nil, apperror.UnprocessableEntity(fmt.Sprintf("kanban_qty is required (kanban_parameters tidak ditemukan for item_uniq_code %q)", it.ItemUniqCode))
-			}
+		pcsPerKanban := 0
+		if kp != nil && kp.KanbanQty > 0 {
+			// System Settings is the source of truth for pcs per kanban.
 			pcsPerKanban = kp.KanbanQty
+		}
+		if pcsPerKanban <= 0 {
+			pcsPerKanban = it.KanbanQty
+		}
+		if pcsPerKanban <= 0 {
+			return nil, apperror.UnprocessableEntity(fmt.Sprintf("kanban_qty is required (kanban_parameters tidak ditemukan for item_uniq_code %q)", it.ItemUniqCode))
 		}
 		if kp == nil || strings.TrimSpace(kp.KanbanNumber) == "" {
 			return nil, apperror.UnprocessableEntity(fmt.Sprintf("kanban_parameters tidak ditemukan for item_uniq_code %q", it.ItemUniqCode))
@@ -1510,6 +1519,7 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 		DefectReasons:        defectReasons,
 		EstimatedTimeMinutes: wo.EstimatedTimeMinutes,
 		CycleTimeMin:         wo.CycleTimeMin,
+		SetupTimeMin:         wo.SetupTimeMin,
 		MachineCapacity:      wo.MachineCapacity,
 		QRDataURL:            woQR,
 		Items:                items,

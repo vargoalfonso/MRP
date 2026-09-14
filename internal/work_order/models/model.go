@@ -57,9 +57,10 @@ type WorkOrder struct {
 	CreatedBy     *uuid.UUID `gorm:"column:created_by;type:uuid"`
 	CreatedByName *string    `gorm:"column:created_by_name;size:255"`
 	Notes         *string    `gorm:"column:notes"`
-	// [wo-estimated-time] Estimasi waktu produksi (menit) = qty x cycle_time_min x machine_capacity.
+	// [wo-estimated-time] Estimasi waktu produksi (menit) = qty x cycle + setup.
 	EstimatedTimeMinutes *float64 `gorm:"column:estimated_time_minutes;type:numeric(15,4)"`
 	CycleTimeMin         *float64 `gorm:"column:cycle_time_min;type:numeric(15,4)"`
+	SetupTimeMin         *float64 `gorm:"column:setup_time_min;type:numeric(15,4)"`
 	MachineCapacity      *float64 `gorm:"column:machine_capacity;type:numeric(15,4)"`
 	QRImageBase64        *string  `gorm:"column:qr_image_base64"`
 	PreProcessing        bool     `gorm:"column:pre_processing;not null;default:false"`
