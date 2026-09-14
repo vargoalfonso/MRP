@@ -40,7 +40,7 @@ func (h *HTTPHandler) ListUniqOptions(ctx *app.Context) *app.CostumeResponse {
 			limit = n
 		}
 	}
-	resp, err := h.svc.ListUniqOptions(ctx.Request.Context(), stockModels.FormOptionsQuery{Type: ctx.Query("type"), Q: ctx.Query("q"), Limit: limit})
+	resp, err := h.svc.ListUniqOptions(ctx.Request.Context(), stockModels.FormOptionsQuery{Type: ctx.Query("type"), Method: ctx.Query("method"), Q: ctx.Query("q"), Limit: limit})
 	if err != nil {
 		return app.NewError(ctx, err)
 	}

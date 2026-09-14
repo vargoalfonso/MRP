@@ -10,3 +10,4 @@
 \i /docker-entrypoint-initdb.d/migrations/0006_sync_customer_and_supplier_schema_up.sql
 \i /docker-entrypoint-initdb.d/migrations/0007_create_type_parameters_up.sql
 \i /docker-entrypoint-initdb.d/migrations/0067_add_description_to_type_parameters_up.sql
+\i /docker-entrypoint-initdb.d/migrations/0073_prl_seq_and_trigger_up.sql

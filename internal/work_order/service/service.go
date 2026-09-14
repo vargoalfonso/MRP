@@ -31,6 +31,7 @@ type IService interface {
 	CreateRMProcessing(ctx context.Context, req woModels.CreateRMProcessingWorkOrderRequest, createdBy string) (*woModels.RMProcessingWorkOrderCreateResponse, error)
 	Preview(ctx context.Context, req woModels.CreateWorkOrderRequest) (*woModels.WorkOrderPreviewResponse, error)
 	List(ctx context.Context, p pagination.WorkOrderPaginationInput) (*woModels.WorkOrderListResponse, error)
+	ListRobotTasks(ctx context.Context, p pagination.WorkOrderPaginationInput) (*woModels.WorkOrderListResponse, error)
 	ListBulk(ctx context.Context, p pagination.WorkOrderPaginationInput) (*woModels.WorkOrderListResponse, error)
 	ListRMProcessing(ctx context.Context, p pagination.WorkOrderPaginationInput) (*woModels.RMProcessingWorkOrderListResponse, error)
 	GetSummary(ctx context.Context) (*woModels.WorkOrderSummaryResponse, error)
@@ -40,6 +41,7 @@ type IService interface {
 	GetBulkDetail(ctx context.Context, woUUID string) (*woModels.WorkOrderDetailResponse, error)
 	GetRMProcessingDetail(ctx context.Context, woUUID string) (*woModels.RMProcessingWorkOrderDetailResponse, error)
 	Approval(ctx context.Context, woUUID string, req woModels.WorkOrderApprovalRequest, performedBy string) (*woModels.WorkOrderApprovalResponse, error)
+	ApprovalRobotTask(ctx context.Context, woUUID string, req woModels.WorkOrderApprovalRequest, performedBy string) (*woModels.WorkOrderApprovalResponse, error)
 	ApprovalBulk(ctx context.Context, woUUID string, req woModels.WorkOrderApprovalRequest, performedBy string) (*woModels.WorkOrderApprovalResponse, error)
 	ApprovalRMProcessing(ctx context.Context, woUUID string, req woModels.WorkOrderApprovalRequest, performedBy string) (*woModels.WorkOrderApprovalResponse, error)
 	BulkApproval(ctx context.Context, req woModels.BulkWorkOrderApprovalRequest, performedBy string) (*woModels.BulkWorkOrderApprovalResponse, error)
@@ -73,6 +75,8 @@ const (
 	workOrderKindRMProcessing   = "rm_processing"
 	workOrderPrefixRMProcessing = "RM-WO"
 	workOrderTypeRMProcessing   = "RM Processing"
+	workOrderSourceManual       = "manual"
+	workOrderSourceRobot        = "robot_automation"
 )
 
 func New(repo woRepo.IRepository, db *gorm.DB, invSvc invService.IService) IService {
@@ -302,12 +306,16 @@ func (s *service) CreateBulk(ctx context.Context, req woModels.CreateBulkWorkOrd
 			if err != nil {
 				return err
 			}
-			pcsPerKanban := it.KanbanQty
-			if pcsPerKanban <= 0 {
-				if kp == nil || kp.KanbanQty <= 0 {
-					return apperror.UnprocessableEntity(fmt.Sprintf("kanban_parameters tidak ditemukan for item_uniq_code %q", it.ItemUniqCode))
-				}
+			pcsPerKanban := 0
+			if kp != nil && kp.KanbanQty > 0 {
+				// System Settings is the source of truth for pcs per kanban.
 				pcsPerKanban = kp.KanbanQty
+			}
+			if pcsPerKanban <= 0 {
+				pcsPerKanban = it.KanbanQty
+			}
+			if pcsPerKanban <= 0 {
+				return apperror.UnprocessableEntity(fmt.Sprintf("kanban_parameters tidak ditemukan for item_uniq_code %q", it.ItemUniqCode))
 			}
 			if kp == nil || strings.TrimSpace(kp.KanbanNumber) == "" {
 				return apperror.UnprocessableEntity(fmt.Sprintf("kanban_parameters tidak ditemukan for item_uniq_code %q", it.ItemUniqCode))
@@ -546,6 +554,17 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 		targetDate = &t
 	}
 
+	sourceSystem := workOrderSourceManual
+	if req.SourceSystem != nil && strings.TrimSpace(*req.SourceSystem) != "" {
+		sourceSystem = strings.ToLower(strings.TrimSpace(*req.SourceSystem))
+	}
+	if sourceSystem != workOrderSourceManual && sourceSystem != workOrderSourceRobot {
+		return nil, apperror.BadRequest("source_system must be manual or robot_automation")
+	}
+	if sourceSystem == workOrderSourceRobot && (req.AutomationJobID == nil || strings.TrimSpace(*req.AutomationJobID) == "") {
+		return nil, apperror.BadRequest("automation_job_id is required for robot_automation work orders")
+	}
+
 	var out *woModels.CreateWorkOrderResponse
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		year := time.Now().Year()
@@ -573,21 +592,25 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 			return apperror.InternalWrap("failed to generate WO QR", err)
 		}
 		wo := &woModels.WorkOrder{
-			UUID:           woUUID,
-			WoNumber:       woNumber,
-			WoType:         req.WOType,
-			WOKind:         workOrderKindStandard,
-			ReferenceWO:    req.ReferenceWO,
-			Status:         "Draft",
-			ApprovalStatus: "Pending",
-			CreatedDate:    createdDate,
-			TargetDate:     targetDate,
-			CreatedBy:      creatorUUID,
-			CreatedByName:  creatorName,
-			Notes:          req.Notes,
+			UUID:            woUUID,
+			WoNumber:        woNumber,
+			WoType:          req.WOType,
+			WOKind:          workOrderKindStandard,
+			ReferenceWO:     req.ReferenceWO,
+			Status:          "Draft",
+			ApprovalStatus:  "Pending",
+			SourceSystem:    sourceSystem,
+			AutomationJobID: req.AutomationJobID,
+			RobotName:       req.RobotName,
+			CreatedDate:     createdDate,
+			TargetDate:      targetDate,
+			CreatedBy:       creatorUUID,
+			CreatedByName:   creatorName,
+			Notes:           req.Notes,
 			// [wo-estimated-time] snapshot estimasi waktu dari FE.
 			EstimatedTimeMinutes: req.EstimatedTimeMinutes,
 			CycleTimeMin:         req.CycleTimeMin,
+			SetupTimeMin:         req.SetupTimeMin,
 			MachineCapacity:      req.MachineCapacity,
 			QRImageBase64:        &woQR,
 		}
@@ -731,12 +754,16 @@ func (s *service) Preview(ctx context.Context, req woModels.CreateWorkOrderReque
 		if err != nil {
 			return nil, err
 		}
-		pcsPerKanban := it.KanbanQty
-		if pcsPerKanban <= 0 {
-			if kp == nil || kp.KanbanQty <= 0 {
-				return nil, apperror.UnprocessableEntity(fmt.Sprintf("kanban_qty is required (kanban_parameters tidak ditemukan for item_uniq_code %q)", it.ItemUniqCode))
-			}
+		pcsPerKanban := 0
+		if kp != nil && kp.KanbanQty > 0 {
+			// System Settings is the source of truth for pcs per kanban.
 			pcsPerKanban = kp.KanbanQty
+		}
+		if pcsPerKanban <= 0 {
+			pcsPerKanban = it.KanbanQty
+		}
+		if pcsPerKanban <= 0 {
+			return nil, apperror.UnprocessableEntity(fmt.Sprintf("kanban_qty is required (kanban_parameters tidak ditemukan for item_uniq_code %q)", it.ItemUniqCode))
 		}
 		if kp == nil || strings.TrimSpace(kp.KanbanNumber) == "" {
 			return nil, apperror.UnprocessableEntity(fmt.Sprintf("kanban_parameters tidak ditemukan for item_uniq_code %q", it.ItemUniqCode))
@@ -1003,16 +1030,17 @@ func (s *service) ListProcessOptions(ctx context.Context) (*woModels.ProcessOpti
 
 func (s *service) List(ctx context.Context, p pagination.WorkOrderPaginationInput) (*woModels.WorkOrderListResponse, error) {
 	f := woRepo.ListFilter{
-		Search:         p.Search,
-		Status:         p.Status,
-		ApprovalStatus: p.ApprovalStatus,
-		WOType:         p.WOType,
-		WOKind:         workOrderKindStandard,
-		Page:           p.Page,
-		Limit:          p.Limit,
-		Offset:         p.Offset(),
-		OrderBy:        p.OrderBy,
-		OrderDirection: p.OrderDirection,
+		Search:                   p.Search,
+		Status:                   p.Status,
+		ApprovalStatus:           p.ApprovalStatus,
+		WOType:                   p.WOType,
+		WOKind:                   workOrderKindStandard,
+		HideUnapprovedRobotTasks: true,
+		Page:                     p.Page,
+		Limit:                    p.Limit,
+		Offset:                   p.Offset(),
+		OrderBy:                  p.OrderBy,
+		OrderDirection:           p.OrderDirection,
 	}
 	rows, total, err := s.repo.ListWorkOrders(ctx, f)
 	if err != nil {
@@ -1057,25 +1085,108 @@ func (s *service) List(ctx context.Context, p pagination.WorkOrderPaginationInpu
 			woItems = []woModels.WorkOrderListItemDetail{}
 		}
 		items = append(items, woModels.WorkOrderListItem{
-			ID:             r.UUID,
-			WoNumber:       r.WoNumber,
-			WoType:         r.WoType,
-			WOKind:         r.WOKind,
-			ReferenceWO:    r.ReferenceWO,
-			Status:         r.Status,
-			ApprovalStatus: r.ApprovalStatus,
-			CreatedDate:    r.CreatedDate,
-			TargetDate:     r.TargetDate,
-			CreatedByName:  r.CreatedByName,
-			UniqCount:      r.UniqCount,
-			ItemCount:      r.ItemCount,
-			ClosedCount:    r.ClosedCount,
-			ProgressPct:    pct,
-			AgingDays:      r.AgingDays,
-			Items:          woItems,
+			ID:              r.UUID,
+			WoNumber:        r.WoNumber,
+			WoType:          r.WoType,
+			WOKind:          r.WOKind,
+			ReferenceWO:     r.ReferenceWO,
+			Status:          r.Status,
+			ApprovalStatus:  r.ApprovalStatus,
+			CreatedDate:     r.CreatedDate,
+			TargetDate:      r.TargetDate,
+			CreatedByName:   r.CreatedByName,
+			SourceSystem:    r.SourceSystem,
+			AutomationJobID: r.AutomationJobID,
+			RobotName:       r.RobotName,
+			UniqCount:       r.UniqCount,
+			ItemCount:       r.ItemCount,
+			ClosedCount:     r.ClosedCount,
+			ProgressPct:     pct,
+			AgingDays:       r.AgingDays,
+			Items:           woItems,
 		})
 	}
 
+	return &woModels.WorkOrderListResponse{
+		Items:      items,
+		Pagination: pagination.NewMeta(total, p.PaginationInput),
+	}, nil
+}
+
+func (s *service) ListRobotTasks(ctx context.Context, p pagination.WorkOrderPaginationInput) (*woModels.WorkOrderListResponse, error) {
+	f := woRepo.ListFilter{
+		Search:         p.Search,
+		Status:         p.Status,
+		ApprovalStatus: p.ApprovalStatus,
+		WOType:         p.WOType,
+		WOKind:         workOrderKindStandard,
+		SourceSystem:   workOrderSourceRobot,
+		Page:           p.Page,
+		Limit:          p.Limit,
+		Offset:         p.Offset(),
+		OrderBy:        p.OrderBy,
+		OrderDirection: p.OrderDirection,
+	}
+	rows, total, err := s.repo.ListWorkOrders(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+
+	woIDs := make([]int64, 0, len(rows))
+	for _, r := range rows {
+		woIDs = append(woIDs, r.ID)
+	}
+	itemRows, err := s.repo.GetItemsByWOIDs(ctx, woIDs)
+	if err != nil {
+		return nil, err
+	}
+	itemsByWO := make(map[int64][]woModels.WorkOrderListItemDetail, len(rows))
+	for _, it := range itemRows {
+		itemsByWO[it.WoID] = append(itemsByWO[it.WoID], woModels.WorkOrderListItemDetail{
+			ID:              it.UUID.String(),
+			ItemUniqCode:    it.ItemUniqCode,
+			PartName:        it.PartName,
+			PartNumber:      it.PartNumber,
+			Model:           it.Model,
+			Quantity:        it.Quantity,
+			UOM:             it.UOM,
+			Status:          it.Status,
+			ProcessFlowJSON: jsonRawOrEmpty(it.ProcessFlowJSON),
+		})
+	}
+
+	items := make([]woModels.WorkOrderListItem, 0, len(rows))
+	for _, r := range rows {
+		pct := 0.0
+		if r.ItemCount > 0 {
+			pct = math.Round(float64(r.ClosedCount)/float64(r.ItemCount)*100*100) / 100
+		}
+		woItems := itemsByWO[r.ID]
+		if woItems == nil {
+			woItems = []woModels.WorkOrderListItemDetail{}
+		}
+		items = append(items, woModels.WorkOrderListItem{
+			ID:              r.UUID,
+			WoNumber:        r.WoNumber,
+			WoType:          r.WoType,
+			WOKind:          r.WOKind,
+			ReferenceWO:     r.ReferenceWO,
+			Status:          r.Status,
+			ApprovalStatus:  r.ApprovalStatus,
+			CreatedDate:     r.CreatedDate,
+			TargetDate:      r.TargetDate,
+			CreatedByName:   r.CreatedByName,
+			SourceSystem:    r.SourceSystem,
+			AutomationJobID: r.AutomationJobID,
+			RobotName:       r.RobotName,
+			UniqCount:       r.UniqCount,
+			ItemCount:       r.ItemCount,
+			ClosedCount:     r.ClosedCount,
+			ProgressPct:     pct,
+			AgingDays:       r.AgingDays,
+			Items:           woItems,
+		})
+	}
 	return &woModels.WorkOrderListResponse{
 		Items:      items,
 		Pagination: pagination.NewMeta(total, p.PaginationInput),
@@ -1132,22 +1243,25 @@ func (s *service) ListBulk(ctx context.Context, p pagination.WorkOrderPagination
 			woItems = []woModels.WorkOrderListItemDetail{}
 		}
 		items = append(items, woModels.WorkOrderListItem{
-			ID:             r.UUID,
-			WoNumber:       r.WoNumber,
-			WoType:         r.WoType,
-			WOKind:         r.WOKind,
-			ReferenceWO:    r.ReferenceWO,
-			Status:         r.Status,
-			ApprovalStatus: r.ApprovalStatus,
-			CreatedDate:    r.CreatedDate,
-			TargetDate:     r.TargetDate,
-			CreatedByName:  r.CreatedByName,
-			UniqCount:      r.UniqCount,
-			ItemCount:      r.ItemCount,
-			ClosedCount:    r.ClosedCount,
-			ProgressPct:    pct,
-			AgingDays:      r.AgingDays,
-			Items:          woItems,
+			ID:              r.UUID,
+			WoNumber:        r.WoNumber,
+			WoType:          r.WoType,
+			WOKind:          r.WOKind,
+			ReferenceWO:     r.ReferenceWO,
+			Status:          r.Status,
+			ApprovalStatus:  r.ApprovalStatus,
+			CreatedDate:     r.CreatedDate,
+			TargetDate:      r.TargetDate,
+			CreatedByName:   r.CreatedByName,
+			SourceSystem:    r.SourceSystem,
+			AutomationJobID: r.AutomationJobID,
+			RobotName:       r.RobotName,
+			UniqCount:       r.UniqCount,
+			ItemCount:       r.ItemCount,
+			ClosedCount:     r.ClosedCount,
+			ProgressPct:     pct,
+			AgingDays:       r.AgingDays,
+			Items:           woItems,
 		})
 	}
 	return &woModels.WorkOrderListResponse{Items: items, Pagination: pagination.NewMeta(total, p.PaginationInput)}, nil
@@ -1405,6 +1519,7 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 		DefectReasons:        defectReasons,
 		EstimatedTimeMinutes: wo.EstimatedTimeMinutes,
 		CycleTimeMin:         wo.CycleTimeMin,
+		SetupTimeMin:         wo.SetupTimeMin,
 		MachineCapacity:      wo.MachineCapacity,
 		QRDataURL:            woQR,
 		Items:                items,
@@ -1561,6 +1676,30 @@ func (s *service) Approval(ctx context.Context, woUUID string, req woModels.Work
 		WoNumber:       wo.WoNumber,
 		ApprovalStatus: newStatus,
 	}, nil
+}
+
+func (s *service) ApprovalRobotTask(ctx context.Context, woUUID string, req woModels.WorkOrderApprovalRequest, performedBy string) (*woModels.WorkOrderApprovalResponse, error) {
+	wo, err := s.repo.GetWorkOrderByUUIDAndKind(ctx, woUUID, workOrderKindStandard)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(strings.TrimSpace(wo.SourceSystem), workOrderSourceRobot) {
+		return nil, apperror.BadRequest("work order is not a Robot Automation task")
+	}
+
+	// Keep retries idempotent so a repeated approve request cannot consume stock twice.
+	desired := map[string]string{"approve": "Approved", "reject": "Rejected"}[req.Decision]
+	if desired == "" {
+		return nil, apperror.BadRequest("decision must be approve or reject")
+	}
+	if strings.EqualFold(wo.ApprovalStatus, desired) {
+		return &woModels.WorkOrderApprovalResponse{
+			ID:             wo.UUID.String(),
+			WoNumber:       wo.WoNumber,
+			ApprovalStatus: desired,
+		}, nil
+	}
+	return s.Approval(ctx, woUUID, req, performedBy)
 }
 
 func (s *service) ApprovalBulk(ctx context.Context, woUUID string, req woModels.WorkOrderApprovalRequest, performedBy string) (*woModels.WorkOrderApprovalResponse, error) {

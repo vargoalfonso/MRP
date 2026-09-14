@@ -183,6 +183,10 @@ import (
 	supplierHandler "github.com/ganasa18/go-template/internal/supplier/handler"
 	supplierRepository "github.com/ganasa18/go-template/internal/supplier/repository"
 	supplierService "github.com/ganasa18/go-template/internal/supplier/service"
+	supplierInfoModule "github.com/ganasa18/go-template/internal/supplier_info"
+	supplierInfoHandler "github.com/ganasa18/go-template/internal/supplier_info/handler"
+	supplierInfoRepository "github.com/ganasa18/go-template/internal/supplier_info/repository"
+	supplierInfoService "github.com/ganasa18/go-template/internal/supplier_info/service"
 	supplierItemModule "github.com/ganasa18/go-template/internal/supplier_item"
 	supplierItemHandler "github.com/ganasa18/go-template/internal/supplier_item/handler"
 	supplierItemRepository "github.com/ganasa18/go-template/internal/supplier_item/repository"
@@ -272,6 +276,9 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	supplierItemRepo := supplierItemRepository.New(db)
 	supplierItemSvc := supplierItemService.New(supplierItemRepo)
 	supplierItemHTTPHandler := supplierItemHandler.New(supplierItemSvc)
+	supplierInfoRepo := supplierInfoRepository.New(db)
+	supplierInfoSvc := supplierInfoService.New(supplierInfoRepo)
+	supplierInfoHTTPHandler := supplierInfoHandler.New(supplierInfoSvc)
 	warehouseRepo := warehouseRepository.New(db)
 	warehouseSvc := warehouseService.New(warehouseRepo)
 	warehouseHTTPHandler := warehouseHandler.New(warehouseSvc)
@@ -489,6 +496,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		supplierModule.NewHTTPModule(cfg, baseHTTPHandler, supplierHTTPHandler, authSvc),
 		warehouseModule.NewHTTPModule(cfg, baseHTTPHandler, warehouseHTTPHandler, authSvc),
 		supplierItemModule.NewHTTPModule(cfg, baseHTTPHandler, supplierItemHTTPHandler, authSvc),
+		supplierInfoModule.NewHTTPModule(cfg, baseHTTPHandler, supplierInfoHTTPHandler, authSvc),
 		bomModule.NewHTTPModule(cfg, baseHTTPHandler, bomHTTPHandler, authSvc, roleSvc, bomSvc),
 		uploadModule.NewHTTPModule(baseHTTPHandler, uploadHTTPHandler, uploadSvc, authSvc, roleSvc),
 		roleModule.NewHTTPModule(cfg, baseHTTPHandler, roleHTTPHandler, authSvc, roleSvc),

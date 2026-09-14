@@ -69,16 +69,19 @@ type WorkOrderListItemDetail struct {
 
 // WorkOrderListItem is a board row.
 type WorkOrderListItem struct {
-	ID             string  `json:"id"` // WO UUID
-	WoNumber       string  `json:"wo_number"`
-	WoType         string  `json:"wo_type"`
-	WOKind         string  `json:"wo_kind"`
-	ReferenceWO    *string `json:"reference_wo"`
-	Status         string  `json:"status"`
-	ApprovalStatus string  `json:"approval_status"`
-	CreatedDate    string  `json:"created_date"` // YYYY-MM-DD
-	TargetDate     *string `json:"target_date"`  // YYYY-MM-DD
-	CreatedByName  *string `json:"created_by_name"`
+	ID              string  `json:"id"` // WO UUID
+	WoNumber        string  `json:"wo_number"`
+	WoType          string  `json:"wo_type"`
+	WOKind          string  `json:"wo_kind"`
+	ReferenceWO     *string `json:"reference_wo"`
+	Status          string  `json:"status"`
+	ApprovalStatus  string  `json:"approval_status"`
+	CreatedDate     string  `json:"created_date"` // YYYY-MM-DD
+	TargetDate      *string `json:"target_date"`  // YYYY-MM-DD
+	CreatedByName   *string `json:"created_by_name"`
+	SourceSystem    string  `json:"source_system"`
+	AutomationJobID *string `json:"automation_job_id"`
+	RobotName       *string `json:"robot_name"`
 	// Board summary fields
 	UniqCount   int                       `json:"uniq_count"`   // distinct uniq_codes in items
 	ItemCount   int                       `json:"item_count"`   // total kanban lines
@@ -141,6 +144,7 @@ type WorkOrderDetailResponse struct {
 	// [wo-estimated-time] Estimasi waktu produksi (menit) + komponen perhitungannya.
 	EstimatedTimeMinutes *float64              `json:"estimated_time_minutes"`
 	CycleTimeMin         *float64              `json:"cycle_time_min"`
+	SetupTimeMin         *float64              `json:"setup_time_min"`
 	MachineCapacity      *float64              `json:"machine_capacity"`
 	QRDataURL            *string               `json:"qr_data_url"`
 	Items                []WorkOrderDetailItem `json:"items"`

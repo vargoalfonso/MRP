@@ -19,8 +19,3 @@ CREATE TRIGGER trg_set_prl_id
 BEFORE INSERT ON public.prls
 FOR EACH ROW
 EXECUTE FUNCTION set_prl_id();
-
--- +migrate Down
-DROP TRIGGER IF EXISTS trg_set_prl_id ON public.prls;
-DROP FUNCTION IF EXISTS set_prl_id();
-DROP SEQUENCE IF EXISTS prl_global_seq;
