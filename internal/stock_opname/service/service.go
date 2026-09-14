@@ -188,6 +188,37 @@ func (s *service) CreateSession(ctx context.Context, req stockModels.CreateSessi
 			if err := s.appendAuditLog(ctx, tx, session.ID, &entry.ID, session.InventoryType, stockModels.AuditActionAddEntry, stockModels.AuditEntityEntry, actor, entry.Remarks, map[string]interface{}{"uniq_code": entry.UniqCode, "counted_qty": entry.CountedQty, "source": "create_session"}); err != nil {
 				return err
 			}
+
+			// Excel upload uses method=bulk. Only this path posts the counted
+			// quantity to the corresponding inventory immediately. Manual
+			// stock-opname stays pending and keeps the normal approval flow.
+			if session.Method == stockModels.MethodBulk {
+				adjEntry := *entry
+				delta, packingApplied, err := s.applyPackingCount(ctx, tx, entry)
+				if err != nil {
+					return err
+				}
+				if packingApplied {
+					adjEntry.CountedQty = entry.SystemQtySnapshot + delta
+				}
+				result, err := s.applyStockOpnameAdjustment(ctx, tx, session, adj, &adjEntry, actor)
+				if err != nil {
+					return err
+				}
+				if err := s.appendInventoryLog(ctx, tx, session.InventoryType, entry, actor, session.SessionNumber, result); err != nil {
+					return err
+				}
+				now := time.Now()
+				entry.Status = stockModels.EntryStatusApproved
+				entry.RejectReason = nil
+				entry.ApprovedBy = strPtr(actor)
+				entry.ApprovedAt = &now
+				entry.UpdatedBy = strPtr(actor)
+				entry.UpdatedAt = now
+				if err := s.repo.UpdateEntry(ctx, tx, entry); err != nil {
+					return err
+				}
+			}
 			created++
 		}
 		if err := s.repo.RecalculateSessionTotals(ctx, tx, session.ID); err != nil {
@@ -196,13 +227,25 @@ func (s *service) CreateSession(ctx context.Context, req stockModels.CreateSessi
 		if err := s.refreshSessionTotals(ctx, tx, session); err != nil {
 			return err
 		}
-		session.Status = stockModels.SessionStatusInProgress
+		now := time.Now()
+		if session.Method == stockModels.MethodBulk {
+			session.Status = stockModels.SessionStatusApproved
+			session.SubmittedBy = strPtr(actor)
+			session.SubmittedAt = &now
+			session.ApprovedBy = strPtr(actor)
+			session.ApprovedAt = &now
+			if err := s.completeBulkUploadApproval(ctx, tx, session.ID, actor, now); err != nil {
+				return err
+			}
+		} else {
+			session.Status = stockModels.SessionStatusInProgress
+		}
 		session.UpdatedBy = strPtr(actor)
-		session.UpdatedAt = time.Now()
+		session.UpdatedAt = now
 		if err := s.repo.UpdateSession(ctx, tx, session); err != nil {
 			return err
 		}
-		return s.appendAuditLog(ctx, tx, session.ID, nil, session.InventoryType, stockModels.AuditActionBulkAddEntries, stockModels.AuditEntitySession, actor, session.Remarks, map[string]interface{}{"created": created, "source": "create_session"})
+		return s.appendAuditLog(ctx, tx, session.ID, nil, session.InventoryType, stockModels.AuditActionBulkAddEntries, stockModels.AuditEntitySession, actor, session.Remarks, map[string]interface{}{"created": created, "source": "create_session", "inventory_posted": session.Method == stockModels.MethodBulk})
 	})
 	if err != nil {
 		return nil, err
@@ -806,6 +849,27 @@ func (s *service) getApprovalContext(ctx context.Context, tx *gorm.DB, sessionID
 func (s *service) updateApprovalInstance(ctx context.Context, tx *gorm.DB, instance *awmodels.ApprovalInstance, now time.Time) error {
 	instance.UpdatedAt = now
 	return tx.WithContext(ctx).Model(&awmodels.ApprovalInstance{}).Where("id = ?", instance.ID).Updates(map[string]interface{}{"approval_progress": instance.ApprovalProgress, "status": instance.Status, "current_level": instance.CurrentLevel, "updated_at": now}).Error
+}
+
+// completeBulkUploadApproval closes the approval record together with the
+// inventory update performed by the Stock Opname Excel-upload path.
+func (s *service) completeBulkUploadApproval(ctx context.Context, tx *gorm.DB, sessionID int64, actor string, now time.Time) error {
+	var instance awmodels.ApprovalInstance
+	if err := tx.WithContext(ctx).
+		Where("action_name = ? AND reference_table = ? AND reference_id = ?", "stock_opname", "stock_opname_sessions", sessionID).
+		Order("id DESC").
+		First(&instance).Error; err != nil {
+		return apperror.InternalWrap("find bulk stock opname approval instance failed", err)
+	}
+	for i := range instance.ApprovalProgress.Levels {
+		level := &instance.ApprovalProgress.Levels[i]
+		level.Status = stockModels.EntryStatusApproved
+		level.ApprovedBy = actor
+		level.ApprovedAt = now.Format(time.RFC3339)
+	}
+	instance.CurrentLevel = instance.MaxLevel
+	instance.Status = stockModels.SessionStatusApproved
+	return s.updateApprovalInstance(ctx, tx, &instance, now)
 }
 
 func (s *service) ensureApprovalInstance(ctx context.Context, tx *gorm.DB, sessionID int64, actor string) error {
