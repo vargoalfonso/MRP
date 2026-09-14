@@ -70,7 +70,11 @@ func (s *service) ListUniqOptions(ctx context.Context, q stockModels.FormOptions
 		return nil, err
 	}
 	var rows []adjuster.UniqSnapshotResult
-	if normalizeInventoryType(q.Type) == stockModels.InventoryTypeWIP && normalizeMethod(q.Method) == stockModels.MethodBulk {
+	inventoryType := normalizeInventoryType(q.Type)
+	if inventoryType == stockModels.InventoryTypeFG ||
+		(inventoryType == stockModels.InventoryTypeWIP && normalizeMethod(q.Method) == stockModels.MethodBulk) {
+		// Finished Goods and Bulk WIP use the active BOM/master item list so
+		// every UNIQ defined in the BOM is available in the Stock Opname form.
 		rows, err = adjuster.SearchWIPBOMUniqs(ctx, s.db, strings.TrimSpace(q.Q), q.Limit)
 	} else {
 		rows, err = adj.SearchUniqs(ctx, s.db, strings.TrimSpace(q.Q), q.Limit)
