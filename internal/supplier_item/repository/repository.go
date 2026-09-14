@@ -17,7 +17,7 @@ type IRepository interface {
 	Update(ctx context.Context, item *models.SupplierItem) error
 	Delete(ctx context.Context, item *models.SupplierItem) error
 	FindSupplierByUUID(ctx context.Context, uuid string) (*supplierModels.Supplier, error)
-	ExistsBySupplierAndUniq(ctx context.Context, supplierUUID, uniqCode string) (bool, error)
+	ExistsBySupplierAndUniqType(ctx context.Context, supplierUUID, uniqCode, itemType, excludeUUID string) (bool, error)
 }
 
 type repository struct {
@@ -106,12 +106,20 @@ func (r *repository) FindSupplierByUUID(ctx context.Context, uuid string) (*supp
 	return &supplier, nil
 }
 
-func (r *repository) ExistsBySupplierAndUniq(ctx context.Context, supplierUUID, uniqCode string) (bool, error) {
+func (r *repository) ExistsBySupplierAndUniqType(ctx context.Context, supplierUUID, uniqCode, itemType, excludeUUID string) (bool, error) {
+	query := r.db.WithContext(ctx).Model(&models.SupplierItem{}).
+		Where(
+			"supplier_uuid = ? AND uniq_code = ? AND type = ? AND deleted_at IS NULL",
+			supplierUUID,
+			strings.ToUpper(strings.TrimSpace(uniqCode)),
+			strings.ToLower(strings.TrimSpace(itemType)),
+		)
+	if strings.TrimSpace(excludeUUID) != "" {
+		query = query.Where("uuid <> ?", strings.TrimSpace(excludeUUID))
+	}
+
 	var count int64
-	err := r.db.WithContext(ctx).Model(&models.SupplierItem{}).
-		Where("supplier_uuid = ? AND uniq_code = ? AND deleted_at IS NULL", supplierUUID, strings.ToUpper(strings.TrimSpace(uniqCode))).
-		Count(&count).Error
-	if err != nil {
+	if err := query.Count(&count).Error; err != nil {
 		return false, apperror.InternalWrap("check supplier item duplicate failed", err)
 	}
 	return count > 0, nil

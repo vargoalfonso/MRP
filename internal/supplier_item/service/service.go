@@ -37,14 +37,26 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierItemReque
 		return nil, err
 	}
 
-	// check uniq code only when provided
+	itemType := normalizeType(req.Type)
+	// The same supplier may register the same UNIQ once per category.
+	// Example: one raw-material row and one subcon row for the same UNIQ.
 	if strings.TrimSpace(req.UniqCode) != "" {
-		exists, err := s.repo.ExistsBySupplierAndUniq(ctx, req.SupplierUUID, req.UniqCode)
+		exists, err := s.repo.ExistsBySupplierAndUniqType(
+			ctx,
+			req.SupplierUUID,
+			req.UniqCode,
+			itemType,
+			"",
+		)
 		if err != nil {
 			return nil, err
 		}
 		if exists {
-			return nil, apperror.BadRequest(fmt.Sprintf("uniq code '%s' sudah terdaftar untuk supplier ini", strings.ToUpper(strings.TrimSpace(req.UniqCode))))
+			return nil, apperror.BadRequest(fmt.Sprintf(
+				"uniq code '%s' sudah terdaftar untuk supplier ini pada kategori %s",
+				strings.ToUpper(strings.TrimSpace(req.UniqCode)),
+				itemType,
+			))
 		}
 	}
 
@@ -80,7 +92,7 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierItemReque
 		SupplierName:  supplier.SupplierName,
 		SebangoCode:   models.NormalizeOptionalString(toOptionalString(req.SebangoCode)),
 		UniqCode:      models.NormalizeOptionalString(toOptionalString(req.UniqCode)),
-		Type:          normalizeType(req.Type),
+		Type:          itemType,
 		Description:   models.NormalizeOptionalString(toOptionalString(req.Description)),
 		Quantity:      quantity,
 		UOM:           models.NormalizeOptionalString(toOptionalString(req.UOM)),
@@ -158,6 +170,27 @@ func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupp
 		return nil, err
 	}
 
+	itemType := normalizeType(req.Type)
+	if strings.TrimSpace(req.UniqCode) != "" {
+		exists, err := s.repo.ExistsBySupplierAndUniqType(
+			ctx,
+			req.SupplierUUID,
+			req.UniqCode,
+			itemType,
+			item.UUID,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			return nil, apperror.BadRequest(fmt.Sprintf(
+				"uniq code '%s' sudah terdaftar untuk supplier ini pada kategori %s",
+				strings.ToUpper(strings.TrimSpace(req.UniqCode)),
+				itemType,
+			))
+		}
+	}
+
 	quantity, err := parseRequiredInt64(req.Quantity, "quantity")
 	if err != nil {
 		return nil, err
@@ -188,7 +221,7 @@ func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupp
 	item.SupplierName = supplier.SupplierName
 	item.SebangoCode = models.NormalizeOptionalString(toOptionalString(req.SebangoCode))
 	item.UniqCode = models.NormalizeOptionalString(toOptionalString(req.UniqCode))
-	item.Type = normalizeType(req.Type)
+	item.Type = itemType
 	item.Description = models.NormalizeOptionalString(toOptionalString(req.Description))
 	item.Quantity = quantity
 	item.UOM = models.NormalizeOptionalString(toOptionalString(req.UOM))
