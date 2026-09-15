@@ -55,6 +55,13 @@ func (h *BaseHTTPHandler) RunAction(handler HTTPHandlerFunc) gin.HandlerFunc {
 
 		resp := handler(ctx)
 		latency := time.Since(start).Milliseconds()
+		if resp == nil {
+			log.Info("request completed (raw)",
+				slog.String("path", c.Request.URL.Path),
+				slog.Int64("latency_ms", latency),
+			)
+			return
+		}
 
 		isError := resp.Status >= 400
 		if isError {
