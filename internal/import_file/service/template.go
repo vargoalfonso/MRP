@@ -133,8 +133,10 @@ func (s *importService) GenerateTemplatePrls(ctx context.Context) (*bytes.Buffer
 		Freeze:      true,
 		Split:       false,
 		YSplit:      1,
-		TopLeftCell: "B2",
+		TopLeftCell: "A2",
 	})
+
+	f.SetActiveSheet(0)
 
 	// 🔹 convert ke buffer
 	buf, err := f.WriteToBuffer()

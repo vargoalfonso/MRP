@@ -42,3 +42,5 @@ temp/
 tmp_make_prl_import.go
 tmp_prl_excel_test.sh
 tmp_prl_smoke.sh
+
+.gocache
