@@ -62,6 +62,7 @@ type IncomingListFilter struct {
 
 type RawMaterialRow struct {
 	ID                    int64     `gorm:"column:id"`
+	RawMaterialMasterID   *int64    `gorm:"column:raw_material_master_id"`
 	UniqCode              string    `gorm:"column:uniq_code"`
 	PartNumber            *string   `gorm:"column:part_number"`
 	PartName              *string   `gorm:"column:part_name"`
@@ -211,6 +212,14 @@ type DemandSnapshotRow struct {
 // ---------------------------------------------------------------------------
 
 type IRepository interface {
+	// Canonical Raw Material Master
+	ListRawMaterialMasters(ctx context.Context, search string, limit, offset int) ([]invModels.RawMaterialMaster, int64, error)
+	GetRawMaterialMaster(ctx context.Context, id int64) (*invModels.RawMaterialMaster, error)
+	CreateRawMaterialMaster(ctx context.Context, item *invModels.RawMaterialMaster) error
+	UpdateRawMaterialMaster(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.RawMaterialMaster, error)
+	DeleteRawMaterialMaster(ctx context.Context, id int64, deletedBy string) error
+	ListRawMaterialPlanning(ctx context.Context) ([]invModels.RawMaterialPlanningItem, error)
+
 	// Raw Material
 	ListRawMaterials(ctx context.Context, f ListFilter) ([]RawMaterialRow, int64, error)
 	GetRawMaterialStats(ctx context.Context) (*RMStats, error)

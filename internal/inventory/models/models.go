@@ -15,9 +15,10 @@ type RawMaterial struct {
 	UniqCode string    `gorm:"uniqueIndex;not null;size:64"`
 
 	// Item details (auto-filled from scan)
-	PartNumber *string `gorm:"size:128"`
-	PartName   *string `gorm:"size:255"`
-	ItemID     *int64  `gorm:"index"` // reference to items table
+	PartNumber          *string `gorm:"size:128"`
+	PartName            *string `gorm:"size:255"`
+	ItemID              *int64  `gorm:"index"` // reference to items table
+	RawMaterialMasterID *int64  `json:"raw_material_master_id" gorm:"column:raw_material_master_id;index"`
 
 	// Type & source
 	RawMaterialType string `gorm:"size:32"` // sheet_plate | wire | ssp | others

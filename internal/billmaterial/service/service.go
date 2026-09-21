@@ -622,19 +622,20 @@ func (s *service) createRouting(ctx context.Context, itemID, revID int64, routes
 
 func (s *service) saveMaterialSpec(ctx context.Context, revID int64, ms *models.MaterialSpecInput) error {
 	spec := &models.ItemMaterialSpec{
-		ItemRevisionID: revID,
-		MaterialGrade:  ms.MaterialGrade,
-		Grade:          ms.Grade,
-		TypeMaterial:   ms.TypeMaterial,
-		Form:           ms.Form,
-		WidthMm:        ms.WidthMm,
-		DiameterMm:     ms.DiameterMm,
-		ThicknessMm:    ms.ThicknessMm,
-		LengthMm:       ms.LengthMm,
-		WeightKg:       ms.WeightKg,
-		CycleTimeSec:   ms.CycleTimeSec,
-		SetupTimeMin:   ms.SetupTimeMin,
-		CustomerCycle:  ms.CustomerCycle,
+		ItemRevisionID:      revID,
+		RawMaterialMasterID: ms.RawMaterialMasterID,
+		MaterialGrade:       ms.MaterialGrade,
+		Grade:               ms.Grade,
+		TypeMaterial:        ms.TypeMaterial,
+		Form:                ms.Form,
+		WidthMm:             ms.WidthMm,
+		DiameterMm:          ms.DiameterMm,
+		ThicknessMm:         ms.ThicknessMm,
+		LengthMm:            ms.LengthMm,
+		WeightKg:            ms.WeightKg,
+		CycleTimeSec:        ms.CycleTimeSec,
+		SetupTimeMin:        ms.SetupTimeMin,
+		CustomerCycle:       ms.CustomerCycle,
 	}
 	if ms.SupplierID != nil {
 		parsed, err := uuid.Parse(*ms.SupplierID)
@@ -831,19 +832,20 @@ func (s *service) CreateBomRevision(ctx context.Context, bomID int64, req models
 		return nil, err
 	} else if spec != nil {
 		copySpec := &models.ItemMaterialSpec{
-			ItemRevisionID: newRev.ID,
-			MaterialGrade:  spec.MaterialGrade,
-			Form:           spec.Form,
-			WidthMm:        spec.WidthMm,
-			DiameterMm:     spec.DiameterMm,
-			ThicknessMm:    spec.ThicknessMm,
-			LengthMm:       spec.LengthMm,
-			WeightKg:       spec.WeightKg,
-			SupplierID:     spec.SupplierID,
-			SupplierName:   spec.SupplierName,
-			CycleTimeSec:   spec.CycleTimeSec,
-			SetupTimeMin:   spec.SetupTimeMin,
-			CustomerCycle:  spec.CustomerCycle,
+			ItemRevisionID:      newRev.ID,
+			RawMaterialMasterID: spec.RawMaterialMasterID,
+			MaterialGrade:       spec.MaterialGrade,
+			Form:                spec.Form,
+			WidthMm:             spec.WidthMm,
+			DiameterMm:          spec.DiameterMm,
+			ThicknessMm:         spec.ThicknessMm,
+			LengthMm:            spec.LengthMm,
+			WeightKg:            spec.WeightKg,
+			SupplierID:          spec.SupplierID,
+			SupplierName:        spec.SupplierName,
+			CycleTimeSec:        spec.CycleTimeSec,
+			SetupTimeMin:        spec.SetupTimeMin,
+			CustomerCycle:       spec.CustomerCycle,
 		}
 		if err := s.repo.UpsertMaterialSpec(ctx, copySpec); err != nil {
 			return nil, err
@@ -1700,19 +1702,20 @@ func (s *service) buildDetailTree(lines []models.BomLine, preload *bomPreload, p
 
 func (s *service) toSpecDetail(spec *models.ItemMaterialSpec) *models.MaterialSpecDetail {
 	d := &models.MaterialSpecDetail{
-		MaterialGrade: spec.MaterialGrade,
-		Grade:         spec.Grade,
-		TypeMaterial:  spec.TypeMaterial,
-		Form:          spec.Form,
-		WidthMm:       spec.WidthMm,
-		DiameterMm:    spec.DiameterMm,
-		ThicknessMm:   spec.ThicknessMm,
-		LengthMm:      spec.LengthMm,
-		WeightKg:      spec.WeightKg,
-		CycleTimeSec:  spec.CycleTimeSec,
-		SetupTimeMin:  spec.SetupTimeMin,
-		CustomerCycle: spec.CustomerCycle,
-		SupplierName:  spec.SupplierName,
+		RawMaterialMasterID: spec.RawMaterialMasterID,
+		MaterialGrade:       spec.MaterialGrade,
+		Grade:               spec.Grade,
+		TypeMaterial:        spec.TypeMaterial,
+		Form:                spec.Form,
+		WidthMm:             spec.WidthMm,
+		DiameterMm:          spec.DiameterMm,
+		ThicknessMm:         spec.ThicknessMm,
+		LengthMm:            spec.LengthMm,
+		WeightKg:            spec.WeightKg,
+		CycleTimeSec:        spec.CycleTimeSec,
+		SetupTimeMin:        spec.SetupTimeMin,
+		CustomerCycle:       spec.CustomerCycle,
+		SupplierName:        spec.SupplierName,
 	}
 	return d
 }
