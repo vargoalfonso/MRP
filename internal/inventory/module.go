@@ -89,6 +89,15 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	g := r.Group("/api/v1/inventory")
 	g.Use(auth)
 
+	// Canonical material specification shared by BOM and inventory.
+	masters := g.Group("/raw-material-masters")
+	masters.GET("", perm("inventory", "view"), m.base.RunAction(m.handler.ListRawMaterialMasters))
+	masters.GET("/planning", perm("inventory", "view"), m.base.RunAction(m.handler.ListRawMaterialPlanning))
+	masters.POST("", perm("inventory", "create"), m.base.RunAction(m.handler.CreateRawMaterialMaster))
+	masters.GET("/:id", perm("inventory", "view"), m.base.RunAction(m.handler.GetRawMaterialMaster))
+	masters.PUT("/:id", perm("inventory", "update"), m.base.RunAction(m.handler.UpdateRawMaterialMaster))
+	masters.DELETE("/:id", perm("inventory", "delete"), m.base.RunAction(m.handler.DeleteRawMaterialMaster))
+
 	// --- Raw Material Database ---
 	rm := g.Group("/raw-materials")
 	rm.GET("", perm("inventory", "view"), m.base.RunAction(m.handler.ListRawMaterials))

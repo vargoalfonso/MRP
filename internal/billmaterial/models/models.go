@@ -98,24 +98,25 @@ type ItemRevision struct {
 func (ItemRevision) TableName() string { return "item_revisions" }
 
 type ItemMaterialSpec struct {
-	ID             int64    `gorm:"primaryKey;autoIncrement"`
-	ItemRevisionID int64    `gorm:"uniqueIndex;not null"`
-	MaterialGrade  *string  `gorm:"size:64"`
-	Form           *string  `gorm:"size:32"`
-	WidthMm        *float64 `gorm:"type:numeric(18,4)"`
-	DiameterMm     *float64 `gorm:"type:numeric(18,4)"`
-	ThicknessMm    *float64 `gorm:"type:numeric(18,4)"`
-	LengthMm       *float64 `gorm:"type:numeric(18,4)"`
-	WeightKg       *float64 `gorm:"type:numeric(18,6)"`
-	SupplierID     *string  `gorm:"column:supplier_id;size:64"` // stored as string, no FK (suppliers.id is bigint)
-	SupplierName   *string  `gorm:"size:255"`
-	CycleTimeSec   *float64 `gorm:"type:numeric(18,4)"`
-	SetupTimeMin   *float64 `gorm:"type:numeric(18,4)"`
-	CustomerCycle  *string  `gorm:"column:customer_cycle;size:100"`
-	Grade          *string  `gorm:"size:100"`
-	TypeMaterial   *string  `gorm:"size:50"`
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                  int64    `gorm:"primaryKey;autoIncrement"`
+	ItemRevisionID      int64    `gorm:"uniqueIndex;not null"`
+	RawMaterialMasterID *int64   `gorm:"column:raw_material_master_id;index"`
+	MaterialGrade       *string  `gorm:"size:64"`
+	Form                *string  `gorm:"size:32"`
+	WidthMm             *float64 `gorm:"type:numeric(18,4)"`
+	DiameterMm          *float64 `gorm:"type:numeric(18,4)"`
+	ThicknessMm         *float64 `gorm:"type:numeric(18,4)"`
+	LengthMm            *float64 `gorm:"type:numeric(18,4)"`
+	WeightKg            *float64 `gorm:"type:numeric(18,6)"`
+	SupplierID          *string  `gorm:"column:supplier_id;size:64"` // stored as string, no FK (suppliers.id is bigint)
+	SupplierName        *string  `gorm:"size:255"`
+	CycleTimeSec        *float64 `gorm:"type:numeric(18,4)"`
+	SetupTimeMin        *float64 `gorm:"type:numeric(18,4)"`
+	CustomerCycle       *string  `gorm:"column:customer_cycle;size:100"`
+	Grade               *string  `gorm:"size:100"`
+	TypeMaterial        *string  `gorm:"size:50"`
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 func (ItemMaterialSpec) TableName() string { return "item_material_specs" }

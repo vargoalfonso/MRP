@@ -7,7 +7,8 @@ import "time"
 // ---------------------------------------------------------------------------
 
 type CreateRawMaterialRequest struct {
-	UniqCode string `json:"uniq_code" validate:"required"`
+	UniqCode            string `json:"uniq_code" validate:"required"`
+	RawMaterialMasterID *int64 `json:"raw_material_master_id"`
 	// Optional: when raw_materials.uniq_code differs from items.uniq_code, provide this to auto-fill part fields.
 	ItemUniqCode      *string  `json:"item_uniq_code"`
 	RawMaterialType   string   `json:"raw_material_type"` // sheet_plate | wire | ssp | others
@@ -29,18 +30,19 @@ type BulkCreateRawMaterialRequest struct {
 }
 
 type UpdateRawMaterialRequest struct {
-	RawMaterialType   *string  `json:"raw_material_type"`
-	RMSource          *string  `json:"rm_source"`
-	PartNumber        *string  `json:"part_number"`
-	PartName          *string  `json:"part_name"`
-	WarehouseLocation *string  `json:"warehouse_location"`
-	UOM               *string  `json:"uom"`
-	StockQty          *float64 `json:"stock_qty"`
-	StockWeightKg     *float64 `json:"stock_weight_kg"`
-	KanbanCount       *int     `json:"kanban_count"`
-	KanbanStandardQty *int     `json:"kanban_standard_qty"`
-	SafetyStockQty    *float64 `json:"safety_stock_qty"`
-	DailyUsageQty     *float64 `json:"daily_usage_qty"`
+	RawMaterialMasterID *int64   `json:"raw_material_master_id"`
+	RawMaterialType     *string  `json:"raw_material_type"`
+	RMSource            *string  `json:"rm_source"`
+	PartNumber          *string  `json:"part_number"`
+	PartName            *string  `json:"part_name"`
+	WarehouseLocation   *string  `json:"warehouse_location"`
+	UOM                 *string  `json:"uom"`
+	StockQty            *float64 `json:"stock_qty"`
+	StockWeightKg       *float64 `json:"stock_weight_kg"`
+	KanbanCount         *int     `json:"kanban_count"`
+	KanbanStandardQty   *int     `json:"kanban_standard_qty"`
+	SafetyStockQty      *float64 `json:"safety_stock_qty"`
+	DailyUsageQty       *float64 `json:"daily_usage_qty"`
 }
 
 // ---------------------------------------------------------------------------

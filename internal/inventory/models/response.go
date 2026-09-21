@@ -79,6 +79,7 @@ type InventoryStats struct {
 
 type RawMaterialItem struct {
 	ID                    int64     `json:"id"`
+	RawMaterialMasterID   *int64    `json:"raw_material_master_id"`
 	UniqCode              string    `json:"uniq_code"`
 	PartNumber            *string   `json:"part_number"`
 	PartName              *string   `json:"part_name"`

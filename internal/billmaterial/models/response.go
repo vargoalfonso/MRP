@@ -76,19 +76,20 @@ type ToolingDetail struct {
 }
 
 type MaterialSpecDetail struct {
-	MaterialGrade *string  `json:"material_grade"`
-	Grade         *string  `json:"grade"`
-	TypeMaterial  *string  `json:"type_material"`
-	Form          *string  `json:"form"`
-	WidthMm       *float64 `json:"width_mm"`
-	DiameterMm    *float64 `json:"diameter_mm"`
-	ThicknessMm   *float64 `json:"thickness_mm"`
-	LengthMm      *float64 `json:"length_mm"`
-	WeightKg      *float64 `json:"weight_kg"`
-	SupplierName  *string  `json:"supplier_name"`
-	CycleTimeSec  *float64 `json:"cycle_time_sec"`
-	SetupTimeMin  *float64 `json:"setup_time_min"`
-	CustomerCycle *string  `json:"customer_cycle"`
+	RawMaterialMasterID *int64   `json:"raw_material_master_id"`
+	MaterialGrade       *string  `json:"material_grade"`
+	Grade               *string  `json:"grade"`
+	TypeMaterial        *string  `json:"type_material"`
+	Form                *string  `json:"form"`
+	WidthMm             *float64 `json:"width_mm"`
+	DiameterMm          *float64 `json:"diameter_mm"`
+	ThicknessMm         *float64 `json:"thickness_mm"`
+	LengthMm            *float64 `json:"length_mm"`
+	WeightKg            *float64 `json:"weight_kg"`
+	SupplierName        *string  `json:"supplier_name"`
+	CycleTimeSec        *float64 `json:"cycle_time_sec"`
+	SetupTimeMin        *float64 `json:"setup_time_min"`
+	CustomerCycle       *string  `json:"customer_cycle"`
 }
 
 type BomDetailChild struct {

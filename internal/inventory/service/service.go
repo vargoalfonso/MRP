@@ -21,6 +21,14 @@ import (
 // ---------------------------------------------------------------------------
 
 type IService interface {
+	// Canonical Raw Material Master
+	ListRawMaterialMasters(ctx context.Context, search string, page, limit int) (*invModels.RawMaterialMasterList, error)
+	GetRawMaterialMaster(ctx context.Context, id int64) (*invModels.RawMaterialMaster, error)
+	CreateRawMaterialMaster(ctx context.Context, req invModels.CreateRawMaterialMasterRequest, createdBy string) (*invModels.RawMaterialMaster, error)
+	UpdateRawMaterialMaster(ctx context.Context, id int64, req invModels.UpdateRawMaterialMasterRequest, updatedBy string) (*invModels.RawMaterialMaster, error)
+	DeleteRawMaterialMaster(ctx context.Context, id int64, deletedBy string) error
+	ListRawMaterialPlanning(ctx context.Context) ([]invModels.RawMaterialPlanningItem, error)
+
 	// Raw Material
 	ListRawMaterials(ctx context.Context, p pagination.InventoryRMPaginationInput) (*invModels.RawMaterialListResponse, error)
 	GetRawMaterialByID(ctx context.Context, id int64) (*invModels.RawMaterial, error)
@@ -185,26 +193,27 @@ func (s *service) CreateRawMaterial(ctx context.Context, req invModels.CreateRaw
 
 	now := time.Now()
 	rm := invModels.RawMaterial{
-		UUID:              uuid.New(),
-		UniqCode:          req.UniqCode,
-		RawMaterialType:   req.RawMaterialType,
-		RMSource:          req.RMSource,
-		PartNumber:        partNumber,
-		PartName:          partName,
-		WarehouseLocation: req.WarehouseLocation,
-		UOM:               uom,
-		ItemID:            itemID,
-		StockQty:          req.StockQty,
-		StockWeightKg:     req.StockWeightKg,
-		KanbanCount:       req.KanbanCount,
-		KanbanStandardQty: req.KanbanStandardQty,
-		SafetyStockQty:    req.SafetyStockQty,
-		DailyUsageQty:     req.DailyUsageQty,
-		Status:            "normal",
-		BuyNotBuy:         "not_buy",
-		CreatedBy:         &createdBy,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		UUID:                uuid.New(),
+		UniqCode:            req.UniqCode,
+		RawMaterialMasterID: req.RawMaterialMasterID,
+		RawMaterialType:     req.RawMaterialType,
+		RMSource:            req.RMSource,
+		PartNumber:          partNumber,
+		PartName:            partName,
+		WarehouseLocation:   req.WarehouseLocation,
+		UOM:                 uom,
+		ItemID:              itemID,
+		StockQty:            req.StockQty,
+		StockWeightKg:       req.StockWeightKg,
+		KanbanCount:         req.KanbanCount,
+		KanbanStandardQty:   req.KanbanStandardQty,
+		SafetyStockQty:      req.SafetyStockQty,
+		DailyUsageQty:       req.DailyUsageQty,
+		Status:              "normal",
+		BuyNotBuy:           "not_buy",
+		CreatedBy:           &createdBy,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 
 	if err := s.repo.CreateRawMaterial(ctx, &rm); err != nil {
@@ -254,26 +263,27 @@ func (s *service) BulkCreateRawMaterials(ctx context.Context, req invModels.Bulk
 		}
 
 		items = append(items, invModels.RawMaterial{
-			UUID:              uuid.New(),
-			UniqCode:          r.UniqCode,
-			RawMaterialType:   r.RawMaterialType,
-			RMSource:          r.RMSource,
-			PartNumber:        partNumber,
-			PartName:          partName,
-			WarehouseLocation: r.WarehouseLocation,
-			UOM:               uom,
-			ItemID:            itemID,
-			StockQty:          r.StockQty,
-			StockWeightKg:     r.StockWeightKg,
-			KanbanCount:       r.KanbanCount,
-			KanbanStandardQty: r.KanbanStandardQty,
-			SafetyStockQty:    r.SafetyStockQty,
-			DailyUsageQty:     r.DailyUsageQty,
-			Status:            "normal",
-			BuyNotBuy:         "not_buy",
-			CreatedBy:         &createdBy,
-			CreatedAt:         now,
-			UpdatedAt:         now,
+			UUID:                uuid.New(),
+			UniqCode:            r.UniqCode,
+			RawMaterialMasterID: r.RawMaterialMasterID,
+			RawMaterialType:     r.RawMaterialType,
+			RMSource:            r.RMSource,
+			PartNumber:          partNumber,
+			PartName:            partName,
+			WarehouseLocation:   r.WarehouseLocation,
+			UOM:                 uom,
+			ItemID:              itemID,
+			StockQty:            r.StockQty,
+			StockWeightKg:       r.StockWeightKg,
+			KanbanCount:         r.KanbanCount,
+			KanbanStandardQty:   r.KanbanStandardQty,
+			SafetyStockQty:      r.SafetyStockQty,
+			DailyUsageQty:       r.DailyUsageQty,
+			Status:              "normal",
+			BuyNotBuy:           "not_buy",
+			CreatedBy:           &createdBy,
+			CreatedAt:           now,
+			UpdatedAt:           now,
 		})
 	}
 	if err := s.repo.BulkCreateRawMaterials(ctx, items); err != nil {
@@ -297,6 +307,9 @@ func (s *service) BulkCreateRawMaterials(ctx context.Context, req invModels.Bulk
 
 func (s *service) UpdateRawMaterial(ctx context.Context, id int64, req invModels.UpdateRawMaterialRequest, updatedBy string) (*invModels.RawMaterial, error) {
 	updates := map[string]interface{}{"updated_by": &updatedBy, "updated_at": time.Now()}
+	if req.RawMaterialMasterID != nil {
+		updates["raw_material_master_id"] = *req.RawMaterialMasterID
+	}
 	if req.RawMaterialType != nil {
 		updates["raw_material_type"] = *req.RawMaterialType
 	}
@@ -1132,6 +1145,7 @@ func normalizeCalcType(label string) string {
 func rawMaterialRowToItem(r repository.RawMaterialRow) invModels.RawMaterialItem {
 	return invModels.RawMaterialItem{
 		ID:                    r.ID,
+		RawMaterialMasterID:   r.RawMaterialMasterID,
 		UniqCode:              r.UniqCode,
 		PartNumber:            r.PartNumber,
 		PartName:              r.PartName,
@@ -1217,6 +1231,7 @@ func subconRowToItem(r repository.SubconRow) invModels.SubconInventoryItem {
 func rawMaterialModelToItem(m invModels.RawMaterial) invModels.RawMaterialItem {
 	return invModels.RawMaterialItem{
 		ID:                    m.ID,
+		RawMaterialMasterID:   m.RawMaterialMasterID,
 		UniqCode:              m.UniqCode,
 		PartNumber:            m.PartNumber,
 		PartName:              m.PartName,
