@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"strings"
+	"time"
 
 	woModels "github.com/ganasa18/go-template/internal/work_order/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
@@ -17,6 +18,9 @@ type IRepository interface {
 	GetWorkOrderByUUIDAndKind(ctx context.Context, woUUID string, woKind string) (*woModels.WorkOrder, error)
 	GetWorkOrderItemByUUID(ctx context.Context, itemUUID string) (*woModels.WorkOrderItem, error)
 	GetWorkOrderItemsByWOID(ctx context.Context, woID int64) ([]woModels.WorkOrderItem, error)
+	// GetProcessScanLogsByItemIDs returns SCAN_IN / SCAN_OUT events per WO item
+	// (oldest first) so the detail page can show scan progress per process.
+	GetProcessScanLogsByItemIDs(ctx context.Context, itemIDs []int64) ([]ProcessScanRow, error)
 	UpdateWorkOrderApprovalStatus(ctx context.Context, tx *gorm.DB, woID int64, status string) error
 	UpdateWorkOrderQR(ctx context.Context, tx *gorm.DB, woID int64, base64 string) error
 	UpdateWorkOrderItemQR(ctx context.Context, tx *gorm.DB, itemID int64, base64 string) error
@@ -170,6 +174,37 @@ func (r *repository) GetWorkOrderItemsByWOID(ctx context.Context, woID int64) ([
 		return nil, apperror.InternalWrap("failed to load work order items", err)
 	}
 	return items, nil
+}
+
+// ProcessScanRow is one scan event from production_scan_logs.
+type ProcessScanRow struct {
+	WOItemID    int64     `gorm:"column:wo_item_id"`
+	ProcessName string    `gorm:"column:process_name"`
+	ScanType    string    `gorm:"column:scan_type"`
+	ScannedAt   time.Time `gorm:"column:scanned_at"`
+}
+
+func (r *repository) GetProcessScanLogsByItemIDs(ctx context.Context, itemIDs []int64) ([]ProcessScanRow, error) {
+	if len(itemIDs) == 0 {
+		return nil, nil
+	}
+	// Match a scan to its WO item by wo_item_id, and fall back to
+	// (wo_id, kanban_number) for scans stored without wo_item_id (the
+	// production scan-in/out flow may leave it NULL). kanban_number is unique
+	// per work_order_items row, so the fallback cannot cross items.
+	var rows []ProcessScanRow
+	if err := r.db.WithContext(ctx).
+		Table("production_scan_logs AS psl").
+		Select("woi.id AS wo_item_id, psl.process_name, psl.scan_type, psl.scanned_at").
+		Joins(`JOIN work_order_items woi
+			ON woi.id = psl.wo_item_id
+			OR (psl.wo_item_id IS NULL AND psl.wo_id = woi.wo_id AND psl.kanban_number = woi.kanban_number)`).
+		Where("woi.id IN ?", itemIDs).
+		Order("psl.scanned_at ASC, psl.id ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, apperror.InternalWrap("failed to load process scan logs", err)
+	}
+	return rows, nil
 }
 
 func (r *repository) UpdateWorkOrderApprovalStatus(ctx context.Context, tx *gorm.DB, woID int64, approvalStatus string) error {
