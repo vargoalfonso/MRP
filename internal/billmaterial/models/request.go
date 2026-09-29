@@ -27,7 +27,8 @@ type MaterialSpecInput struct {
 	RawMaterialMasterID *int64   `json:"raw_material_master_id"`
 	MaterialGrade       *string  `json:"material_grade"`
 	Grade               *string  `json:"grade"`
-	TypeMaterial        *string  `json:"type_material" validate:"omitempty,oneof=subcon raw indirect"`
+	TypeMaterial        *string  `json:"type_material" validate:"omitempty,oneof=subcon raw indirect"` // "subcon" hanya diterima untuk kompatibilitas klien lama
+	IsSubcon            bool     `json:"is_subcon"`
 	Form                *string  `json:"form" validate:"omitempty,oneof=Plate Coil Pipe Rod Wire Other"`
 	WidthMm             *float64 `json:"width_mm"`
 	DiameterMm          *float64 `json:"diameter_mm"`
@@ -172,7 +173,7 @@ type ListBomQuery struct {
 	Status              string
 	Search              string // searches uniq_code + part_name
 	SupplierID          string // UUID — filter by material spec supplier
-	TypeMaterial        string // raw | indirect | subcon
+	TypeMaterial        string // raw | indirect | subcon (subcon => item_material_specs.is_subcon = true)
 	ExcludeSupplierUUID string // exclude uniq_codes already inserted for this supplier
 	Page                int    // default 1
 	Limit               int    // default 20, max 200

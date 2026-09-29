@@ -215,6 +215,14 @@ func (s *service) ListBom(ctx context.Context, q models.ListBomQuery) (*models.L
 
 // buildChildTree recursively builds child rows at a given level from flat lines.
 // typeMaterialFilter: when non-empty, only children whose spec.TypeMaterial matches are included.
+// specMatchesTypeFilter: "subcon" mencocokkan flag is_subcon; "raw"/"indirect" mencocokkan kategori.
+func specMatchesTypeFilter(spec *models.ItemMaterialSpec, filter string) bool {
+	if filter == "subcon" {
+		return spec.IsSubcon
+	}
+	return spec.TypeMaterial != nil && *spec.TypeMaterial == filter
+}
+
 func (s *service) buildChildTree(lines []models.BomLine, preload *bomPreload, parentItemID int64, level int16, typeMaterialFilter string) []models.BomTreeRow {
 	children := preload.childrenByParent(parentItemID, level, lines)
 	rows := make([]models.BomTreeRow, 0, len(children))
@@ -250,7 +258,7 @@ func (s *service) buildChildTree(lines []models.BomLine, preload *bomPreload, pa
 				specDetail = s.toSpecDetail(&spec)
 				row.MaterialSpec = specDetail
 				if typeMaterialFilter != "" {
-					if spec.TypeMaterial == nil || *spec.TypeMaterial != typeMaterialFilter {
+					if !specMatchesTypeFilter(&spec, typeMaterialFilter) {
 						matchesFilter = false
 					}
 				}
@@ -621,12 +629,29 @@ func (s *service) createRouting(ctx context.Context, itemID, revID int64, routes
 }
 
 func (s *service) saveMaterialSpec(ctx context.Context, revID int64, ms *models.MaterialSpecInput) error {
+	// Subcon = flag proses, kategori = raw/indirect. Klien lama masih bisa mengirim
+	// type_material="subcon"; itu dinormalisasi jadi is_subcon=true tanpa kategori.
+	typeMaterial := ms.TypeMaterial
+	isSubcon := ms.IsSubcon
+	if typeMaterial != nil {
+		v := strings.ToLower(strings.TrimSpace(*typeMaterial))
+		switch v {
+		case "":
+			typeMaterial = nil
+		case "subcon":
+			isSubcon = true
+			typeMaterial = nil
+		default:
+			typeMaterial = &v
+		}
+	}
 	spec := &models.ItemMaterialSpec{
 		ItemRevisionID:      revID,
 		RawMaterialMasterID: ms.RawMaterialMasterID,
 		MaterialGrade:       ms.MaterialGrade,
 		Grade:               ms.Grade,
-		TypeMaterial:        ms.TypeMaterial,
+		TypeMaterial:        typeMaterial,
+		IsSubcon:            isSubcon,
 		Form:                ms.Form,
 		WidthMm:             ms.WidthMm,
 		DiameterMm:          ms.DiameterMm,
@@ -835,6 +860,9 @@ func (s *service) CreateBomRevision(ctx context.Context, bomID int64, req models
 			ItemRevisionID:      newRev.ID,
 			RawMaterialMasterID: spec.RawMaterialMasterID,
 			MaterialGrade:       spec.MaterialGrade,
+			Grade:               spec.Grade,
+			TypeMaterial:        spec.TypeMaterial,
+			IsSubcon:            spec.IsSubcon,
 			Form:                spec.Form,
 			WidthMm:             spec.WidthMm,
 			DiameterMm:          spec.DiameterMm,
@@ -1706,6 +1734,7 @@ func (s *service) toSpecDetail(spec *models.ItemMaterialSpec) *models.MaterialSp
 		MaterialGrade:       spec.MaterialGrade,
 		Grade:               spec.Grade,
 		TypeMaterial:        spec.TypeMaterial,
+		IsSubcon:            spec.IsSubcon,
 		Form:                spec.Form,
 		WidthMm:             spec.WidthMm,
 		DiameterMm:          spec.DiameterMm,
@@ -2551,7 +2580,9 @@ func (s *service) parseItemRows(ctx context.Context, f *excelize.File) ([]models
 
 		if tm := strings.ToLower(strings.TrimSpace(getImportValue(raw, headerIndex, "kategori"))); tm != "" {
 			switch tm {
-			case "subcon", "raw", "indirect":
+			case "subcon":
+				row.IsSubcon = true
+			case "raw", "indirect":
 				row.TypeMaterial = tm
 			default:
 				errRows = append(errRows, bulkimport.RowError{
@@ -2785,7 +2816,7 @@ func toMaterialSpec(row *models.BomImportItemRow) *models.MaterialSpecInput {
 	if row == nil {
 		return nil
 	}
-	hasAny := row.MaterialGrade != "" || row.Grade != "" || row.TypeMaterial != "" || row.Form != "" || row.WidthMM != nil || row.ThicknessMM != nil || row.LengthMM != nil || row.DiameterMM != nil || row.WeightKG != nil || row.SupplierID != nil || row.CustomerCycle != ""
+	hasAny := row.MaterialGrade != "" || row.Grade != "" || row.TypeMaterial != "" || row.IsSubcon || row.Form != "" || row.WidthMM != nil || row.ThicknessMM != nil || row.LengthMM != nil || row.DiameterMM != nil || row.WeightKG != nil || row.SupplierID != nil || row.CustomerCycle != ""
 	if !hasAny {
 		return nil
 	}
@@ -2809,6 +2840,7 @@ func toMaterialSpec(row *models.BomImportItemRow) *models.MaterialSpecInput {
 		v := row.TypeMaterial
 		ms.TypeMaterial = &v
 	}
+	ms.IsSubcon = row.IsSubcon
 	if row.Form != "" {
 		v := row.Form
 		ms.Form = &v

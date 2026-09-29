@@ -607,7 +607,7 @@ func (r *repo) ListCurrentBomChildrenByParentUniq(ctx context.Context, parentUni
 			NULLIF(TRIM(COALESCE(c.uom, '')), '') AS uom,
 			ims.material_grade,
 			ims.grade,
-			ims.type_material,
+			CASE WHEN ims.is_subcon THEN 'subcon' ELSE NULLIF(TRIM(COALESCE(ims.type_material, '')), '') END AS type_material,
 			ims.form,
 			ims.width_mm,
 			ims.diameter_mm,
@@ -733,7 +733,7 @@ func (r *repo) ResolveTypeMaterialByUniq(ctx context.Context, uniqCodes []string
 		Table("items AS i").
 		Select(`
 			i.uniq_code,
-			NULLIF(TRIM(COALESCE(ims.type_material, '')), '') AS type_material`).
+			CASE WHEN ims.is_subcon THEN 'subcon' ELSE NULLIF(TRIM(COALESCE(ims.type_material, '')), '') END AS type_material`).
 		Joins("JOIN bom_item bi ON bi.item_id = i.id AND bi.is_current = true").
 		Joins("JOIN item_material_specs ims ON ims.item_revision_id = bi.root_item_revision_id").
 		Where("i.deleted_at IS NULL AND i.uniq_code IN ?", uniqCodes).
@@ -765,10 +765,10 @@ func (r *repo) ResolveTypeMaterialByUniq(ctx context.Context, uniqCodes []string
 			Table("items AS i").
 			Select(`DISTINCT ON (i.uniq_code)
 				i.uniq_code,
-				NULLIF(TRIM(COALESCE(ims.type_material, '')), '') AS type_material`).
+				CASE WHEN ims.is_subcon THEN 'subcon' ELSE NULLIF(TRIM(COALESCE(ims.type_material, '')), '') END AS type_material`).
 			Joins("JOIN item_revisions ir ON ir.item_id = i.id").
 			Joins("JOIN item_material_specs ims ON ims.item_revision_id = ir.id").
-			Where("i.deleted_at IS NULL AND i.uniq_code IN ? AND NULLIF(TRIM(COALESCE(ims.type_material, '')), '') IS NOT NULL", remaining).
+			Where("i.deleted_at IS NULL AND i.uniq_code IN ? AND (CASE WHEN ims.is_subcon THEN 'subcon' ELSE NULLIF(TRIM(COALESCE(ims.type_material, '')), '') END) IS NOT NULL", remaining).
 			Order("i.uniq_code, ir.id DESC").
 			Scan(&latestRows).Error
 		if err != nil {

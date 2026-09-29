@@ -114,7 +114,8 @@ type ItemMaterialSpec struct {
 	SetupTimeMin        *float64 `gorm:"type:numeric(18,4)"`
 	CustomerCycle       *string  `gorm:"column:customer_cycle;size:100"`
 	Grade               *string  `gorm:"size:100"`
-	TypeMaterial        *string  `gorm:"size:50"`
+	TypeMaterial        *string  `gorm:"size:50"`                                 // kategori material: raw | indirect
+	IsSubcon            bool     `gorm:"column:is_subcon;not null;default:false"` // flag proses subcon, independen dari TypeMaterial
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 }
