@@ -5,8 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1384,6 +1386,63 @@ func (s *service) GetRMProcessingSummary(ctx context.Context) (*woModels.WorkOrd
 	}, nil
 }
 
+// buildProcessSteps merges an item's routing (process_flow_json) with its scan
+// logs. A step is "done" once a SCAN_OUT exists for that process, "in_progress"
+// when only SCAN_IN exists, otherwise "pending". Process names are matched
+// case-insensitively; scan types accept both "SCAN_IN"/"IN" and "SCAN_OUT"/"OUT".
+// When the routing is empty, the steps are derived from process_name / scans.
+func buildProcessSteps(flow datatypes.JSON, scans []woRepo.ProcessScanRow) []woModels.WorkOrderProcessStep {
+	type scanState struct{ in, out *time.Time }
+	byProcess := make(map[string]*scanState)
+	norm := func(v string) string { return strings.ToLower(strings.TrimSpace(v)) }
+	for _, sc := range scans {
+		k := norm(sc.ProcessName)
+		if k == "" {
+			continue
+		}
+		st := byProcess[k]
+		if st == nil {
+			st = &scanState{}
+			byProcess[k] = st
+		}
+		at := sc.ScannedAt
+		switch strings.ToUpper(strings.TrimSpace(sc.ScanType)) {
+		case "SCAN_IN", "IN":
+			if st.in == nil {
+				st.in = &at
+			}
+		case "SCAN_OUT", "OUT":
+			st.out = &at // keep the latest OUT
+		}
+	}
+
+	var flowSteps []processFlowStep
+	if len(flow) > 0 {
+		_ = json.Unmarshal(flow, &flowSteps)
+	}
+	sort.SliceStable(flowSteps, func(i, j int) bool { return flowSteps[i].OpSeq < flowSteps[j].OpSeq })
+
+	steps := make([]woModels.WorkOrderProcessStep, 0, len(flowSteps))
+	for _, fs := range flowSteps {
+		name := strings.TrimSpace(fs.ProcessName)
+		if name == "" {
+			continue
+		}
+		step := woModels.WorkOrderProcessStep{OpSeq: fs.OpSeq, ProcessName: name, Status: "pending"}
+		if st := byProcess[norm(name)]; st != nil {
+			step.ScannedInAt, step.ScannedOutAt = st.in, st.out
+			switch {
+			case st.out != nil:
+				step.Status = "done"
+			case st.in != nil:
+				step.Status = "in_progress"
+			}
+		}
+		steps = append(steps, step)
+	}
+	return steps
+}
+
 func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkOrderDetailResponse, error) {
 	wo, err := s.repo.GetWorkOrderByUUIDAndKind(ctx, woUUID, workOrderKindStandard)
 	if err != nil {
@@ -1392,6 +1451,21 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 	itemRows, err := s.repo.GetWorkOrderItemsByWOID(ctx, wo.ID)
 	if err != nil {
 		return nil, err
+	}
+
+	// Scan progress per process. A failure here must not break the detail page,
+	// so we log and fall back to "pending" for every step.
+	itemIDs := make([]int64, 0, len(itemRows))
+	for _, it := range itemRows {
+		itemIDs = append(itemIDs, it.ID)
+	}
+	scansByItem := make(map[int64][]woRepo.ProcessScanRow, len(itemRows))
+	if scanRows, scanErr := s.repo.GetProcessScanLogsByItemIDs(ctx, itemIDs); scanErr != nil {
+		slog.Warn("work order detail: load process scan logs failed", slog.Any("error", scanErr))
+	} else {
+		for _, sc := range scanRows {
+			scansByItem[sc.WOItemID] = append(scansByItem[sc.WOItemID], sc)
+		}
 	}
 
 	items := make([]woModels.WorkOrderDetailItem, 0, len(itemRows))
@@ -1410,6 +1484,7 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 			ProcessName:     it.ProcessName,
 			Status:          it.Status,
 			ProcessFlowJSON: jsonRawOrEmpty(it.ProcessFlowJSON),
+			ProcessSteps:    buildProcessSteps(it.ProcessFlowJSON, scansByItem[it.ID]),
 			QRDataURL:       itemQR,
 		})
 	}

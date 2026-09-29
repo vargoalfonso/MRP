@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/ganasa18/go-template/pkg/pagination"
 )
@@ -104,6 +105,16 @@ type WorkOrderSummaryResponse struct {
 	TotalUniqs int `json:"total_uniqs"` // distinct uniq_codes across all active items
 }
 
+// WorkOrderProcessStep is one routing step of an item plus its scan progress.
+// Status: "done" (SCAN_OUT recorded), "in_progress" (SCAN_IN only), "pending".
+type WorkOrderProcessStep struct {
+	OpSeq        int        `json:"op_seq"`
+	ProcessName  string     `json:"process_name"`
+	Status       string     `json:"status"`
+	ScannedInAt  *time.Time `json:"scanned_in_at"`
+	ScannedOutAt *time.Time `json:"scanned_out_at"`
+}
+
 // WorkOrderDetailItem is a single kanban row inside WO detail.
 type WorkOrderDetailItem struct {
 	ID              string          `json:"id"` // WO item UUID
@@ -115,7 +126,9 @@ type WorkOrderDetailItem struct {
 	ProcessName     *string         `json:"process_name"`
 	Status          string          `json:"status"`
 	ProcessFlowJSON json.RawMessage `json:"process_flow_json"`
-	QRDataURL       *string         `json:"qr_data_url"`
+	// ProcessSteps: routing steps in op_seq order with per-process scan status.
+	ProcessSteps []WorkOrderProcessStep `json:"process_steps"`
+	QRDataURL    *string                `json:"qr_data_url"`
 }
 
 // [wo-defect-reasons] Satu baris Reason/Info dari QC (NG atau Scrap) round 3.
