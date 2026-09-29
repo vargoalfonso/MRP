@@ -648,7 +648,7 @@ nodes AS (
 SELECT
 	n.item_id, n.level, n.line_id, n.qty_per_uniq, n.line_uom,
 	it.uniq_code, it.part_name, it.part_number, it.uom AS item_uom,
-	ms.material_grade, ms.grade, ms.type_material, ms.form,
+	ms.material_grade, ms.grade, CASE WHEN ms.is_subcon THEN 'subcon' ELSE ms.type_material END AS type_material, ms.form,
 	ms.width_mm, ms.diameter_mm, ms.thickness_mm, ms.length_mm, ms.weight_kg, ms.supplier_name,
 	CAST(rm.uuid AS TEXT) AS rm_uuid, rm.uniq_code AS rm_uniq_code,
 	rm.raw_material_type, rm.uom AS rm_uom,

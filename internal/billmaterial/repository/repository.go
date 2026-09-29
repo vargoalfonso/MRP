@@ -139,7 +139,7 @@ type ListFilter struct {
 	Status              string
 	Search              string // ILIKE on uniq_code OR part_name
 	SupplierID          string // UUID — filter by material spec supplier
-	TypeMaterial        string // raw | indirect | subcon — filter by item_material_specs.type_material
+	TypeMaterial        string // raw | indirect (item_material_specs.type_material) | subcon (item_material_specs.is_subcon)
 	ExcludeSupplierUUID string // exclude bom items whose uniq_code already exists in supplier_item for this supplier
 	Page                int
 	Limit               int
@@ -238,6 +238,17 @@ func (r *repository) UpsertMaterialSpec(ctx context.Context, spec *models.ItemMa
 		Assign(*spec).
 		FirstOrCreate(spec).Error; err != nil {
 		return apperror.InternalWrap("UpsertMaterialSpec", err)
+	}
+	// Assign(struct) mengabaikan zero-value, sehingga is_subcon=false dan type_material
+	// yang dikosongkan tidak tersimpan. Tulis eksplisit kedua kolom ini.
+	if err := r.db.WithContext(ctx).
+		Model(&models.ItemMaterialSpec{}).
+		Where("id = ?", spec.ID).
+		Updates(map[string]interface{}{
+			"is_subcon":     spec.IsSubcon,
+			"type_material": spec.TypeMaterial,
+		}).Error; err != nil {
+		return apperror.InternalWrap("UpsertMaterialSpec.subcon", err)
 	}
 	return nil
 }
@@ -976,13 +987,13 @@ func (r *repository) ListBomItems(ctx context.Context, f ListFilter) ([]models.B
 			Select("bom_lines.bom_item_id").
 			Joins(`JOIN item_revisions cr ON cr.id = COALESCE(bom_lines.child_item_revision_id, (SELECT MAX(ir.id) FROM item_revisions ir WHERE ir.item_id = bom_lines.child_item_id))`).
 			Joins("JOIN item_material_specs ims ON ims.item_revision_id = cr.id").
-			Where("ims.type_material = ?", f.TypeMaterial)
+			Where(specTypeCond("ims", f.TypeMaterial), specTypeArgs(f.TypeMaterial)...)
 		// Root: BOM yang root item-nya sendiri punya type_material cocok.
 		rootSub := r.db.Table("bom_item bi_r").
 			Select("bi_r.id").
 			Joins(`JOIN item_revisions rr ON rr.id = COALESCE(bi_r.root_item_revision_id, (SELECT MAX(ir2.id) FROM item_revisions ir2 WHERE ir2.item_id = bi_r.item_id))`).
 			Joins("JOIN item_material_specs rims ON rims.item_revision_id = rr.id").
-			Where("rims.type_material = ?", f.TypeMaterial)
+			Where(specTypeCond("rims", f.TypeMaterial), specTypeArgs(f.TypeMaterial)...)
 		q = q.Where("bom_item.id IN (?) OR bom_item.id IN (?)", childSub, rootSub)
 	}
 	if f.ExcludeSupplierUUID != "" {
@@ -1195,4 +1206,20 @@ func one[T any](v *T, err error, entity string) (*T, error) {
 		return nil, apperror.InternalWrap("get "+entity, err)
 	}
 	return v, nil
+}
+
+// specTypeCond builds the WHERE fragment for the type filter: "subcon" is a boolean flag,
+// "raw"/"indirect" are categories.
+func specTypeCond(alias, typeMaterial string) string {
+	if typeMaterial == "subcon" {
+		return alias + ".is_subcon = true"
+	}
+	return alias + ".type_material = ?"
+}
+
+func specTypeArgs(typeMaterial string) []interface{} {
+	if typeMaterial == "subcon" {
+		return nil
+	}
+	return []interface{}{typeMaterial}
 }
