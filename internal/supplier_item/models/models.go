@@ -34,6 +34,8 @@ type SupplierItem struct {
 	UUID          string         `gorm:"uniqueIndex;not null" json:"id"`
 	SupplierUUID  string         `gorm:"index;not null" json:"supplier_uuid"`
 	SupplierName  string         `gorm:"not null" json:"supplier_name"`
+	WarehouseUUID *string        `gorm:"column:warehouse_uuid;type:uuid" json:"warehouse_uuid,omitempty"`
+	WarehouseName *string        `gorm:"column:warehouse_name;size:255" json:"warehouse_name,omitempty"`
 	SebangoCode   *string        `gorm:"type:text" json:"sebango_code,omitempty"`
 	UniqCode      *string        `gorm:"type:text" json:"uniq_code,omitempty"`
 	Type          string         `gorm:"size:32;not null" json:"type"`
@@ -58,6 +60,8 @@ func (SupplierItem) TableName() string {
 
 type CreateSupplierItemRequest struct {
 	SupplierUUID  string `json:"supplier_uuid" validate:"required,uuid4"`
+	WarehouseUUID string `json:"warehouse_uuid" validate:"omitempty,uuid"`
+	WarehouseName string `json:"warehouse_name" validate:"omitempty,max=255"`
 	SebangoCode   string `json:"sebango_code" validate:"omitempty"`
 	UniqCode      string `json:"uniq_code" validate:"omitempty"`
 	Type          string `json:"type" validate:"required,oneof=raw_material indirect subcon"`
@@ -74,6 +78,8 @@ type CreateSupplierItemRequest struct {
 
 type UpdateSupplierItemRequest struct {
 	SupplierUUID  string `json:"supplier_uuid" validate:"required,uuid4"`
+	WarehouseUUID string `json:"warehouse_uuid" validate:"omitempty,uuid"`
+	WarehouseName string `json:"warehouse_name" validate:"omitempty,max=255"`
 	SebangoCode   string `json:"sebango_code" validate:"omitempty"`
 	UniqCode      string `json:"uniq_code" validate:"omitempty"`
 	Type          string `json:"type" validate:"required,oneof=raw_material indirect subcon"`

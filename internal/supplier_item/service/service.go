@@ -86,10 +86,17 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierItemReque
 		return nil, err
 	}
 
+	warehouseUUID, warehouseName, err := s.resolveWarehouse(ctx, req.WarehouseUUID)
+	if err != nil {
+		return nil, err
+	}
+
 	item := &models.SupplierItem{
 		UUID:          uuid.NewString(),
 		SupplierUUID:  supplier.UUID,
 		SupplierName:  supplier.SupplierName,
+		WarehouseUUID: warehouseUUID,
+		WarehouseName: warehouseName,
 		SebangoCode:   models.NormalizeOptionalString(toOptionalString(req.SebangoCode)),
 		UniqCode:      models.NormalizeOptionalString(toOptionalString(req.UniqCode)),
 		Type:          itemType,
@@ -217,8 +224,15 @@ func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupp
 		return nil, err
 	}
 
+	warehouseUUID, warehouseName, err := s.resolveWarehouse(ctx, req.WarehouseUUID)
+	if err != nil {
+		return nil, err
+	}
+
 	item.SupplierUUID = supplier.UUID
 	item.SupplierName = supplier.SupplierName
+	item.WarehouseUUID = warehouseUUID
+	item.WarehouseName = warehouseName
 	item.SebangoCode = models.NormalizeOptionalString(toOptionalString(req.SebangoCode))
 	item.UniqCode = models.NormalizeOptionalString(toOptionalString(req.UniqCode))
 	item.Type = itemType
@@ -245,6 +259,21 @@ func (s *service) Delete(ctx context.Context, uuid string) error {
 		return err
 	}
 	return s.repo.Delete(ctx, item)
+}
+
+// resolveWarehouse returns the warehouse uuid and its name from the warehouse
+// table (the name from the frontend input is not trusted).
+func (s *service) resolveWarehouse(ctx context.Context, raw string) (*string, *string, error) {
+	id := strings.TrimSpace(raw)
+	if id == "" {
+		return nil, nil, nil
+	}
+	wh, err := s.repo.FindWarehouseByUUID(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	name := wh.WarehouseName
+	return &id, &name, nil
 }
 
 func normalizeType(value string) string {

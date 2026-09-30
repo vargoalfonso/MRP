@@ -2,13 +2,34 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	supplierModels "github.com/ganasa18/go-template/internal/supplier/models"
 	"github.com/ganasa18/go-template/internal/supplier_item/models"
+	warehouseModels "github.com/ganasa18/go-template/internal/warehouse/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
+
+// wrapSupplierItemDBError maps well-known Postgres errors to client-facing
+// errors instead of a generic 500. The raw cause stays attached to the
+// AppError so it can be logged server-side.
+func wrapSupplierItemDBError(msg string, err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "23505": // unique_violation
+			return apperror.Conflict("uniq code sudah terdaftar untuk supplier ini pada kategori tersebut")
+		case "23502": // not_null_violation
+			return apperror.BadRequest("kolom wajib belum diisi: " + pgErr.ColumnName)
+		case "22001": // string_data_right_truncation
+			return apperror.BadRequest("salah satu nilai terlalu panjang untuk kolomnya")
+		}
+	}
+	return apperror.InternalWrap(msg, err)
+}
 
 type IRepository interface {
 	Create(ctx context.Context, item *models.SupplierItem) error
@@ -17,6 +38,7 @@ type IRepository interface {
 	Update(ctx context.Context, item *models.SupplierItem) error
 	Delete(ctx context.Context, item *models.SupplierItem) error
 	FindSupplierByUUID(ctx context.Context, uuid string) (*supplierModels.Supplier, error)
+	FindWarehouseByUUID(ctx context.Context, uuid string) (*warehouseModels.Warehouse, error)
 	ExistsBySupplierAndUniqType(ctx context.Context, supplierUUID, uniqCode, itemType, excludeUUID string) (bool, error)
 }
 
@@ -30,7 +52,7 @@ func New(db *gorm.DB) IRepository {
 
 func (r *repository) Create(ctx context.Context, item *models.SupplierItem) error {
 	if err := r.db.WithContext(ctx).Create(item).Error; err != nil {
-		return apperror.InternalWrap("create supplier item failed", err)
+		return wrapSupplierItemDBError("create supplier item failed", err)
 	}
 	return nil
 }
@@ -82,7 +104,7 @@ func (r *repository) List(ctx context.Context, filters models.SupplierItemListFi
 
 func (r *repository) Update(ctx context.Context, item *models.SupplierItem) error {
 	if err := r.db.WithContext(ctx).Save(item).Error; err != nil {
-		return apperror.InternalWrap("update supplier item failed", err)
+		return wrapSupplierItemDBError("update supplier item failed", err)
 	}
 	return nil
 }
@@ -104,6 +126,18 @@ func (r *repository) FindSupplierByUUID(ctx context.Context, uuid string) (*supp
 		return nil, apperror.InternalWrap("find supplier failed", err)
 	}
 	return &supplier, nil
+}
+
+func (r *repository) FindWarehouseByUUID(ctx context.Context, uuid string) (*warehouseModels.Warehouse, error) {
+	var wh warehouseModels.Warehouse
+	err := r.db.WithContext(ctx).Where("uuid = ?", uuid).First(&wh).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, apperror.BadRequest("warehouse tidak ditemukan")
+		}
+		return nil, apperror.InternalWrap("find warehouse failed", err)
+	}
+	return &wh, nil
 }
 
 func (r *repository) ExistsBySupplierAndUniqType(ctx context.Context, supplierUUID, uniqCode, itemType, excludeUUID string) (bool, error) {
