@@ -87,6 +87,8 @@ type RawMaterialRow struct {
 	QR                    *string   `gorm:"column:qr"`
 	Model                 string    `gorm:"column:model"`
 	Grade                 string    `gorm:"column:material_grade"`
+	MaterialCode          string    `gorm:"column:material_code"`
+	ItemUniqCode          *string   `gorm:"column:item_uniq_code"`
 }
 
 type IndirectRow struct {
@@ -340,15 +342,36 @@ func New(db *gorm.DB) IRepository { return &repo{db: db} }
 // ---------------------------------------------------------------------------
 
 func (r *repo) ListRawMaterials(ctx context.Context, f ListFilter) ([]RawMaterialRow, int64, error) {
+	// Material code = material_grade pada material specification BOM dari uniq
+	// ini: raw_materials.uniq_code = items.uniq_code -> revisi terbaru yang
+	// punya spec -> item_material_specs.material_grade. LATERAL (maks. 1 baris)
+	// menggantikan join lama yang membandingkan items.id dengan
+	// item_revision_id, dan mencegah baris ganda.
 	q := r.db.WithContext(ctx).
 		Table("raw_materials rm").
-		Joins("LEFT JOIN items i ON i.uniq_code = rm.uniq_code").
-		Joins("LEFT JOIN item_material_specs ims ON i.id = ims.item_revision_id").
+		// Cocokkan uniq tanpa peduli huruf besar/kecil dan spasi; kalau ada beberapa
+		// kandidat, yang persis sama didahulukan. Maks. 1 baris per raw material.
+		Joins(`LEFT JOIN LATERAL (
+			SELECT it.id, it.uniq_code, it.model
+			FROM items it
+			WHERE it.deleted_at IS NULL
+			  AND UPPER(BTRIM(it.uniq_code)) = UPPER(BTRIM(rm.uniq_code))
+			ORDER BY (it.uniq_code = rm.uniq_code) DESC, it.id
+			LIMIT 1
+		) i ON TRUE`).
+		Joins(`LEFT JOIN LATERAL (
+			SELECT s.material_grade
+			FROM item_revisions ir
+			JOIN item_material_specs s ON s.item_revision_id = ir.id
+			WHERE ir.item_id = i.id
+			ORDER BY ir.id DESC
+			LIMIT 1
+		) ims ON TRUE`).
 		Where("rm.deleted_at IS NULL")
 
 	if f.Search != "" {
 		s := "%" + f.Search + "%"
-		q = q.Where("(rm.uniq_code ILIKE ? OR rm.part_name ILIKE ?)", s, s)
+		q = q.Where("(rm.uniq_code ILIKE ? OR rm.part_name ILIKE ? OR ims.material_grade ILIKE ?)", s, s, s)
 	}
 	if f.RMType != "" {
 		q = q.Where("rm.raw_material_type = ?", f.RMType)
@@ -372,7 +395,9 @@ func (r *repo) ListRawMaterials(ctx context.Context, f ListFilter) ([]RawMateria
 	err := q.Select(`
 	rm.*,
 	i.model,
-	ims.material_grade
+	ims.material_grade,
+	COALESCE(ims.material_grade, '') AS material_code,
+	i.uniq_code AS item_uniq_code
 `).
 		Order(safeOrderDir("rm", f.OrderBy, f.OrderDirection, []string{"uniq_code", "stock_qty", "status", "stock_days", "created_at", "updated_at"})).
 		Limit(f.Limit).Offset(f.Offset).

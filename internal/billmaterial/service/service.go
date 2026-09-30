@@ -122,8 +122,8 @@ func (s *service) ListBom(ctx context.Context, q models.ListBomQuery) (*models.L
 	limit := q.Limit
 	if limit < 1 {
 		limit = 20
-	} else if limit > 1000 {
-		limit = 1000
+	} else if limit > 10000 {
+		limit = 10000
 	}
 	page := q.Page
 	if page < 1 {

@@ -1178,8 +1178,8 @@ func (r *repository) GetImportHistoryErrorFile(ctx context.Context, id string) (
 func limitOffset(limit, page int) (int, int) {
 	if limit < 1 {
 		limit = 20
-	} else if limit > 1000 {
-		limit = 1000
+	} else if limit > 10000 {
+		limit = 10000
 	}
 	if page < 1 {
 		page = 1

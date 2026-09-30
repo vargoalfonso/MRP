@@ -104,6 +104,9 @@ type RawMaterialItem struct {
 	QR                    *string   `json:"qr"`
 	Model                 *string   `json:"model"`
 	Grade                 *string   `json:"material_grade"`
+	MaterialCode          *string   `json:"material_code"`
+	// ItemUniqCode terisi kalau uniq ini ada di master item/BOM (items.uniq_code).
+	ItemUniqCode *string `json:"item_uniq_code"`
 }
 
 type RawMaterialListResponse struct {

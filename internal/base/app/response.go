@@ -1,9 +1,11 @@
 package app
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/logger"
 )
 
 // CostumeResponse is the single JSON envelope for every API response.
@@ -37,6 +39,13 @@ func NewError(ctx *Context, err error) *CostumeResponse {
 			Message:   appErr.Message,
 		}
 	}
+	// Log the real cause server-side (never sent to the client) so a bare
+	// "an unexpected error occurred" can still be traced by request_id.
+	logger.FromContext(ctx.Request.Context()).Error("unhandled error",
+		slog.String("request_id", ctx.APIReqID),
+		slog.String("path", ctx.Request.URL.Path),
+		slog.Any("error", err),
+	)
 	return &CostumeResponse{
 		RequestID: ctx.APIReqID,
 		Status:    http.StatusInternalServerError,

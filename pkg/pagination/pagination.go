@@ -806,9 +806,9 @@ func clampLimit(n int) int {
 	if n < 1 {
 		return 20
 	}
-	// Increase allowed maximum limit to 1000 to support larger list requests
-	if n > 1000 {
-		return 1000
+	// Maximum limit 10000 untuk mendukung permintaan list besar (BOM tree, dll).
+	if n > 10000 {
+		return 10000
 	}
 	return n
 }
