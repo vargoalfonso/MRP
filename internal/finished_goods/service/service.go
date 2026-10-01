@@ -538,6 +538,29 @@ func (s *service) CreateFinishedGoods(ctx context.Context, req fgModels.CreateFi
 		LIMIT 1
 	`, req.UniqCode).Scan(&bom)
 
+	// Part info: last work order -> master item -> values from the request
+	// (bulk upload). Previously a uniq without any work order was saved with
+	// empty part number / name / model.
+	if bom.PartNumber == nil || bom.PartName == nil || bom.Model == nil {
+		var it struct {
+			PartNumber *string `gorm:"column:part_number"`
+			PartName   *string `gorm:"column:part_name"`
+			Model      *string `gorm:"column:model"`
+		}
+		_ = s.db.WithContext(ctx).Raw(`
+			SELECT part_number, part_name, model
+			FROM items
+			WHERE uniq_code = ? AND deleted_at IS NULL
+			LIMIT 1
+		`, req.UniqCode).Scan(&it)
+		bom.PartNumber = pickStr(bom.PartNumber, it.PartNumber)
+		bom.PartName = pickStr(bom.PartName, it.PartName)
+		bom.Model = pickStr(bom.Model, it.Model)
+	}
+	bom.PartNumber = pickStr(bom.PartNumber, req.PartNumber)
+	bom.PartName = pickStr(bom.PartName, req.PartName)
+	bom.Model = pickStr(bom.Model, req.Model)
+
 	var woNumber *string
 	if req.WONumberOverride != nil && *req.WONumberOverride != "" {
 		woNumber = req.WONumberOverride
@@ -586,6 +609,12 @@ func (s *service) CreateFinishedGoods(ctx context.Context, req fgModels.CreateFi
 		First(&existing).Error
 
 	if err == nil {
+		// Keep what is already stored when nothing better was resolved.
+		bom.PartNumber = pickStr(bom.PartNumber, existing.PartNumber)
+		bom.PartName = pickStr(bom.PartName, existing.PartName)
+		bom.Model = pickStr(bom.Model, existing.Model)
+		woNumber = pickStr(woNumber, existing.WONumber)
+
 		// Record exists: restore if soft-deleted, update warehouse + kanban params
 		stockToComplete := computeStockToComplete(existing.StockQty, safetyStockQty)
 		kanbanCount := computeKanbanCount(existing.StockQty, kanbanStandardQty)
@@ -670,6 +699,19 @@ func (s *service) CreateFinishedGoods(ctx context.Context, req fgModels.CreateFi
 	return toItem(fg), nil
 }
 
+// pickStr returns the first non-blank value (trimmed), or nil.
+func pickStr(vals ...*string) *string {
+	for _, v := range vals {
+		if v == nil {
+			continue
+		}
+		if t := strings.TrimSpace(*v); t != "" {
+			return &t
+		}
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Bulk Create
 // ---------------------------------------------------------------------------
@@ -684,6 +726,9 @@ func (s *service) BulkCreateFinishedGoods(ctx context.Context, req fgModels.Bulk
 			UniqCode:          item.UniqCode,
 			WarehouseLocation: item.WarehouseLocation,
 			WONumberOverride:  item.WONumber,
+			PartNumber:        item.PartNumber,
+			PartName:          item.PartName,
+			Model:             item.Model,
 		}
 		fg, err := s.CreateFinishedGoods(ctx, singleReq, createdBy)
 		if err != nil {
@@ -698,10 +743,23 @@ func (s *service) BulkCreateFinishedGoods(ctx context.Context, req fgModels.Bulk
 			continue
 		}
 
-		// Apply initial stock_qty from review step if provided
-		if item.StockQty != nil && *item.StockQty > 0 {
+		// Apply stock_qty from the file when provided. An explicit 0 is honoured
+		// (before, only > 0 was applied, so 0 fell back to the work order qty).
+		if item.StockQty != nil {
 			stockReq := fgModels.UpdateFinishedGoodsRequest{StockQty: item.StockQty}
-			fg, _ = s.UpdateFinishedGoods(ctx, fg.ID, stockReq, createdBy)
+			if updated, uerr := s.UpdateFinishedGoods(ctx, fg.ID, stockReq, createdBy); uerr != nil {
+				failed++
+				errMsg := "created but failed to set stock: " + uerr.Error()
+				results = append(results, fgModels.FGBulkCreateResult{
+					Index:    i,
+					UniqCode: item.UniqCode,
+					Status:   "failed",
+					Error:    &errMsg,
+				})
+				continue
+			} else if updated != nil {
+				fg = updated
+			}
 		}
 
 		created++

@@ -8,6 +8,11 @@ type CreateFinishedGoodsRequest struct {
 	WarehouseLocation string `json:"warehouse_location" validate:"required"`
 	// Optional override — if set, skips auto-resolve from work_orders
 	WONumberOverride *string `json:"wo_number"`
+	// Optional fallback (bulk upload). Used only when part info cannot be
+	// resolved from the last work order or the master item.
+	PartNumber *string `json:"part_number"`
+	PartName   *string `json:"part_name"`
+	Model      *string `json:"model"`
 }
 
 // BulkCreateFGItem is a single entry in the bulk create payload.
@@ -19,6 +24,10 @@ type BulkCreateFGItem struct {
 	WarehouseLocation string   `json:"warehouse_location" validate:"required"`
 	WONumber          *string  `json:"wo_number"`
 	StockQty          *float64 `json:"stock_qty" validate:"omitempty,gte=0"`
+	// Optional fallback part info from the uploaded file (see CreateFinishedGoodsRequest).
+	PartNumber *string `json:"part_number"`
+	PartName   *string `json:"part_name"`
+	Model      *string `json:"model"`
 }
 
 // BulkCreateFinishedGoodsRequest is the body for POST /api/v1/finished-goods/bulk.

@@ -1143,6 +1143,10 @@ func normalizeCalcType(label string) string {
 // ---------------------------------------------------------------------------
 
 func rawMaterialRowToItem(r repository.RawMaterialRow) invModels.RawMaterialItem {
+	var materialCode *string
+	if r.MaterialCode != "" {
+		materialCode = &r.MaterialCode
+	}
 	return invModels.RawMaterialItem{
 		ID:                    r.ID,
 		RawMaterialMasterID:   r.RawMaterialMasterID,
@@ -1170,6 +1174,8 @@ func rawMaterialRowToItem(r repository.RawMaterialRow) invModels.RawMaterialItem
 		QR:                    r.QR,
 		Model:                 &r.Model,
 		Grade:                 &r.Grade,
+		MaterialCode:          materialCode,
+		ItemUniqCode:          r.ItemUniqCode,
 	}
 }
 
