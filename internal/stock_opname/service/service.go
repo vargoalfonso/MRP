@@ -1040,6 +1040,9 @@ func (s *service) appendInventoryLog(ctx context.Context, tx *gorm.DB, inventory
 	if result == nil {
 		return nil
 	}
+	if result.EntityID != nil {
+		entry.EntityID = result.EntityID
+	}
 	switch inventoryType {
 	case stockModels.InventoryTypeRM:
 		if err := s.invSvc.AppendMovementLog(ctx, tx, invService.MovementLogInput{Category: string(inventoryconst.CategoryRawMaterial), MovementType: string(inventoryconst.MovementStockOpname), UniqCode: entry.UniqCode, EntityID: entry.EntityID, QtyChange: result.QtyChange, WeightChange: result.WeightChange, SourceFlag: string(inventoryconst.SourceStockOpname), ReferenceID: &sessionNumber, Notes: &notes, LoggedBy: actor}); err != nil {

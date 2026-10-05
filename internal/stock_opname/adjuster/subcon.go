@@ -9,7 +9,6 @@ import (
 	stockModels "github.com/ganasa18/go-template/internal/stock_opname/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // SubconAdjuster handles stock opname for materials held at subcon vendors
@@ -55,7 +54,7 @@ func (a *SubconAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q string,
 
 func (a *SubconAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry, sessionNumber, actor string) (*AdjustmentResult, error) {
 	var row invModels.SubconInventory
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND deleted_at IS NULL", entry.EntityID).Take(&row).Error; err != nil {
+	if err := lockInventoryRow(ctx, tx, &row, entry, "COALESCE(total_received_qty, 0) = 0"); err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, apperror.NotFound("subcon inventory record tidak ditemukan during stock opname")
 		}
@@ -73,7 +72,7 @@ func (a *SubconAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry
 	if err := tx.WithContext(ctx).Model(&row).Updates(updates).Error; err != nil {
 		return nil, apperror.Internal("update subcon stock opname: " + err.Error())
 	}
-	return &AdjustmentResult{QtyChange: qtyChange}, nil
+	return &AdjustmentResult{QtyChange: qtyChange, EntityID: &row.ID}, nil
 }
 
 // subconStatus mirrors the subcon inventory status logic:
