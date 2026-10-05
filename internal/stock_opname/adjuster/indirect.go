@@ -9,7 +9,6 @@ import (
 	stockModels "github.com/ganasa18/go-template/internal/stock_opname/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type IndirectAdjuster struct{}
@@ -49,7 +48,7 @@ func (a *IndirectAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q strin
 
 func (a *IndirectAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry, sessionNumber, actor string) (*AdjustmentResult, error) {
 	var row invModels.IndirectRawMaterial
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND deleted_at IS NULL", entry.EntityID).Take(&row).Error; err != nil {
+	if err := lockInventoryRow(ctx, tx, &row, entry, ""); err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, apperror.NotFound("indirect raw material record tidak ditemukan during stock opname")
 		}
@@ -72,7 +71,7 @@ func (a *IndirectAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, ent
 	if err := tx.WithContext(ctx).Model(&row).Updates(updates).Error; err != nil {
 		return nil, apperror.Internal("update indirect stock opname: " + err.Error())
 	}
-	return &AdjustmentResult{QtyChange: qtyChange, WeightChange: entry.WeightKg}, nil
+	return &AdjustmentResult{QtyChange: qtyChange, WeightChange: entry.WeightKg, EntityID: &row.ID}, nil
 }
 
 func inventoryStatus(stock float64, safety *float64) string {
