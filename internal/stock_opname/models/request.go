@@ -70,3 +70,18 @@ type HistoryLogsQuery struct {
 	Offset   int
 	Page     int
 }
+
+// CheckCountRequest asks the server whether counted quantities are below /
+// above the CURRENT system stock. The system stock itself is never returned.
+type CheckCountRequest struct {
+	Type   string           `json:"type"`
+	Method string           `json:"method"`
+	Items  []CheckCountItem `json:"items"`
+}
+
+type CheckCountItem struct {
+	// Key is echoed back so the client can map a result to its form row.
+	Key        string  `json:"key"`
+	UniqCode   string  `json:"uniq_code"`
+	CountedQty float64 `json:"counted_qty"`
+}

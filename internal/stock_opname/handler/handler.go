@@ -47,6 +47,19 @@ func (h *HTTPHandler) ListUniqOptions(ctx *app.Context) *app.CostumeResponse {
 	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: resp}
 }
 
+// CheckCounts returns only under/over/match status per row; never the system qty.
+func (h *HTTPHandler) CheckCounts(ctx *app.Context) *app.CostumeResponse {
+	var req stockModels.CheckCountRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body: " + err.Error()}
+	}
+	resp, err := h.svc.CheckCounts(ctx.Request.Context(), req)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: resp}
+}
+
 func (h *HTTPHandler) GetHistoryLogs(ctx *app.Context) *app.CostumeResponse {
 	p := pagination.Pagination(ctx)
 	resp, err := h.svc.GetHistoryLogs(ctx.Request.Context(), stockModels.HistoryLogsQuery{Type: ctx.Query("type"), UniqCode: ctx.Query("uniq_code"), From: ctx.Query("from"), To: ctx.Query("to"), Limit: p.Limit, Offset: p.Offset(), Page: p.Page})

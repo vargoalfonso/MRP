@@ -22,6 +22,7 @@ import (
 type IService interface {
 	GetStats(ctx context.Context, inventoryType string) (*stockModels.StockOpnameStats, error)
 	ListUniqOptions(ctx context.Context, q stockModels.FormOptionsQuery) ([]stockModels.UniqOption, error)
+	CheckCounts(ctx context.Context, req stockModels.CheckCountRequest) ([]stockModels.CheckCountResult, error)
 	ResolvePackingOption(ctx context.Context, packing string) (*stockModels.PackingOption, error)
 	GetHistoryLogs(ctx context.Context, q stockModels.HistoryLogsQuery) (*stockModels.HistoryLogListResponse, error)
 	GetAuditLogs(ctx context.Context, sessionID int64, page, limit int) (*stockModels.AuditLogListResponse, error)
@@ -87,6 +88,57 @@ func (s *service) ListUniqOptions(ctx context.Context, q stockModels.FormOptions
 		items = append(items, stockModels.UniqOption{UniqCode: rows[i].UniqCode, PartNumber: rows[i].PartNumber, PartName: rows[i].PartName, UOM: rows[i].UOM, SystemQty: rows[i].SystemQty, WeightKg: rows[i].WeightKg, RawMaterialType: rows[i].RawMaterialType})
 	}
 	return items, nil
+}
+
+// maxCheckCountItems caps one check-count call (bulk uploads send one batch).
+const maxCheckCountItems = 1000
+
+// CheckCounts compares each counted qty with the CURRENT system stock, using
+// the same ResolveUniq path that Create/AddEntry use for the snapshot, and
+// returns only less/over/match/unknown. The system quantity is never exposed.
+func (s *service) CheckCounts(ctx context.Context, req stockModels.CheckCountRequest) ([]stockModels.CheckCountResult, error) {
+	inventoryType := normalizeInventoryType(req.Type)
+	if err := validateInventoryType(inventoryType); err != nil {
+		return nil, err
+	}
+	if len(req.Items) > maxCheckCountItems {
+		return nil, apperror.BadRequest(fmt.Sprintf("maksimal %d item per request", maxCheckCountItems))
+	}
+	adj, err := s.getAdjuster(inventoryType)
+	if err != nil {
+		return nil, err
+	}
+	// Bulk WIP posts new WIP rows against a 0 baseline, so there is no real
+	// system stock to compare with.
+	noBaseline := inventoryType == stockModels.InventoryTypeWIP && normalizeMethod(req.Method) == stockModels.MethodBulk
+
+	results := make([]stockModels.CheckCountResult, 0, len(req.Items))
+	for _, item := range req.Items {
+		uniqCode := strings.TrimSpace(item.UniqCode)
+		status := stockModels.CountStatusUnknown
+		if uniqCode != "" && !noBaseline {
+			// Lookup errors (e.g. uniq not found) just mean "no hint".
+			if snapshot, rerr := adj.ResolveUniq(ctx, s.db, uniqCode); rerr == nil && snapshot != nil {
+				status = compareCountedQty(snapshot.SystemQty, item.CountedQty)
+			}
+		}
+		results = append(results, stockModels.CheckCountResult{Key: item.Key, UniqCode: uniqCode, Status: status})
+	}
+	return results, nil
+}
+
+// compareCountedQty tolerates numeric(15,4) rounding noise.
+func compareCountedQty(systemQty, countedQty float64) string {
+	const eps = 0.00005
+	diff := countedQty - systemQty
+	switch {
+	case diff < -eps:
+		return stockModels.CountStatusLess
+	case diff > eps:
+		return stockModels.CountStatusOver
+	default:
+		return stockModels.CountStatusMatch
+	}
 }
 
 func (s *service) GetHistoryLogs(ctx context.Context, q stockModels.HistoryLogsQuery) (*stockModels.HistoryLogListResponse, error) {

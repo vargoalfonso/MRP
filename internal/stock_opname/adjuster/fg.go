@@ -11,7 +11,6 @@ import (
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/ganasa18/go-template/pkg/inventoryconst"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type FGAdjuster struct{}
@@ -51,7 +50,7 @@ func (a *FGAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q string, lim
 
 func (a *FGAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry, sessionNumber, actor string) (*AdjustmentResult, error) {
 	var row fgModels.FinishedGoods
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND deleted_at IS NULL", entry.EntityID).Take(&row).Error; err != nil {
+	if err := lockInventoryRow(ctx, tx, &row, entry, ""); err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, apperror.NotFound("finished goods record tidak ditemukan during stock opname")
 		}
@@ -95,7 +94,7 @@ func (a *FGAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *st
 	if err := tx.WithContext(ctx).Create(log).Error; err != nil {
 		return nil, apperror.Internal("append FG movement log: " + err.Error())
 	}
-	return &AdjustmentResult{QtyChange: delta}, nil
+	return &AdjustmentResult{QtyChange: delta, EntityID: &row.ID}, nil
 }
 
 func fgStatus(stockQty float64, minThreshold, maxThreshold *float64) string {

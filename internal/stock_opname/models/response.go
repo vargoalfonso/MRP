@@ -111,12 +111,14 @@ type StockOpnameStats struct {
 }
 
 type UniqOption struct {
-	UniqCode   string   `json:"uniq_code"`
-	PartNumber *string  `json:"part_number"`
-	PartName   *string  `json:"part_name"`
-	UOM        *string  `json:"uom"`
-	SystemQty  float64  `json:"system_qty"`
-	WeightKg   *float64 `json:"weight_kg"`
+	UniqCode   string  `json:"uniq_code"`
+	PartNumber *string `json:"part_number"`
+	PartName   *string `json:"part_name"`
+	UOM        *string `json:"uom"`
+	// SystemQty is intentionally not serialized: counters must not see the
+	// system stock (anti-fraud). Use the check-count endpoint for under/over hints.
+	SystemQty float64  `json:"-"`
+	WeightKg  *float64 `json:"weight_kg"`
 	// RawMaterialType is only populated for Raw Material uniqs (e.g. "wire",
 	// "sheet_plate", "ssp", "others") and is empty for other inventory types.
 	// The frontend uses it to show the Weight input for "wire".
@@ -182,4 +184,19 @@ type AuditLogItem struct {
 type AuditLogListResponse struct {
 	Items      []AuditLogItem `json:"items"`
 	Pagination Pagination     `json:"pagination"`
+}
+
+// Count check statuses. "unknown" means no comparable system stock exists
+// (e.g. uniq not found, or Bulk WIP which has no stock baseline).
+const (
+	CountStatusLess    = "less"
+	CountStatusOver    = "over"
+	CountStatusMatch   = "match"
+	CountStatusUnknown = "unknown"
+)
+
+type CheckCountResult struct {
+	Key      string `json:"key"`
+	UniqCode string `json:"uniq_code"`
+	Status   string `json:"status"`
 }
