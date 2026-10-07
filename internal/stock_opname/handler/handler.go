@@ -47,6 +47,21 @@ func (h *HTTPHandler) ListUniqOptions(ctx *app.Context) *app.CostumeResponse {
 	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: resp}
 }
 
+// ListWarehouseItems returns the items of one warehouse (no system stock).
+func (h *HTTPHandler) ListWarehouseItems(ctx *app.Context) *app.CostumeResponse {
+	limit := 5000
+	if v := ctx.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	resp, err := h.svc.ListWarehouseItems(ctx.Request.Context(), stockModels.WarehouseItemsQuery{Type: ctx.Query("type"), Warehouse: ctx.Query("warehouse"), Q: ctx.Query("q"), Limit: limit})
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusOK, Message: http.StatusText(http.StatusOK), Data: resp}
+}
+
 // CheckCounts returns only under/over/match status per row; never the system qty.
 func (h *HTTPHandler) CheckCounts(ctx *app.Context) *app.CostumeResponse {
 	var req stockModels.CheckCountRequest
