@@ -61,6 +61,13 @@ type FormOptionsQuery struct {
 	Limit  int
 }
 
+type WarehouseItemsQuery struct {
+	Type      string
+	Warehouse string
+	Q         string
+	Limit     int
+}
+
 type HistoryLogsQuery struct {
 	Type     string
 	UniqCode string

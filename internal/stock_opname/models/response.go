@@ -200,3 +200,17 @@ type CheckCountResult struct {
 	UniqCode string `json:"uniq_code"`
 	Status   string `json:"status"`
 }
+
+// WarehouseItem is one row of the "count by warehouse" table. The remaining
+// system stock is intentionally absent (anti-fraud); KanbanQty is the kanban /
+// box standard qty and is read-only on the UI.
+type WarehouseItem struct {
+	UniqCode          string   `json:"uniq_code"`
+	PartNumber        *string  `json:"part_number"`
+	PartName          *string  `json:"part_name"`
+	UOM               *string  `json:"uom"`
+	WarehouseLocation string   `json:"warehouse_location"`
+	KanbanQty         *int     `json:"kanban_qty"`
+	WeightKg          *float64 `json:"weight_kg"`
+	RawMaterialType   string   `json:"raw_material_type"`
+}

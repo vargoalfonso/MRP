@@ -23,6 +23,7 @@ type IService interface {
 	GetStats(ctx context.Context, inventoryType string) (*stockModels.StockOpnameStats, error)
 	ListUniqOptions(ctx context.Context, q stockModels.FormOptionsQuery) ([]stockModels.UniqOption, error)
 	CheckCounts(ctx context.Context, req stockModels.CheckCountRequest) ([]stockModels.CheckCountResult, error)
+	ListWarehouseItems(ctx context.Context, q stockModels.WarehouseItemsQuery) ([]stockModels.WarehouseItem, error)
 	ResolvePackingOption(ctx context.Context, packing string) (*stockModels.PackingOption, error)
 	GetHistoryLogs(ctx context.Context, q stockModels.HistoryLogsQuery) (*stockModels.HistoryLogListResponse, error)
 	GetAuditLogs(ctx context.Context, sessionID int64, page, limit int) (*stockModels.AuditLogListResponse, error)
@@ -86,6 +87,28 @@ func (s *service) ListUniqOptions(ctx context.Context, q stockModels.FormOptions
 	items := make([]stockModels.UniqOption, 0, len(rows))
 	for i := range rows {
 		items = append(items, stockModels.UniqOption{UniqCode: rows[i].UniqCode, PartNumber: rows[i].PartNumber, PartName: rows[i].PartName, UOM: rows[i].UOM, SystemQty: rows[i].SystemQty, WeightKg: rows[i].WeightKg, RawMaterialType: rows[i].RawMaterialType})
+	}
+	return items, nil
+}
+
+// ListWarehouseItems lists every inventory row stored in a warehouse for the
+// "count by warehouse" table. The remaining system stock is never returned.
+func (s *service) ListWarehouseItems(ctx context.Context, q stockModels.WarehouseItemsQuery) ([]stockModels.WarehouseItem, error) {
+	inventoryType := normalizeInventoryType(q.Type)
+	if err := validateInventoryType(inventoryType); err != nil {
+		return nil, err
+	}
+	warehouse := strings.TrimSpace(q.Warehouse)
+	if warehouse == "" {
+		return nil, apperror.BadRequest("warehouse wajib diisi")
+	}
+	rows, err := adjuster.ListWarehouseItems(ctx, s.db, inventoryType, warehouse, q.Q, q.Limit)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]stockModels.WarehouseItem, 0, len(rows))
+	for i := range rows {
+		items = append(items, stockModels.WarehouseItem{UniqCode: rows[i].UniqCode, PartNumber: rows[i].PartNumber, PartName: rows[i].PartName, UOM: rows[i].UOM, WarehouseLocation: rows[i].WarehouseLocation, KanbanQty: rows[i].KanbanQty, WeightKg: rows[i].WeightKg, RawMaterialType: rows[i].RawMaterialType})
 	}
 	return items, nil
 }
