@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ganasa18/go-template/internal/initialpacking"
 	"github.com/ganasa18/go-template/internal/inventory/models"
 	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
@@ -230,6 +231,10 @@ type IRepository interface {
 	FindRawMaterialByKey(ctx context.Context, key string) (*invModels.RawMaterial, error)
 	CreateRawMaterial(ctx context.Context, rm *invModels.RawMaterial) error
 	BulkCreateRawMaterials(ctx context.Context, items []invModels.RawMaterial) error
+	// [initial-packing] Packing ID untuk stok awal (tanpa DN). Tidak mengubah stock_qty.
+	GenerateInitialPackings(ctx context.Context, uniqCode string, qty float64, createdBy string) (*initialpacking.Result, error)
+	EnsureInitialPackings(ctx context.Context, uniqCode string, createdBy string) (*initialpacking.Result, error)
+	BackfillInitialPackings(ctx context.Context, createdBy string) ([]initialpacking.Result, error)
 	UpdateRawMaterial(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.RawMaterial, error)
 	SoftDeleteRawMaterial(ctx context.Context, id int64, deletedBy string) error
 	GetMovementHistory(ctx context.Context, category, uniqCode string, f ListFilter) ([]HistoryRow, int64, error)
@@ -529,6 +534,18 @@ func (r *repo) BulkCreateRawMaterials(ctx context.Context, items []invModels.Raw
 			}),
 		}).
 		CreateInBatches(items, 100).Error
+}
+
+func (r *repo) GenerateInitialPackings(ctx context.Context, uniqCode string, qty float64, createdBy string) (*initialpacking.Result, error) {
+	return initialpacking.New(r.db).GenerateForQty(ctx, uniqCode, qty, createdBy)
+}
+
+func (r *repo) EnsureInitialPackings(ctx context.Context, uniqCode string, createdBy string) (*initialpacking.Result, error) {
+	return initialpacking.New(r.db).EnsureForStock(ctx, uniqCode, createdBy)
+}
+
+func (r *repo) BackfillInitialPackings(ctx context.Context, createdBy string) ([]initialpacking.Result, error) {
+	return initialpacking.New(r.db).Backfill(ctx, createdBy)
 }
 
 func (r *repo) UpdateRawMaterial(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.RawMaterial, error) {

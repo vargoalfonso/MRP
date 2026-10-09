@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/ganasa18/go-template/internal/action_ui/dto"
 	"github.com/ganasa18/go-template/internal/action_ui/models"
 	"github.com/ganasa18/go-template/internal/action_ui/repository"
+	"github.com/ganasa18/go-template/internal/initialpacking"
 	scrapModels "github.com/ganasa18/go-template/internal/scrap_stock/models"
 	woModels "github.com/ganasa18/go-template/internal/work_order/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
@@ -2103,7 +2105,7 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 // NEW — Lookup RM (Scan RM 2.2)
 // =====================================
 func (s *service) RawMaterialLookup(ctx context.Context, code string) (*dto.RawMaterialLookupResponse, error) {
-	codeStr := strings.TrimSpace(code)
+	codeStr := extractPackingFromQR(strings.TrimSpace(code))
 
 	derefStr := func(p *string) string {
 		if p == nil {
@@ -2142,6 +2144,14 @@ func (s *service) RawMaterialLookup(ctx context.Context, code string) (*dto.RawM
 	// 3. Try to find as master RM
 	rm, err := s.repoProduction.FindRawMaterialByCode(ctx, searchCode)
 	if err == nil {
+		// [initial-packing] RM bertock tapi belum punya Packing ID (opening stock
+		// yang di-inject tanpa DN): buat Initial Packing otomatis supaya langsung
+		// bisa dipakai/scan. Idempotent dan tidak mengubah stock_qty.
+		if rm.StockQty > 0 && s.db != nil {
+			if _, perr := initialpacking.New(s.db).EnsureForStock(ctx, rm.UniqCode, "system"); perr != nil {
+				log.Printf("[initial-packing] auto-generate %s gagal: %v", rm.UniqCode, perr)
+			}
+		}
 		var weight float64
 		if rm.StockWeightKg != nil {
 			weight = *rm.StockWeightKg
@@ -2181,6 +2191,25 @@ func (s *service) RawMaterialLookup(ctx context.Context, code string) (*dto.RawM
 
 	// Return original error if not found anywhere
 	return nil, err
+}
+
+// extractPackingFromQR membaca isi QR label packing berformat
+// "DN:<dn> | PACKING:<packing>" (atau dengan "| WO:<wo>") dan mengembalikan
+// nomor packing-nya. Kode biasa (uniq/packing polos) dikembalikan apa adanya.
+func extractPackingFromQR(code string) string {
+	const marker = "PACKING:"
+	idx := strings.Index(strings.ToUpper(code), marker)
+	if idx < 0 {
+		return code
+	}
+	rest := code[idx+len(marker):]
+	if cut := strings.Index(rest, "|"); cut >= 0 {
+		rest = rest[:cut]
+	}
+	if rest = strings.TrimSpace(rest); rest != "" {
+		return rest
+	}
+	return code
 }
 
 func rawMaterialTypeLabel(t string) string {

@@ -117,6 +117,54 @@ func (h *HTTPHandler) BulkCreateRawMaterials(ctx *app.Context) *app.CostumeRespo
 	}
 }
 
+// EnsureInitialPackings membuat Initial Packing untuk satu RM yang bertock
+// tetapi belum punya Packing ID. Tidak mengubah stock_qty.
+//
+//	POST /api/v1/inventory/raw-materials/:id/initial-packings
+func (h *HTTPHandler) EnsureInitialPackings(ctx *app.Context) *app.CostumeResponse {
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	data, err := h.svc.EnsureInitialPackings(ctx.Request.Context(), ctx.Param("id"), userCtx.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data:      data,
+	}
+}
+
+// BackfillInitialPackings membuat Initial Packing untuk semua RM bertock yang
+// belum punya packing (opening stock lama yang sudah terlanjur di-inject).
+//
+//	POST /api/v1/inventory/raw-materials/backfill-initial-packings
+func (h *HTTPHandler) BackfillInitialPackings(ctx *app.Context) *app.CostumeResponse {
+	userCtx := userPkg.MustExtractUserContext(ctx)
+	results, err := h.svc.BackfillInitialPackings(ctx.Request.Context(), userCtx.UserID)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	created, skipped := 0, 0
+	for _, r := range results {
+		if r.Created > 0 {
+			created++
+		} else {
+			skipped++
+		}
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   "OK",
+		Data: map[string]interface{}{
+			"rm_with_new_packing": created,
+			"rm_skipped":          skipped,
+			"results":             results,
+		},
+	}
+}
+
 // GetRawMaterialByID returns a single RM record.
 //
 //	GET /api/v1/inventory/raw-materials/:id
@@ -197,6 +245,7 @@ func (h *HTTPHandler) DeleteRawMaterial(ctx *app.Context) *app.CostumeResponse {
 // GetRawMaterialHistory returns movement log for a single RM record.
 //
 //	GET /api/v1/inventory/raw-materials/:id/history?limit=20&page=1
+//
 // [rm-key] rmFallbackKey membaca ?uniq= / ?uniq_code= sebagai kunci cadangan
 // ketika :id tidak ketemu di tabel raw_materials.
 func rmFallbackKey(ctx *app.Context, key string) string {

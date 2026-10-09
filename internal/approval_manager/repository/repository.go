@@ -202,6 +202,7 @@ func approvalManagerBaseQuery(filterType, status, search string, currentLevel in
 			COALESCE(dn.created_by, '') AS submitted_by_name,
 			dn.created_at::text AS submitted_at
 		FROM delivery_notes dn
+		WHERE COALESCE(dn.is_opening, FALSE) = FALSE
 		UNION ALL
   SELECT
   'Work Order' AS action_name,
