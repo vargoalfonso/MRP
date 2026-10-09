@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
 	"math"
 	"strings"
 	"time"
 
+	"github.com/ganasa18/go-template/internal/initialpacking"
 	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	"github.com/ganasa18/go-template/internal/inventory/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
@@ -36,6 +38,9 @@ type IService interface {
 	GetRawMaterialByKey(ctx context.Context, key string) (*invModels.RawMaterial, error)
 	GetRawMaterialHistoryByKey(ctx context.Context, key string, p pagination.PaginationInput) (*invModels.HistoryLogResponse, error)
 	CreateRawMaterial(ctx context.Context, req invModels.CreateRawMaterialRequest, createdBy string) (*invModels.RawMaterialItem, error)
+	// [initial-packing] buat Packing ID untuk RM bertock yang belum punya packing.
+	EnsureInitialPackings(ctx context.Context, key string, createdBy string) (*initialpacking.Result, error)
+	BackfillInitialPackings(ctx context.Context, createdBy string) ([]initialpacking.Result, error)
 	BulkCreateRawMaterials(ctx context.Context, req invModels.BulkCreateRawMaterialRequest, createdBy string) (int, error)
 	UpdateRawMaterial(ctx context.Context, id int64, req invModels.UpdateRawMaterialRequest, updatedBy string) (*invModels.RawMaterial, error)
 	DeleteRawMaterial(ctx context.Context, id int64, deletedBy string) error
@@ -219,6 +224,7 @@ func (s *service) CreateRawMaterial(ctx context.Context, req invModels.CreateRaw
 	if err := s.repo.CreateRawMaterial(ctx, &rm); err != nil {
 		return nil, err
 	}
+	s.generateOpeningPackings(ctx, rm.UniqCode, rm.StockQty, createdBy)
 	s.writeMovementLog(ctx, MovementLogInput{
 		Category:     "raw_material",
 		MovementType: "incoming",
@@ -290,6 +296,9 @@ func (s *service) BulkCreateRawMaterials(ctx context.Context, req invModels.Bulk
 		return 0, err
 	}
 	for _, rm := range items {
+		s.generateOpeningPackings(ctx, rm.UniqCode, rm.StockQty, createdBy)
+	}
+	for _, rm := range items {
 		rmCopy := rm
 		s.writeMovementLog(ctx, MovementLogInput{
 			Category:     "raw_material",
@@ -303,6 +312,31 @@ func (s *service) BulkCreateRawMaterials(ctx context.Context, req invModels.Bulk
 		})
 	}
 	return len(items), nil
+}
+
+// generateOpeningPackings membuat Initial Packing untuk stok yang baru di-inject.
+// Kegagalan hanya di-log: inject stok sudah sukses dan scan produksi akan
+// membuat packing otomatis (EnsureInitialPackings) bila baris ini belum ada.
+func (s *service) generateOpeningPackings(ctx context.Context, uniqCode string, qty float64, createdBy string) {
+	if qty <= 0 {
+		return
+	}
+	if _, err := s.repo.GenerateInitialPackings(ctx, uniqCode, qty, createdBy); err != nil {
+		log.Printf("[initial-packing] gagal generate packing untuk %s (qty %.4f): %v", uniqCode, qty, err)
+	}
+}
+
+// EnsureInitialPackings: key boleh id numerik, uniq_code, atau uuid.
+func (s *service) EnsureInitialPackings(ctx context.Context, key string, createdBy string) (*initialpacking.Result, error) {
+	rm, err := s.repo.FindRawMaterialByKey(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.EnsureInitialPackings(ctx, rm.UniqCode, createdBy)
+}
+
+func (s *service) BackfillInitialPackings(ctx context.Context, createdBy string) ([]initialpacking.Result, error) {
+	return s.repo.BackfillInitialPackings(ctx, createdBy)
 }
 
 func (s *service) UpdateRawMaterial(ctx context.Context, id int64, req invModels.UpdateRawMaterialRequest, updatedBy string) (*invModels.RawMaterial, error) {

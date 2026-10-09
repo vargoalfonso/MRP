@@ -50,6 +50,8 @@ func NewHTTPModule(
 //	GET    /raw-materials                  list + stats cards
 //	POST   /raw-materials                  create
 //	POST   /raw-materials/bulk             bulk create
+//	POST   /raw-materials/backfill-initial-packings  buat Packing ID utk opening stock lama
+//	POST   /raw-materials/:id/initial-packings       buat Packing ID utk satu RM
 //	GET    /raw-materials/incoming         incoming RM scan list (Action UI tab)
 //	GET    /raw-materials/packing-list     packing list per uniq_code (WO barcode)
 //	GET    /raw-materials/:id              detail
@@ -103,6 +105,9 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	rm.GET("", perm("inventory", "view"), m.base.RunAction(m.handler.ListRawMaterials))
 	rm.POST("", perm("inventory", "create"), m.base.RunAction(m.handler.CreateRawMaterial))
 	rm.POST("/bulk", perm("inventory", "create"), m.base.RunAction(m.handler.BulkCreateRawMaterials))
+	// [initial-packing] Packing ID untuk opening stock (tanpa DN)
+	rm.POST("/backfill-initial-packings", perm("inventory", "create"), m.base.RunAction(m.handler.BackfillInitialPackings))
+	rm.POST("/:id/initial-packings", perm("inventory", "create"), m.base.RunAction(m.handler.EnsureInitialPackings))
 	// NOTE: static sub-routes (/incoming) must be registered before /:id
 	rm.GET("/incoming", perm("inventory", "view"), m.base.RunAction(m.handler.ListIncomingRM))
 	// [packing-list] packing/kanban hasil scan barcode work order (harus sebelum /:id)
