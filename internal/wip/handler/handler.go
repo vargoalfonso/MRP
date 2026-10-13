@@ -32,7 +32,9 @@ func (h *HTTPHandler) GetAll(appCtx *app.Context) *app.CostumeResponse {
 		limit = 10
 	}
 
-	data, total, err := h.service.GetAll(appCtx.Request.Context(), page, limit)
+	includeDone, _ := strconv.ParseBool(appCtx.Query("include_done"))
+
+	data, total, err := h.service.GetAll(appCtx.Request.Context(), page, limit, includeDone)
 	if err != nil {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
