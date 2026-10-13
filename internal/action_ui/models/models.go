@@ -178,8 +178,10 @@ type ProcessFlow struct {
 	OpSeq        int     `json:"op_seq"`
 	ProcessName  string  `json:"process_name"`
 	MachineName  *string `json:"machine_name"`
-	CycleTimeSec int     `json:"cycle_time_sec"`
-	SetupTimeMin int     `json:"setup_time_min"`
+	// Routing menyimpan nilai desimal (mis. 12.5). Dengan tipe int, json.Unmarshal
+	// gagal sehingga Poka Yoke jatuh ke fallback 1 proses saja.
+	CycleTimeSec *float64 `json:"cycle_time_sec"`
+	SetupTimeMin *float64 `json:"setup_time_min"`
 }
 
 type RawMaterialLog struct {

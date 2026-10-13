@@ -66,6 +66,19 @@ func movementReasonLabel(movementType string) string {
 	switch movementType {
 	case "incoming_production":
 		return "Incoming Production"
+	// [fg-history] pergerakan dari action-ui (Production & QC Process)
+	case "production_usage":
+		return "Used in Production (Assembly)"
+	case "qc_final":
+		return "QC Final (Pass)"
+	case "qc_ng_rework":
+		return "QC NG → Rework"
+	case "qc_scrap":
+		return "QC Scrap"
+	case "qc_adjustment":
+		return "QC Adjustment"
+	case "outgoing":
+		return "Outgoing"
 	case "delivery_scan":
 		return "Delivery Notes"
 	case "manual_add":

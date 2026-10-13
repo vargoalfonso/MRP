@@ -639,7 +639,8 @@ func (h *HTTPHandler) RMRepack(ctx *app.Context) *app.CostumeResponse {
 	}
 }
 
-// GET /api/v1/action-ui/production/rm-packing-list?rm_uuid=..&code=..
+// GET /api/v1/action-ui/production/rm-packing-list?rm_uuid=..&code=..&source=fg
+// [assembly-fg] source=fg -> kanban Finished Goods child UNIQ (WO Assembly).
 // Dipakai modal Repacking untuk menampilkan packing/kanban milik satu Raw Material.
 func (h *HTTPHandler) RMPackingList(ctx *app.Context) *app.CostumeResponse {
 	rmUUID := ctx.Query("rm_uuid")
@@ -652,7 +653,7 @@ func (h *HTTPHandler) RMPackingList(ctx *app.Context) *app.CostumeResponse {
 		}
 	}
 
-	result, err := h.svc.RMPackingList(ctx.Request.Context(), rmUUID, code)
+	result, err := h.svc.RMPackingList(ctx.Request.Context(), rmUUID, code, ctx.Query("source"))
 	if err != nil {
 		return &app.CostumeResponse{
 			RequestID: ctx.APIReqID,
