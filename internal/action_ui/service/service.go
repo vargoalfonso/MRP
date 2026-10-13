@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type IService interface {
@@ -225,9 +226,16 @@ func (s *service) ScanContextMachine(ctx context.Context, machineID string) (*mo
 	return &machine, nil
 }
 
+// [concurrency] Scan In dijalankan dalam SATU transaksi dengan baris kanban
+// dikunci, sehingga dua gadget yang menekan bersamaan diproses bergantian dan
+// tidak ada data setengah tersimpan bila terjadi error.
 func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
+	return s.inTx(ctx, func(t *service) error { return t.scanIn(ctx, req) })
+}
 
-	item, err := s.repoProduction.FindWOItemByID(ctx, req.WOItemID)
+func (s *service) scanIn(ctx context.Context, req dto.ScanInRequest) error {
+
+	item, err := s.lockWOItem(ctx, req.WOItemID)
 	if err != nil {
 		return errors.New("wo item tidak ditemukan")
 	}
@@ -246,6 +254,10 @@ func (s *service) ScanIn(ctx context.Context, req dto.ScanInRequest) error {
 	// =====================================
 	// VALIDASI
 	// =====================================
+	if err := checkExpectedState(item, currentIndex, req.ExpectedStep, req.ExpectedScanInCount, nil); err != nil {
+		return err
+	}
+
 	if item.Status == "FINISHED" || item.Status == "DONE" {
 		return errors.New("item already finished")
 	}
@@ -504,9 +516,15 @@ func (s *service) createQCTaskIfNeeded(ctx context.Context, item models.WorkOrde
 	return s.repoProduction.CreateQC(ctx, &qc)
 }
 
+// [concurrency] Scan Out (log, pemotongan stok RM/FG/packing, kenaikan step,
+// WIP/FG) dijalankan dalam SATU transaksi dengan baris kanban dikunci.
 func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
+	return s.inTx(ctx, func(t *service) error { return t.scanOut(ctx, req) })
+}
 
-	item, err := s.repoProduction.FindWOItemByID(ctx, req.WOItemID)
+func (s *service) scanOut(ctx context.Context, req dto.ScanOutRequest) error {
+
+	item, err := s.lockWOItem(ctx, req.WOItemID)
 	if err != nil {
 		return errors.New("wo item tidak ditemukan")
 	}
@@ -518,6 +536,10 @@ func (s *service) ScanOut(ctx context.Context, req dto.ScanOutRequest) error {
 	totalStep := len(flow)
 	currentIndex := getCurrentIndex(item.CurrentStepSeq, totalStep)
 	currentProcess := flow[currentIndex].ProcessName
+
+	if err := checkExpectedState(item, currentIndex, req.ExpectedStep, nil, req.ExpectedScanOutCount); err != nil {
+		return err
+	}
 
 	// =====================================
 	// VALIDASI BASIC
@@ -1213,7 +1235,8 @@ func (s *service) advanceProcessAfterQCFinish(ctx context.Context, tx *gorm.DB, 
 	incomingNotes := fmt.Sprintf("Hasil produksi kanban %s (Scan Out proses terakhir: %s)",
 		item.KanbanNumber, currentStep.ProcessName)
 	var fg models.FinishedGoods
-	errFG := tx.Where("uniq_code = ?", item.ItemUniqCode).First(&fg).Error
+	errFG := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("uniq_code = ?", item.ItemUniqCode).First(&fg).Error
 	if errors.Is(errFG, gorm.ErrRecordNotFound) {
 		fg = models.FinishedGoods{
 			UUID:       uuid.New().String(),
@@ -1412,7 +1435,8 @@ func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, perform
 
 		// ===== GET QC TASK (production_qc, belum done) =====
 		var task models.QCTask
-		if err := tx.
+		// [concurrency] kunci task: QC Finish ganda dari dua gadget ditolak.
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where(`
 				id = ?
 				AND wo_id = ?
@@ -3113,6 +3137,7 @@ func (s *service) ScanOutContext(
 		}
 		logs = dedupRawMaterialLogs(logs)
 		fgChildren := s.assemblyFGChildren(ctx, wo.WOType, item.ItemUniqCode)
+		itemQPU := s.itemQPU(ctx, item)
 
 		uuids := make([]string, 0, len(logs))
 		codes := make([]string, 0, len(logs))
@@ -3233,7 +3258,7 @@ func (s *service) ScanOutContext(
 				PackingListRM:  packing,
 				MaterialCode:   materialCode,
 				Form:           form,
-				QtyPerUniq:     bm.QtyPerUniq,
+				QtyPerUniq:     rowQPU(bm.QtyPerUniq, itemQPU, isFG, isWIP),
 				SpecWeightKg:   specWeight,
 				TypeLabel:      typeLabel,
 				IsWIP:          isWIP,
@@ -3964,6 +3989,7 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 	for code, c := range fgChildren {
 		bomMap[code] = c
 	}
+	itemQPU := s.itemQPU(ctx, item)
 	rms := make([]dto.ScanOutContextRawMaterial, 0, len(logs))
 	for _, l := range logs {
 		meta, ok := metaByUUID[l.RMUUID]
@@ -4044,7 +4070,7 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 			PackingListRM:  packing,
 			MaterialCode:   materialCode,
 			Form:           form,
-			QtyPerUniq:     bm.QtyPerUniq,
+			QtyPerUniq:     rowQPU(bm.QtyPerUniq, itemQPU, isFG, isWIP),
 			SpecWeightKg:   specWeight,
 			TypeLabel:      typeLabel,
 			IsWIP:          isWIP,
@@ -4152,6 +4178,16 @@ func (s *service) resolveRMUniqCode(ctx context.Context, rmUUID, code string) st
 // Qty yang melebihi slot packing tujuan ditolak; frontend menawarkan opsi
 // scan packing lain atau menyimpan sisanya di packing asal.
 func (s *service) RMRepack(ctx context.Context, req dto.RMRepackRequest) (*dto.RMRepackResponse, error) {
+	var out *dto.RMRepackResponse
+	err := s.inTx(ctx, func(t *service) error {
+		var e error
+		out, e = t.rmRepack(ctx, req)
+		return e
+	})
+	return out, err
+}
+
+func (s *service) rmRepack(ctx context.Context, req dto.RMRepackRequest) (*dto.RMRepackResponse, error) {
 	type packSlot struct {
 		current float64
 		max     float64
@@ -4182,6 +4218,20 @@ func (s *service) RMRepack(ctx context.Context, req dto.RMRepackRequest) (*dto.R
 		if uniqCode == "" {
 			return nil, apperror.BadRequest("raw material tidak ditemukan")
 		}
+		rows, err = s.repoProduction.ListRMPackingList(ctx, uniqCode)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// [concurrency] kunci semua packing UNIQ ini, lalu baca ulang slot terbaru
+	// supaya validasi tidak memakai qty yang sudah diubah gadget lain.
+	if err := s.lockPackingRows(ctx, uniqCode); err != nil {
+		return nil, err
+	}
+	if isFGSource(req.Source) {
+		rows, err = s.repoProduction.ListFGPackingList(ctx, uniqCode)
+	} else {
 		rows, err = s.repoProduction.ListRMPackingList(ctx, uniqCode)
 	}
 	if err != nil {
@@ -4491,4 +4541,93 @@ func (s *service) withScanProgress(ctx context.Context, item models.WorkOrderIte
 		}
 	}
 	return steps
+}
+
+// ================================
+// [concurrency] transaksi & penguncian untuk pemakaian multi-gadget
+// ================================
+
+// inTx menjalankan fn dengan salinan service yang semua akses DB-nya (s.db
+// dan repoProduction) memakai transaksi yang sama. Transaksi bersarang di
+// dalam fn otomatis menjadi SAVEPOINT.
+func (s *service) inTx(ctx context.Context, fn func(t *service) error) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		t := *s
+		t.db = tx
+		t.repoProduction = repository.NewProductionRepository(tx)
+		return fn(&t)
+	})
+}
+
+// lockWOItem membaca kanban dengan SELECT ... FOR UPDATE. Request lain untuk
+// kanban yang sama menunggu sampai transaksi ini selesai, lalu membaca data
+// terbaru (bukan data lama).
+func (s *service) lockWOItem(ctx context.Context, id int64) (models.WorkOrderItem, error) {
+	var item models.WorkOrderItem
+	err := s.db.WithContext(ctx).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("id = ?", id).
+		First(&item).Error
+	return item, err
+}
+
+// lockPackingRows mengunci semua packing (DN item & kanban WO) milik satu UNIQ.
+func (s *service) lockPackingRows(ctx context.Context, uniqCode string) error {
+	if strings.TrimSpace(uniqCode) == "" {
+		return nil
+	}
+	var ids []int64
+	if err := s.db.WithContext(ctx).Raw(
+		`SELECT id FROM delivery_note_items WHERE item_uniq_code = ? ORDER BY id FOR UPDATE`, uniqCode,
+	).Scan(&ids).Error; err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Raw(
+		`SELECT id FROM work_order_items WHERE item_uniq_code = ? ORDER BY id FOR UPDATE`, uniqCode,
+	).Scan(&ids).Error
+}
+
+// errStaleKanban dikembalikan bila kanban sudah berubah oleh gadget lain.
+const errStaleKanbanMsg = "Kanban ini sudah diproses dari gadget lain. Muat ulang halaman untuk melihat data terbaru."
+
+// checkExpectedState membandingkan kondisi kanban yang dilihat gadget dengan
+// kondisi di DB. Nilai nil = tidak dicek (klien lama).
+func checkExpectedState(item models.WorkOrderItem, currentIndex int, expStep, expScanIn, expScanOut *int) error {
+	if expStep != nil && *expStep > 0 && *expStep != currentIndex+1 {
+		return apperror.Conflict(errStaleKanbanMsg)
+	}
+	if expScanIn != nil && *expScanIn != item.ScanInCount {
+		return apperror.Conflict(errStaleKanbanMsg)
+	}
+	if expScanOut != nil && *expScanOut != item.ScanOutCount {
+		return apperror.Conflict(errStaleKanbanMsg)
+	}
+	return nil
+}
+
+// ================================
+// [qpu-autocalc] QPU untuk hitung otomatis Qty Aktual Dipakai di Step 2
+// ================================
+
+// itemQPU = QPU UNIQ kanban ini di BOM (sebagai child). UNIQ parent / root
+// tidak punya QPU di BOM, sehingga dipakai 1.
+func (s *service) itemQPU(ctx context.Context, item models.WorkOrderItem) float64 {
+	qpu, found, err := s.repoProduction.FindItemQPU(ctx, item.WOID, item.ItemUniqCode)
+	if err != nil {
+		log.Printf("[qpu-autocalc] QPU %s: %v", item.ItemUniqCode, err)
+	}
+	if !found || qpu <= 0 {
+		return 1
+	}
+	return qpu
+}
+
+// rowQPU: material Raw Material (Material Spec milik UNIQ kanban sendiri)
+// memakai QPU UNIQ kanban. Baris WIP / child Finished Goods tetap memakai
+// nilai lama (QPU baris BOM-nya).
+func rowQPU(bomQPU, itemQPU float64, isFG, isWIP bool) float64 {
+	if isFG || isWIP {
+		return bomQPU
+	}
+	return itemQPU
 }

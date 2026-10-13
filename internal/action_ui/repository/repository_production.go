@@ -94,6 +94,9 @@ type IProductionRepository interface {
 	FindAssemblyChildrenByUniq(ctx context.Context, uniq string) ([]AssemblyChildRow, error)
 	// [assembly-fg] kanban Finished Goods (kanban WO yang sudah FINISHED) satu UNIQ.
 	ListFGPackingList(ctx context.Context, uniqCode string) ([]RMPackingRow, error)
+	// [qpu-autocalc] QPU (qty_per_uniq) UNIQ sebagai child di BOM; found=false
+	// bila UNIQ tidak pernah jadi child (parent / root).
+	FindItemQPU(ctx context.Context, woID int64, uniq string) (qpu float64, found bool, err error)
 }
 
 // BomMaterialRow = hasil query flatten BOM tree untuk kebutuhan Action UI.
@@ -1080,33 +1083,75 @@ func (r *productionRepo) DeductPackingQty(ctx context.Context, itemUniqCode, pac
 		return nil
 	}
 	// [packing-guard] Tolak over-deduction: bila qty yang diminta melebihi stok
-	// berjalan packing, kembalikan error alih-alih diam-diam floor ke 0. Ini
-	// mencegah alokasi packing yang sama ke banyak kanban (auto-apply Step 1
-	// POKA YOKE) menghabiskan stok tanpa peringatan.
-	// [assembly-fg] Stok berjalan dibaca dari DN item, atau dari kanban WO bila
-	// packing tsb bukan DN item (mis. kanban Finished Goods child UNIQ). Dulu
-	// hanya DN item yang dicek, sehingga kanban WO selalu dianggap stok 0.
-	if cur, found, e := r.SumLivePackingQty(ctx, itemUniqCode, []string{packingNumber}); e == nil && found {
-		if deductQty > cur+1e-6 {
-			return fmt.Errorf("stok packing %s tidak cukup: butuh %.4f, tersedia %.4f", packingNumber, deductQty, cur)
-		}
-	}
-	err := r.db.WithContext(ctx).Exec(`
-		UPDATE delivery_note_items
-		SET qty_opname = GREATEST(COALESCE(qty_opname, quantity, 0) - ?, 0),
-		    qty_opname_at = ?,
-		    updated_at = ?
-		WHERE item_uniq_code = ? AND packing_number = ?
-	`, deductQty, at, at, itemUniqCode, packingNumber).Error
-	if err != nil {
+	// berjalan packing, kembalikan error alih-alih diam-diam floor ke 0.
+	// [concurrency] Cek & potong dilakukan dalam SATU perintah UPDATE bersyarat
+	// (atomik, baris terkunci selama transaksi), sehingga dua gadget yang
+	// memotong packing yang sama tidak bisa sama-sama lolos cek stok.
+	// Batas minimal stok dihitung di Go: "? - ?" di SQL membuat Postgres tidak
+	// bisa menentukan tipe kedua parameter (SQLSTATE 42725).
+	const eps = 1e-6
+	minLive := deductQty - eps
+	db := r.db.WithContext(ctx)
+
+	// 1) Packing dari DN item (raw material).
+	var dnRows int64
+	if err := db.Raw(`SELECT COUNT(*) FROM delivery_note_items WHERE item_uniq_code = ? AND packing_number = ?`,
+		itemUniqCode, packingNumber).Scan(&dnRows).Error; err != nil {
 		return err
 	}
-	return r.db.WithContext(ctx).Exec(`
+	if dnRows > 0 {
+		res := db.Exec(`
+			UPDATE delivery_note_items
+			SET qty_opname = COALESCE(qty_opname, quantity, 0) - ?,
+			    qty_opname_at = ?,
+			    updated_at = ?
+			WHERE item_uniq_code = ? AND packing_number = ?
+			  AND COALESCE(qty_opname, quantity, 0) >= ?
+		`, deductQty, at, at, itemUniqCode, packingNumber, minLive)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return r.packingShortErr(ctx, itemUniqCode, packingNumber, deductQty)
+		}
+		// Kanban WO dengan nomor yang sama ikut disesuaikan (perilaku lama).
+		return db.Exec(`
+			UPDATE work_order_items
+			SET qty_opname = GREATEST(`+woKanbanLiveQtySQL+` - ?, 0),
+			    updated_at = ?
+			WHERE item_uniq_code = ? AND kanban_number = ?
+		`, deductQty, at, itemUniqCode, packingNumber).Error
+	}
+
+	// 2) Packing berupa kanban WO (mis. kanban Finished Goods child UNIQ).
+	var woRows int64
+	if err := db.Raw(`SELECT COUNT(*) FROM work_order_items WHERE item_uniq_code = ? AND kanban_number = ?`,
+		itemUniqCode, packingNumber).Scan(&woRows).Error; err != nil {
+		return err
+	}
+	if woRows == 0 {
+		return nil // packing tidak dikenal: tidak ada yang dipotong (perilaku lama)
+	}
+	res := db.Exec(`
 		UPDATE work_order_items
-		SET qty_opname = GREATEST(`+woKanbanLiveQtySQL+` - ?, 0),
+		SET qty_opname = `+woKanbanLiveQtySQL+` - ?,
 		    updated_at = ?
 		WHERE item_uniq_code = ? AND kanban_number = ?
-	`, deductQty, at, itemUniqCode, packingNumber).Error
+		  AND `+woKanbanLiveQtySQL+` >= ?
+	`, deductQty, at, itemUniqCode, packingNumber, minLive)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return r.packingShortErr(ctx, itemUniqCode, packingNumber, deductQty)
+	}
+	return nil
+}
+
+// packingShortErr menyusun pesan stok packing tidak cukup dengan qty terbaru.
+func (r *productionRepo) packingShortErr(ctx context.Context, itemUniqCode, packingNumber string, need float64) error {
+	cur, _, _ := r.SumLivePackingQty(ctx, itemUniqCode, []string{packingNumber})
+	return fmt.Errorf("stok packing %s tidak cukup: butuh %.4f, tersedia %.4f (mungkin sudah dipakai dari gadget lain)", packingNumber, need, cur)
 }
 
 // [repack-sisa] AddPackingQty menambah qty berjalan (qty_opname) satu packing
@@ -1281,4 +1326,35 @@ func (r *productionRepo) ListFGPackingList(ctx context.Context, uniqCode string)
 		rows = []RMPackingRow{}
 	}
 	return rows, nil
+}
+
+// FindItemQPU mengambil QPU (bom_lines.qty_per_uniq) UNIQ sebagai child pada
+// BOM aktif. Bila UNIQ jadi child di beberapa BOM, diutamakan BOM yang
+// parent-nya ada di WO yang sama, lalu BOM terbaru.
+func (r *productionRepo) FindItemQPU(ctx context.Context, woID int64, uniq string) (float64, bool, error) {
+	uniq = strings.TrimSpace(uniq)
+	if uniq == "" {
+		return 0, false, nil
+	}
+	var rows []struct {
+		QPU float64 `gorm:"column:qpu"`
+	}
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT bl.qty_per_uniq AS qpu
+		FROM bom_lines bl
+		JOIN bom_item bi ON bi.id = bl.bom_item_id AND bi.is_current
+		JOIN items c ON c.id = bl.child_item_id AND c.deleted_at IS NULL
+		JOIN items p ON p.id = bl.parent_item_id
+		WHERE c.uniq_code = ?
+		ORDER BY (p.uniq_code IN (SELECT item_uniq_code FROM work_order_items WHERE wo_id = ?)) DESC,
+		         bi.id DESC, bl.id DESC
+		LIMIT 1
+	`, uniq, woID).Scan(&rows).Error
+	if err != nil {
+		return 0, false, apperror.InternalWrap("FindItemQPU", err)
+	}
+	if len(rows) == 0 || rows[0].QPU <= 0 {
+		return 0, false, nil
+	}
+	return rows[0].QPU, true, nil
 }

@@ -70,6 +70,12 @@ type ScanInRequest struct {
 	IsWIP                bool   `json:"is_wip"`
 
 	RawMaterials []RawMaterialInput `json:"raw_materials"`
+
+	// [concurrency] kondisi kanban yang sedang dilihat gadget. Bila berbeda
+	// dengan DB (sudah diproses gadget lain), request ditolak. Opsional agar
+	// klien lama tetap jalan.
+	ExpectedStep        *int `json:"expected_step,omitempty"`
+	ExpectedScanInCount *int `json:"expected_scan_in_count,omitempty"`
 }
 
 type ScanOutRequest struct {
@@ -90,6 +96,10 @@ type ScanOutRequest struct {
 
 	TotalProduction float64              `json:"total_production"`
 	RawMaterials    []ScanOutRawMaterial `json:"raw_materials"`
+
+	// [concurrency] lihat ScanInRequest.
+	ExpectedStep         *int `json:"expected_step,omitempty"`
+	ExpectedScanOutCount *int `json:"expected_scan_out_count,omitempty"`
 }
 
 type CompleteWORequest struct {

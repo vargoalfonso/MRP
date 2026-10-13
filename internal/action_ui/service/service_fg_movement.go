@@ -10,6 +10,7 @@ import (
 	"github.com/ganasa18/go-template/internal/action_ui/dto"
 	"github.com/ganasa18/go-template/internal/action_ui/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Jenis pergerakan Finished Goods dari action-ui. Label tampilnya dipetakan di
@@ -92,7 +93,9 @@ func (s *service) applyFGMoves(tx *gorm.DB, uniq, woNumber, performedBy string, 
 		return nil
 	}
 	var fg models.FinishedGoods
-	if err := tx.Where("uniq_code = ?", uniq).First(&fg).Error; err != nil {
+	// [concurrency] kunci baris FG: dua transaksi tidak saling menimpa stok.
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("uniq_code = ?", uniq).First(&fg).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil // belum ada FG untuk UNIQ ini: tidak ada yang dicatat
 		}
