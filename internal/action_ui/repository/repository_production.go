@@ -90,6 +90,10 @@ type IProductionRepository interface {
 	DeleteScanInDraft(ctx context.Context, woID, woItemID int64, currentStep int) error
 	// [repack-sisa] tambah qty packing tujuan saat repacking sisa material.
 	AddPackingQty(ctx context.Context, itemUniqCode, packingNumber string, addQty float64, at time.Time) error
+	// [assembly-fg] children level 1 dari BOM UNIQ parent + stok Finished Goods.
+	FindAssemblyChildrenByUniq(ctx context.Context, uniq string) ([]AssemblyChildRow, error)
+	// [assembly-fg] kanban Finished Goods (kanban WO yang sudah FINISHED) satu UNIQ.
+	ListFGPackingList(ctx context.Context, uniqCode string) ([]RMPackingRow, error)
 }
 
 // BomMaterialRow = hasil query flatten BOM tree untuk kebutuhan Action UI.
@@ -927,18 +931,30 @@ func (r *productionRepo) SumLivePackingQty(ctx context.Context, itemUniqCode str
 	if len(cleaned) == 0 {
 		return 0, false, nil
 	}
+	uniq := strings.TrimSpace(itemUniqCode)
 	var res struct {
 		Total float64 `gorm:"column:total"`
 		Cnt   int64   `gorm:"column:cnt"`
 	}
-	q := r.db.WithContext(ctx).
-		Table("delivery_note_items").
-		Select("COALESCE(SUM(COALESCE(qty_opname, quantity, 0)), 0) AS total, COUNT(*) AS cnt").
-		Where("packing_number IN ?", cleaned)
-	if strings.TrimSpace(itemUniqCode) != "" {
-		q = q.Where("item_uniq_code = ?", strings.TrimSpace(itemUniqCode))
-	}
-	if err := q.Scan(&res).Error; err != nil {
+	// [assembly-fg] Selain DN item, ikut hitung kanban WO (mis. kanban Finished
+	// Goods child UNIQ) yang tidak tercatat sebagai DN item.
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(q), 0) AS total, COUNT(*) AS cnt FROM (
+			SELECT COALESCE(dni.qty_opname, dni.quantity, 0) AS q
+			FROM delivery_note_items dni
+			WHERE dni.packing_number IN ?
+			  AND (? = '' OR dni.item_uniq_code = ?)
+			UNION ALL
+			SELECT `+woKanbanLiveQtySQL+` AS q
+			FROM work_order_items
+			WHERE kanban_number IN ?
+			  AND (? = '' OR item_uniq_code = ?)
+			  AND NOT EXISTS (
+				SELECT 1 FROM delivery_note_items d2
+				WHERE d2.packing_number = work_order_items.kanban_number
+			  )
+		) t
+	`, cleaned, uniq, uniq, cleaned, uniq, uniq).Scan(&res).Error; err != nil {
 		return 0, false, err
 	}
 	return res.Total, res.Cnt > 0, nil
@@ -1064,18 +1080,15 @@ func (r *productionRepo) DeductPackingQty(ctx context.Context, itemUniqCode, pac
 		return nil
 	}
 	// [packing-guard] Tolak over-deduction: bila qty yang diminta melebihi stok
-	// berjalan packing (qty_opname / quantity), kembalikan error alih-alih diam-diam
-	// floor ke 0. Ini mencegah alokasi packing yang sama ke banyak kanban
-	// (auto-apply Step 1 POKA YOKE) menghabiskan stok tanpa peringatan.
-	var cur struct{ Qty float64 }
-	if e := r.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(qty_opname, quantity, 0) AS qty
-		FROM delivery_note_items
-		WHERE item_uniq_code = ? AND packing_number = ?
-		LIMIT 1
-	`, itemUniqCode, packingNumber).Scan(&cur).Error; e == nil {
-		if deductQty > cur.Qty+1e-6 {
-			return fmt.Errorf("stok packing %s tidak cukup: butuh %.4f, tersedia %.4f", packingNumber, deductQty, cur.Qty)
+	// berjalan packing, kembalikan error alih-alih diam-diam floor ke 0. Ini
+	// mencegah alokasi packing yang sama ke banyak kanban (auto-apply Step 1
+	// POKA YOKE) menghabiskan stok tanpa peringatan.
+	// [assembly-fg] Stok berjalan dibaca dari DN item, atau dari kanban WO bila
+	// packing tsb bukan DN item (mis. kanban Finished Goods child UNIQ). Dulu
+	// hanya DN item yang dicek, sehingga kanban WO selalu dianggap stok 0.
+	if cur, found, e := r.SumLivePackingQty(ctx, itemUniqCode, []string{packingNumber}); e == nil && found {
+		if deductQty > cur+1e-6 {
+			return fmt.Errorf("stok packing %s tidak cukup: butuh %.4f, tersedia %.4f", packingNumber, deductQty, cur)
 		}
 	}
 	err := r.db.WithContext(ctx).Exec(`
@@ -1090,7 +1103,7 @@ func (r *productionRepo) DeductPackingQty(ctx context.Context, itemUniqCode, pac
 	}
 	return r.db.WithContext(ctx).Exec(`
 		UPDATE work_order_items
-		SET qty_opname = GREATEST(COALESCE(qty_opname, quantity, 0) - ?, 0),
+		SET qty_opname = GREATEST(`+woKanbanLiveQtySQL+` - ?, 0),
 		    updated_at = ?
 		WHERE item_uniq_code = ? AND kanban_number = ?
 	`, deductQty, at, itemUniqCode, packingNumber).Error
@@ -1116,7 +1129,7 @@ func (r *productionRepo) AddPackingQty(ctx context.Context, itemUniqCode, packin
 	}
 	return r.db.WithContext(ctx).Exec(`
 		UPDATE work_order_items
-		SET qty_opname = COALESCE(qty_opname, quantity, 0) + ?,
+		SET qty_opname = `+woKanbanLiveQtySQL+` + ?,
 		    updated_at = ?
 		WHERE item_uniq_code = ? AND kanban_number = ?
 	`, addQty, at, itemUniqCode, packingNumber).Error
@@ -1163,4 +1176,109 @@ func (r *productionRepo) DeleteScanInDraft(ctx context.Context, woID, woItemID i
 		q = q.Where("current_step = ?", currentStep)
 	}
 	return q.Delete(&models.ProductionScaninDraft{}).Error
+}
+
+// [assembly-fg] Qty berjalan satu kanban WO. Kanban yang sudah selesai memakai
+// total_good_qty (hasil produksi), sama seperti ListRMPackingList; kanban yang
+// belum selesai tetap memakai quantity seperti perilaku lama.
+const woKanbanLiveQtySQL = `COALESCE(qty_opname, CASE WHEN UPPER(status) IN ('FINISHED', 'DONE', 'COMPLETED') THEN NULLIF(total_good_qty, 0) END, quantity, 0)`
+
+// AssemblyChildRow = satu child UNIQ (level 1) dari BOM parent WO Assembly.
+type AssemblyChildRow struct {
+	UniqCode   string   `gorm:"column:uniq_code"`
+	PartName   string   `gorm:"column:part_name"`
+	PartNumber *string  `gorm:"column:part_number"`
+	QtyPerUniq *float64 `gorm:"column:qty_per_uniq"`
+	LineUom    *string  `gorm:"column:line_uom"`
+	ItemUom    *string  `gorm:"column:item_uom"`
+	FGID       *int64   `gorm:"column:fg_id"`
+	FGUom      *string  `gorm:"column:fg_uom"`
+	StockQty   *float64 `gorm:"column:stock_qty"`
+}
+
+// FindAssemblyChildrenByUniq mengembalikan children level 1 pada BOM aktif
+// milik UNIQ (parent), beserta stok Finished Goods masing-masing. Kosong bila
+// UNIQ tidak punya BOM sendiri / tidak punya children (bukan parent).
+func (r *productionRepo) FindAssemblyChildrenByUniq(ctx context.Context, uniq string) ([]AssemblyChildRow, error) {
+	uniq = strings.TrimSpace(uniq)
+	if uniq == "" {
+		return nil, nil
+	}
+	var rows []AssemblyChildRow
+	err := r.db.WithContext(ctx).Raw(`
+		WITH root AS (
+			SELECT id FROM items
+			WHERE uniq_code = ? AND deleted_at IS NULL
+			ORDER BY id DESC
+			LIMIT 1
+		),
+		cur_bom AS (
+			SELECT bi.id, bi.item_id
+			FROM bom_item bi
+			JOIN root ON root.id = bi.item_id
+			ORDER BY bi.is_current DESC, bi.version DESC, bi.id DESC
+			LIMIT 1
+		)
+		SELECT
+			c.uniq_code, c.part_name, c.part_number,
+			bl.qty_per_uniq, bl.uom AS line_uom, c.uom AS item_uom,
+			fg.id AS fg_id, fg.uom AS fg_uom, fg.stock_qty
+		FROM bom_lines bl
+		JOIN cur_bom cb ON cb.id = bl.bom_item_id
+		JOIN items c ON c.id = bl.child_item_id
+		LEFT JOIN finished_goods fg ON fg.uniq_code = c.uniq_code AND fg.deleted_at IS NULL
+		WHERE bl.level = 1 AND bl.parent_item_id = cb.item_id
+		ORDER BY bl.line_no NULLS LAST, bl.id
+	`, uniq).Scan(&rows).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("FindAssemblyChildrenByUniq", err)
+	}
+	return rows, nil
+}
+
+// ListFGPackingList mengambil kanban Finished Goods satu UNIQ: kanban WO yang
+// sudah selesai diproduksi. Qty saat ini = qty berjalan kanban (qty_opname,
+// fallback total_good_qty).
+func (r *productionRepo) ListFGPackingList(ctx context.Context, uniqCode string) ([]RMPackingRow, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return []RMPackingRow{}, nil
+	}
+	var rows []RMPackingRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			NULL::text        AS dn_number,
+			woi.kanban_number AS packing_number,
+			COALESCE(NULLIF(woi.total_good_qty, 0), woi.quantity, 0) AS quantity,
+			COALESCE(woi.qty_opname, NULLIF(woi.total_good_qty, 0), woi.quantity, 0) AS qty_current,
+			COALESCE(
+				NULLIF(kp.kanban_qty, 0),
+				NULLIF(woi.quantity, 0),
+				NULLIF(woi.total_good_qty, 0),
+				0
+			) AS qty_max,
+			woi.status   AS status,
+			w.wo_number  AS wo_number,
+			'finished_goods' AS source
+		FROM work_order_items woi
+		JOIN work_orders w ON w.id = woi.wo_id
+		LEFT JOIN LATERAL (
+			SELECT kanban_qty
+			FROM kanban_parameters
+			WHERE item_uniq_code = woi.item_uniq_code
+			ORDER BY id DESC
+			LIMIT 1
+		) kp ON TRUE
+		WHERE woi.item_uniq_code = ?
+		  AND UPPER(woi.status) IN ('FINISHED', 'DONE', 'COMPLETED')
+		  AND COALESCE(woi.kanban_number, '') <> ''
+		ORDER BY woi.updated_at ASC, woi.kanban_number ASC
+	`, uniqCode).Scan(&rows).Error
+	if err != nil {
+		return nil, apperror.Internal("action_ui list fg packing list: " + err.Error())
+	}
+	if rows == nil {
+		rows = []RMPackingRow{}
+	}
+	return rows, nil
 }

@@ -327,6 +327,12 @@ type BomMaterial struct {
 	// untuk memilih baris yang ditampilkan di Step 1, menggantikan filter
 	// lama berbasis level>0 ([hide-bom-parent]).
 	IsOwnMaterial bool `json:"is_own_material"`
+	// [assembly-fg] true bila baris ini adalah child UNIQ dari parent WO
+	// Assembly. Materialnya diambil dari Finished Goods (kanban WO child yang
+	// sudah FINISHED), bukan dari Raw Material.
+	IsFG bool `json:"is_fg"`
+	// LineNo = urutan baris BOM (internal, untuk sort children).
+	LineNo int `json:"-"`
 }
 
 type RawMaterialLookupResponse struct {
@@ -350,6 +356,9 @@ type ScanOutRawMaterial struct {
 	QtyUsed       float64 `json:"qty_used"`
 	// [wip-source] material berasal dari WIP UNIQ proses sebelumnya; stok RM tidak dipotong.
 	IsWIP bool `json:"is_wip"`
+	// [assembly-fg] material = child UNIQ dari Finished Goods; stok yang
+	// dipotong adalah finished_goods, bukan raw_materials.
+	IsFG bool `json:"is_fg"`
 	// [repacking] alokasi pengurangan qty per packing/kanban + hasil repack.
 	Packings []ScanOutPacking `json:"packings"`
 }
@@ -402,11 +411,13 @@ type RMRepackMove struct {
 // Sisa qty di SourcePackingNumber dipindahkan ke packing tujuan yang masih
 // punya slot. Sisa yang tidak dipindah tetap tinggal di packing asal.
 type RMRepackRequest struct {
-	RMUUID              string         `json:"rm_uuid"`
-	Code                string         `json:"code"`
-	SourcePackingNumber string         `json:"source_packing_number"`
-	Moves               []RMRepackMove `json:"moves"`
-	ScannedBy           string         `json:"scanned_by"`
+	RMUUID              string `json:"rm_uuid"`
+	Code                string `json:"code"`
+	SourcePackingNumber string `json:"source_packing_number"`
+	// [assembly-fg] "fg" = packing berupa kanban Finished Goods child UNIQ.
+	Source    string         `json:"source"`
+	Moves     []RMRepackMove `json:"moves"`
+	ScannedBy string         `json:"scanned_by"`
 }
 
 // RMRepackResponse = hasil repacking + daftar packing terbaru.
@@ -421,7 +432,11 @@ type WODetailProcessStep struct {
 	OpSeq       int    `json:"op_seq"`
 	ProcessName string `json:"process_name"`
 	MachineName string `json:"machine_name"`
-	Status      string `json:"status"`
+	// done | in_progress (sudah SCAN_IN, belum SCAN_OUT) | current | pending
+	Status string `json:"status"`
+	// [poka-yoke-progress] waktu scan per proses (sama seperti detail WO ERP).
+	ScannedInAt  *time.Time `json:"scanned_in_at,omitempty"`
+	ScannedOutAt *time.Time `json:"scanned_out_at,omitempty"`
 }
 
 // Request/response validasi scan mesin
@@ -455,6 +470,7 @@ type ScanOutContextRawMaterial struct {
 	SpecWeightKg   float64                        `json:"spec_weight_kg"`
 	TypeLabel      string                         `json:"type_label"`
 	IsWIP          bool                           `json:"is_wip"`
+	IsFG           bool                           `json:"is_fg"` // [assembly-fg]
 	UOM            string                         `json:"uom"`
 	AvailableStock float64                        `json:"available_stock"`
 	StockWeightKg  float64                        `json:"stock_weight_kg"`
@@ -510,7 +526,6 @@ type DeleteScanInDraftRequest struct {
 	WOItemID    int64 `json:"wo_item_id" binding:"required"`
 	CurrentStep int   `json:"current_step"`
 }
-
 
 // [overflow-topup] QCOverflowTopUp satu rencana pengisian slot kanban existing.
 type QCOverflowTopUp struct {

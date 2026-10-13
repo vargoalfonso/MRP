@@ -68,7 +68,7 @@ type IService interface {
 	ScanOutContext(ctx context.Context, woNumber string) (*dto.ScanOutContextResponse, error)
 
 	// [repacking] list packing/kanban milik satu Raw Material (buat modal Repacking).
-	RMPackingList(ctx context.Context, rmUUID, code string) (*dto.RMPackingListResponse, error)
+	RMPackingList(ctx context.Context, rmUUID, code, source string) (*dto.RMPackingListResponse, error)
 	// [repack-sisa] pindahkan sisa material ke packing list RM lain.
 	RMRepack(ctx context.Context, req dto.RMRepackRequest) (*dto.RMRepackResponse, error)
 	// [scanin-draft-db] draft scan-in (seed) bersama lintas gadget.
@@ -1209,6 +1209,9 @@ func (s *service) advanceProcessAfterQCFinish(ctx context.Context, tx *gorm.DB, 
 	}
 
 	// Proses terakhir -> Finished Goods.
+	// [fg-history] keterangan History Log FG: dari kanban & proses mana.
+	incomingNotes := fmt.Sprintf("Hasil produksi kanban %s (Scan Out proses terakhir: %s)",
+		item.KanbanNumber, currentStep.ProcessName)
 	var fg models.FinishedGoods
 	errFG := tx.Where("uniq_code = ?", item.ItemUniqCode).First(&fg).Error
 	if errors.Is(errFG, gorm.ErrRecordNotFound) {
@@ -1231,13 +1234,13 @@ func (s *service) advanceProcessAfterQCFinish(ctx context.Context, tx *gorm.DB, 
 		}
 		if err := s.createInventoryMovementLog(tx, "finished_goods", "incoming",
 			item.ItemUniqCode, &fg.ID, 0, qtyProduced, qtyProduced,
-			&wo.WONumber, stringPtr("QC_FINISH"),
-			stringPtr("Create FG from QC Finish (proses terakhir)"), stringPtr(performedBy)); err != nil {
+			&wo.WONumber, stringPtr("SCAN_OUT"),
+			stringPtr(incomingNotes), stringPtr(performedBy)); err != nil {
 			return err
 		}
-		if err := s.appendFGMovementLog(tx, fg.ID, item.ItemUniqCode, "incoming_production",
+		if err := s.appendFGMovementLog(tx, fg.ID, item.ItemUniqCode, fgMoveIncomingProduction,
 			qtyProduced, 0, qtyProduced,
-			&wo.WONumber, nil, stringPtr("Masuk FG dari QC Finish (buat baru)"), stringPtr(performedBy)); err != nil {
+			&wo.WONumber, nil, stringPtr(item.KanbanNumber), stringPtr(incomingNotes), stringPtr(performedBy)); err != nil {
 			return err
 		}
 	} else if errFG == nil {
@@ -1250,13 +1253,13 @@ func (s *service) advanceProcessAfterQCFinish(ctx context.Context, tx *gorm.DB, 
 		}
 		if err := s.createInventoryMovementLog(tx, "finished_goods", "incoming",
 			item.ItemUniqCode, &fg.ID, beforeQty, qtyProduced, afterQty,
-			&wo.WONumber, stringPtr("QC_FINISH"),
-			stringPtr("Add FG stock from QC Finish (proses terakhir)"), stringPtr(performedBy)); err != nil {
+			&wo.WONumber, stringPtr("SCAN_OUT"),
+			stringPtr(incomingNotes), stringPtr(performedBy)); err != nil {
 			return err
 		}
-		if err := s.appendFGMovementLog(tx, fg.ID, item.ItemUniqCode, "incoming_production",
+		if err := s.appendFGMovementLog(tx, fg.ID, item.ItemUniqCode, fgMoveIncomingProduction,
 			qtyProduced, beforeQty, afterQty,
-			&wo.WONumber, nil, stringPtr("Masuk FG dari QC Finish (tambah stok)"), stringPtr(performedBy)); err != nil {
+			&wo.WONumber, nil, stringPtr(item.KanbanNumber), stringPtr(incomingNotes), stringPtr(performedBy)); err != nil {
 			return err
 		}
 	} else {
@@ -1465,6 +1468,11 @@ func (s *service) QCFinish(ctx context.Context, req dto.QCFinishRequest, perform
 			if err := s.createReworkWorkOrder(tx, item, wo, req.NGDefectQty, performedBy, now); err != nil {
 				return err
 			}
+		}
+
+		// ===== 3b. [fg-history] hasil QC Round 3 proses terakhir -> History Log FG =====
+		if err := s.reconcileFGAfterQCFinish(ctx, tx, item, wo, task, req, performedBy, now); err != nil {
+			return err
 		}
 
 		// ===== 4. (dihapus) MOVE WIP -> FG kini ditangani advanceProcessAfterQCFinish =====
@@ -2501,7 +2509,11 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 			setupQC = lastIn.SetupQCTime
 		}
 
-		rmList, e := s.buildItemRawMaterials(ctx, item)
+		// [assembly-fg] Parent UNIQ pada WO Assembly: material = children
+		// level 1 BOM-nya, diambil dari Finished Goods.
+		fgChildren := s.assemblyFGChildren(ctx, wo.WOType, item.ItemUniqCode)
+
+		rmList, e := s.buildItemRawMaterials(ctx, item, fgChildren)
 		if e != nil {
 			return nil, e
 		}
@@ -2509,9 +2521,14 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 		// [rm-per-uniq] Daftar RM Step 1 memakai Material Spec milik UNIQ
 		// sendiri (bukan flatten anak/cucu). buildBomMaterials lama tetap
 		// dipakai oleh bomByUniq untuk enrichment Scan Out.
-		bomList, e := s.buildOwnBomMaterials(ctx, item.ItemUniqCode)
-		if e != nil {
-			return nil, e
+		var bomList []dto.BomMaterial
+		if len(fgChildren) > 0 {
+			bomList = fgChildrenList(fgChildren)
+		} else {
+			bomList, e = s.buildOwnBomMaterials(ctx, item.ItemUniqCode)
+			if e != nil {
+				return nil, e
+			}
 		}
 
 		uniqs = append(uniqs, dto.WODetailUniq{
@@ -2533,7 +2550,7 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 			ScanInCount:    item.ScanInCount,
 			ScanOutCount:   item.ScanOutCount,
 			MachineScanned: item.MachineID != 0,
-			ProcessFlow:    buildProcessSteps(flow, item.CurrentStepSeq, isUniqFinished(item.Status)),
+			ProcessFlow:    s.withScanProgress(ctx, item, buildProcessSteps(flow, item.CurrentStepSeq, isUniqFinished(item.Status))),
 			SavedQty:       savedQty,
 			DandoriTime:    dandori,
 			SetupQCTime:    setupQC,
@@ -2790,12 +2807,14 @@ func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrder
 
 		var master models.RawMaterial
 		var found bool
-		if rm.RMUUID != "" {
+		// [assembly-fg] child UNIQ dari Finished Goods: jangan dicocokkan ke
+		// master Raw Material, stok yang dipotong adalah finished_goods.
+		if rm.RMUUID != "" && !rm.IsFG {
 			if m, err := s.repoProduction.FindRawMaterialByUUID(ctx, rm.RMUUID); err == nil {
 				master, found = m, true
 			}
 		}
-		if !found && code != "" {
+		if !found && !rm.IsFG && code != "" {
 			if m, err := s.repoProduction.FindRawMaterialByCode(ctx, code); err == nil {
 				master, found = m, true
 			}
@@ -2911,49 +2930,11 @@ func (s *service) consumeRawMaterials(ctx context.Context, item models.WorkOrder
 				return err
 			}
 		} else if code != "" {
-			// FG fallback: jika material tidak ditemukan di master RM, asumsikan Finished Goods
-			var fg struct {
-				ID       int64
-				StockQty float64
-			}
-			err := s.db.WithContext(ctx).Raw("SELECT id, stock_qty FROM finished_goods WHERE uniq_code = ?", code).Scan(&fg).Error
-			if err == nil && fg.ID > 0 {
-				before := fg.StockQty
-				after := before - rm.QtyUsed
-				if after < 0 {
-					after = 0
-				}
-				if err := s.db.WithContext(ctx).Exec(`
-					UPDATE finished_goods
-					SET stock_qty = ?, updated_at = ?
-					WHERE id = ?
-				`, after, now, fg.ID).Error; err != nil {
-					return err
-				}
-				ref := woNumber
-				src := "wo_scan"
-				by := scannedBy
-				notes := "Used in production scan out"
-
-				// 1. Tulis ke inventory_movement_logs
-				if err := s.repoProduction.InsertInventoryMovementLog(ctx, models.InventoryMovementLog{
-					MovementCategory: "finished_goods",
-					MovementType:     "outgoing",
-					UniqCode:         code,
-					EntityID:         &fg.ID,
-					QtyChange:        -rm.QtyUsed,
-					ReferenceID:      &ref,
-					SourceFlag:       &src,
-					LoggedBy:         &by,
-					LoggedAt:         now,
-				}); err != nil {
-					return err
-				}
-
-				// 2. Tulis ke fg_movement_logs
-				if err := s.appendFGMovementLog(s.db.WithContext(ctx), fg.ID, code, "outgoing", -rm.QtyUsed, before, after, &ref, nil, &notes, &by); err != nil {
-					return err
-				}
+			// FG fallback: jika material tidak ditemukan di master RM, asumsikan
+			// Finished Goods (mis. child UNIQ parent WO Assembly).
+			// [fg-history] dicatat per kanban FG + keterangan pemakaian.
+			if err := s.consumeFGForProduction(s.db.WithContext(ctx), item, rm, code, woNumber, scannedBy, now); err != nil {
+				return err
 			}
 		}
 	}
@@ -3006,7 +2987,7 @@ func (s *service) ScanMachine(ctx context.Context, req dto.ScanMachineRequest) (
 	if currentIndex+1 < totalStep {
 		nextProcess = flow[currentIndex+1].ProcessName
 	}
-	steps := buildProcessSteps(flow, item.CurrentStepSeq, isUniqFinished(item.Status))
+	steps := s.withScanProgress(ctx, item, buildProcessSteps(flow, item.CurrentStepSeq, isUniqFinished(item.Status)))
 
 	// Cari mesin yang di-scan
 	machine, err := s.repoProduction.FindMachineByNumber(ctx, strings.TrimSpace(req.Machine))
@@ -3131,6 +3112,7 @@ func (s *service) ScanOutContext(
 			return nil, err
 		}
 		logs = dedupRawMaterialLogs(logs)
+		fgChildren := s.assemblyFGChildren(ctx, wo.WOType, item.ItemUniqCode)
 
 		uuids := make([]string, 0, len(logs))
 		codes := make([]string, 0, len(logs))
@@ -3160,11 +3142,19 @@ func (s *service) ScanOutContext(
 		}
 
 		bomMap := s.bomByUniq(ctx, item.ItemUniqCode)
+		for code, c := range fgChildren {
+			bomMap[code] = c
+		}
 		rms := make([]dto.ScanOutContextRawMaterial, 0, len(logs))
 		for _, l := range logs {
 			meta, ok := metaByUUID[l.RMUUID]
 			if !ok {
 				meta, ok = metaByCode[l.UniqCode]
+			}
+			// [assembly-fg] child UNIQ parent Assembly: bukan Raw Material.
+			fgChild, isFG := fgChildren[l.UniqCode]
+			if isFG {
+				ok = false
 			}
 
 			packing := l.UniqCode
@@ -3191,6 +3181,8 @@ func (s *service) ScanOutContext(
 				typeLabel = rmTypeLabel(meta.RawMaterialType)
 				avail = meta.StockQty
 				weight = meta.StockWeightKg
+			} else if isFG {
+				applyFGChild(fgChild, &typeLabel, &uom, &avail, &materialCode)
 			} else if l.UniqCode != "" {
 				if fgItem, err := s.repoProduction.FindItemByUniq(ctx, l.UniqCode); err == nil {
 					if fgItem.UOM != nil && *fgItem.UOM != "" {
@@ -3202,8 +3194,8 @@ func (s *service) ScanOutContext(
 
 			// [wip-source] Material hasil proses sebelumnya memakai UNIQ yang
 			// sama dengan item WO ini, tetapi type_label-nya bisa "OTHER".
-			isWIP := strings.EqualFold(typeLabel, "WIP") ||
-				(currentStepSeqOf(item) > 1 && strings.EqualFold(l.UniqCode, item.ItemUniqCode))
+			isWIP := !isFG && (strings.EqualFold(typeLabel, "WIP") ||
+				(currentStepSeqOf(item) > 1 && strings.EqualFold(l.UniqCode, item.ItemUniqCode)))
 			if isWIP {
 				typeLabel = "WIP"
 				flow := resolveProcessFlow(item)
@@ -3245,6 +3237,7 @@ func (s *service) ScanOutContext(
 				SpecWeightKg:   specWeight,
 				TypeLabel:      typeLabel,
 				IsWIP:          isWIP,
+				IsFG:           isFG,
 				UOM:            uom,
 				AvailableStock: avail,
 				StockWeightKg:  weight,
@@ -3931,7 +3924,7 @@ func (s *service) getWIPAvailableStock(ctx context.Context, woID int64, uniqCode
 	return stock
 }
 
-func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrderItem) ([]dto.ScanOutContextRawMaterial, error) {
+func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrderItem, fgChildren map[string]dto.BomMaterial) ([]dto.ScanOutContextRawMaterial, error) {
 	// [proc-scope] Ambil hanya log RM milik step proses yang sedang berjalan,
 	// supaya daftar material proses 2 tidak diisi RM sisa proses 1.
 	logs, err := s.repoProduction.FindProductionRawMaterialLogsByWOItemStep(ctx, item.ID, currentStepSeqOf(item))
@@ -3968,11 +3961,19 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 	}
 
 	bomMap := s.bomByUniq(ctx, item.ItemUniqCode)
+	for code, c := range fgChildren {
+		bomMap[code] = c
+	}
 	rms := make([]dto.ScanOutContextRawMaterial, 0, len(logs))
 	for _, l := range logs {
 		meta, ok := metaByUUID[l.RMUUID]
 		if !ok {
 			meta, ok = metaByCode[l.UniqCode]
+		}
+		// [assembly-fg] child UNIQ parent Assembly: bukan Raw Material.
+		fgChild, isFG := fgChildren[l.UniqCode]
+		if isFG {
+			ok = false
 		}
 
 		packing := l.UniqCode
@@ -4000,7 +4001,10 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 			avail = meta.StockQty
 			weight = meta.StockWeightKg
 		}
-		isWIP := strings.EqualFold(typeLabel, "WIP") || (currentStepSeqOf(item) > 1 && strings.EqualFold(l.UniqCode, item.ItemUniqCode))
+		if isFG {
+			applyFGChild(fgChild, &typeLabel, &uom, &avail, &materialCode)
+		}
+		isWIP := !isFG && (strings.EqualFold(typeLabel, "WIP") || (currentStepSeqOf(item) > 1 && strings.EqualFold(l.UniqCode, item.ItemUniqCode)))
 		if isWIP {
 			typeLabel = "WIP"
 			flow := resolveProcessFlow(item)
@@ -4044,6 +4048,7 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 			SpecWeightKg:   specWeight,
 			TypeLabel:      typeLabel,
 			IsWIP:          isWIP,
+			IsFG:           isFG,
 			UOM:            uom,
 			AvailableStock: avail,
 			StockWeightKg:  weight,
@@ -4057,7 +4062,10 @@ func (s *service) buildItemRawMaterials(ctx context.Context, item models.WorkOrd
 // RMPackingList mengembalikan daftar packing/kanban milik satu Raw Material.
 // rmUUID diprioritaskan; kalau kosong pakai code (packing_list_rm / material code)
 // untuk resolve master RM lalu ambil uniq_code-nya.
-func (s *service) RMPackingList(ctx context.Context, rmUUID, code string) (*dto.RMPackingListResponse, error) {
+func (s *service) RMPackingList(ctx context.Context, rmUUID, code, source string) (*dto.RMPackingListResponse, error) {
+	if isFGSource(source) {
+		return s.fgPackingList(ctx, code)
+	}
 	uniqCode := ""
 	if rmUUID != "" {
 		if m, err := s.repoProduction.FindRawMaterialByUUID(ctx, rmUUID); err == nil && m.UniqCode != "" {
@@ -4159,12 +4167,23 @@ func (s *service) RMRepack(ctx context.Context, req dto.RMRepackRequest) (*dto.R
 		return nil, apperror.BadRequest("moves (packing tujuan) wajib diisi")
 	}
 
-	uniqCode := s.resolveRMUniqCode(ctx, req.RMUUID, req.Code)
-	if uniqCode == "" {
-		return nil, apperror.BadRequest("raw material tidak ditemukan")
+	var uniqCode string
+	var rows []repository.RMPackingRow
+	var err error
+	if isFGSource(req.Source) {
+		// [assembly-fg] repack antar kanban Finished Goods child UNIQ.
+		uniqCode = strings.TrimSpace(req.Code)
+		if uniqCode == "" {
+			return nil, apperror.BadRequest("uniq finished goods wajib diisi")
+		}
+		rows, err = s.repoProduction.ListFGPackingList(ctx, uniqCode)
+	} else {
+		uniqCode = s.resolveRMUniqCode(ctx, req.RMUUID, req.Code)
+		if uniqCode == "" {
+			return nil, apperror.BadRequest("raw material tidak ditemukan")
+		}
+		rows, err = s.repoProduction.ListRMPackingList(ctx, uniqCode)
 	}
-
-	rows, err := s.repoProduction.ListRMPackingList(ctx, uniqCode)
 	if err != nil {
 		return nil, err
 	}
@@ -4225,7 +4244,7 @@ func (s *service) RMRepack(ctx context.Context, req dto.RMRepackRequest) (*dto.R
 		return nil, err
 	}
 
-	fresh, err := s.RMPackingList(ctx, req.RMUUID, req.Code)
+	fresh, err := s.RMPackingList(ctx, req.RMUUID, req.Code, req.Source)
 	if err != nil {
 		return nil, err
 	}
@@ -4283,4 +4302,193 @@ func (s *service) UpsertScanInDraft(ctx context.Context, req dto.UpsertScanInDra
 
 func (s *service) DeleteScanInDraft(ctx context.Context, req dto.DeleteScanInDraftRequest) error {
 	return s.repoProduction.DeleteScanInDraft(ctx, req.WOID, req.WOItemID, req.CurrentStep)
+}
+
+// ================================
+// [assembly-fg] WO Assembly: material parent UNIQ = children dari Finished Goods
+// ================================
+
+func isAssemblyWO(woType string) bool {
+	return strings.EqualFold(strings.TrimSpace(woType), "assembly")
+}
+
+func isFGSource(source string) bool {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "fg", "finished_goods":
+		return true
+	}
+	return false
+}
+
+// assemblyFGChildren mengembalikan children level 1 (key = uniq child) bila
+// item adalah parent UNIQ pada WO Assembly. Kosong untuk WO lain dan untuk
+// UNIQ yang tidak punya children (child/grandchild memakai Material Spec
+// sendiri seperti WO regular).
+func (s *service) assemblyFGChildren(ctx context.Context, woType, uniq string) map[string]dto.BomMaterial {
+	out := map[string]dto.BomMaterial{}
+	if !isAssemblyWO(woType) {
+		return out
+	}
+	rows, err := s.repoProduction.FindAssemblyChildrenByUniq(ctx, uniq)
+	if err != nil {
+		log.Printf("[assembly-fg] load children %s: %v", uniq, err)
+		return out
+	}
+	for i, r := range rows {
+		code := strings.TrimSpace(r.UniqCode)
+		if code == "" {
+			continue
+		}
+		uom := deref(r.FGUom)
+		if uom == "" {
+			uom = deref(r.LineUom)
+		}
+		if uom == "" {
+			uom = deref(r.ItemUom)
+		}
+		qpu := 0.0
+		if r.QtyPerUniq != nil {
+			qpu = *r.QtyPerUniq
+		}
+		stock := 0.0
+		if r.StockQty != nil {
+			stock = *r.StockQty
+		}
+		out[code] = dto.BomMaterial{
+			Uniq:           code,
+			PartName:       r.PartName,
+			PartNumber:     deref(r.PartNumber),
+			Level:          1,
+			LineNo:         i,
+			QtyPerUniq:     qpu,
+			UOM:            uom,
+			RMUniqCode:     code,
+			TypeLabel:      "FG",
+			InInventory:    r.FGID != nil,
+			AvailableStock: stock,
+			IsOwnMaterial:  true,
+			IsFG:           true,
+		}
+	}
+	return out
+}
+
+// fgChildrenList mengurutkan map children sesuai urutan BOM.
+func fgChildrenList(m map[string]dto.BomMaterial) []dto.BomMaterial {
+	out := make([]dto.BomMaterial, 0, len(m))
+	for _, c := range m {
+		out = append(out, c)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].LineNo < out[j].LineNo })
+	return out
+}
+
+// applyFGChild mengisi info baris material child Finished Goods.
+func applyFGChild(c dto.BomMaterial, typeLabel, uom *string, avail *float64, materialCode *string) {
+	*typeLabel = "FG"
+	if c.UOM != "" {
+		*uom = c.UOM
+	}
+	*avail = c.AvailableStock
+	*materialCode = c.Uniq
+}
+
+// fgPackingList = daftar kanban Finished Goods satu child UNIQ.
+func (s *service) fgPackingList(ctx context.Context, code string) (*dto.RMPackingListResponse, error) {
+	uniqCode := strings.TrimSpace(code)
+	if uniqCode == "" {
+		return &dto.RMPackingListResponse{Items: []dto.RMPackingItem{}}, nil
+	}
+	rows, err := s.repoProduction.ListFGPackingList(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+	resp := &dto.RMPackingListResponse{UniqCode: uniqCode, Items: make([]dto.RMPackingItem, 0, len(rows))}
+	for _, row := range rows {
+		progress := 0
+		if row.QtyMax > 0 {
+			progress = int((row.QtyCurrent / row.QtyMax) * 100)
+			if progress < 0 {
+				progress = 0
+			}
+			if progress > 100 {
+				progress = 100
+			}
+		}
+		resp.TotalQtyCurrent += row.QtyCurrent
+		resp.TotalQtyMax += row.QtyMax
+		resp.Items = append(resp.Items, dto.RMPackingItem{
+			DNNumber:      row.DNNumber,
+			PackingNumber: row.PackingNumber,
+			Quantity:      row.Quantity,
+			QtyCurrent:    row.QtyCurrent,
+			QtyMax:        row.QtyMax,
+			Progress:      progress,
+			Status:        row.Status,
+			WONumber:      row.WONumber,
+			Source:        row.Source,
+		})
+	}
+	resp.TotalPacking = len(resp.Items)
+	return resp, nil
+}
+
+// [poka-yoke-progress] withScanProgress melengkapi langkah Poka Yoke dengan
+// waktu SCAN_IN / SCAN_OUT per proses dari production_scan_logs, dan menandai
+// proses yang sedang berjalan (sudah Scan In, belum Scan Out) sebagai
+// "in_progress". Aturannya mengikuti detail WO di ERP. Gagal baca log tidak
+// menggagalkan respons.
+func (s *service) withScanProgress(ctx context.Context, item models.WorkOrderItem, steps []dto.WODetailProcessStep) []dto.WODetailProcessStep {
+	type scanRow struct {
+		ProcessName string    `gorm:"column:process_name"`
+		ScanType    string    `gorm:"column:scan_type"`
+		ScannedAt   time.Time `gorm:"column:scanned_at"`
+	}
+	var rows []scanRow
+	if err := s.db.WithContext(ctx).
+		Model(&models.ProductionScanLog{}).
+		Select("process_name, scan_type, scanned_at").
+		Where("wo_item_id = ?", item.ID).
+		Order("scanned_at ASC, id ASC").
+		Scan(&rows).Error; err != nil {
+		log.Printf("[poka-yoke-progress] load scan log item %d: %v", item.ID, err)
+	}
+
+	norm := func(v string) string { return strings.ToLower(strings.TrimSpace(v)) }
+	type times struct{ in, out *time.Time }
+	byProcess := map[string]*times{}
+	for i := range rows {
+		k := norm(rows[i].ProcessName)
+		if k == "" {
+			continue
+		}
+		t := byProcess[k]
+		if t == nil {
+			t = &times{}
+			byProcess[k] = t
+		}
+		at := rows[i].ScannedAt
+		switch strings.ToUpper(strings.TrimSpace(rows[i].ScanType)) {
+		case "SCAN_IN", "IN":
+			if t.in == nil {
+				t.in = &at
+			}
+		case "SCAN_OUT", "OUT":
+			t.out = &at // simpan OUT terakhir
+		}
+	}
+
+	running := item.ScanInCount > item.ScanOutCount
+	for i := range steps {
+		if t := byProcess[norm(steps[i].ProcessName)]; t != nil {
+			steps[i].ScannedInAt = t.in
+			if steps[i].Status == "done" {
+				steps[i].ScannedOutAt = t.out
+			}
+		}
+		if steps[i].Status == "current" && running {
+			steps[i].Status = "in_progress"
+		}
+	}
+	return steps
 }
