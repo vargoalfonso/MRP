@@ -16,7 +16,7 @@ type IWIPRepository interface {
 	Rollback() error
 
 	// WIP
-	FindAllWIPPaginated(ctx context.Context, page, limit int) ([]models.WIPListResponse, int64, error)
+	FindAllWIPPaginated(ctx context.Context, page, limit int, includeDone bool) ([]models.WIPListResponse, int64, error)
 	FindWIPByID(ctx context.Context, id int64) (*models.WIPDetailResponse, error)
 	CreateWIP(ctx context.Context, req models.CreateWIPRequest) (*models.WIP, error)
 	UpdateWIP(ctx context.Context, id int64, req models.UpdateWIPRequest) (*models.WIP, error)
@@ -68,59 +68,60 @@ func (r *repository) Rollback() error {
 	return r.db.Rollback().Error
 }
 
-func (r *repository) FindAllWIPPaginated(ctx context.Context, page, limit int) ([]models.WIPListResponse, int64, error) {
+// wipListBase membangun query dasar daftar WIP Inventory langsung dari
+// wip_items. Semua join memakai LEFT JOIN supaya baris wip_items tidak hilang
+// dari daftar hanya karena data pendukung (WO / item / kanban) tidak ketemu,
+// dan kanban diambil lewat subquery supaya baris tidak dobel.
+func (r *repository) wipListBase(ctx context.Context, includeDone bool) *gorm.DB {
+	q := r.db.WithContext(ctx).
+		Table("wip_items").
+		Joins("JOIN wips ON wips.id = wip_items.wip_id").
+		Joins("LEFT JOIN work_orders ON work_orders.id = wips.wo_id").
+		Joins("LEFT JOIN items ON items.uniq_code = wip_items.uniq AND items.deleted_at IS NULL")
+	// Default: hanya WIP aktif. includeDone=true juga menampilkan baris selesai.
+	if !includeDone {
+		q = q.Where("COALESCE(wip_items.status, 'queue') <> ?", "done")
+	}
+	return q
+}
+
+func (r *repository) FindAllWIPPaginated(ctx context.Context, page, limit int, includeDone bool) ([]models.WIPListResponse, int64, error) {
 	var data []models.WIPListResponse
 	var total int64
 
-	db := r.db.WithContext(ctx)
-
-	// count total (pakai join juga biar konsisten)
-	err := db.
-		Table("wips").
-		Joins("JOIN wip_items ON wips.id = wip_items.wip_id").
-		Joins("JOIN work_orders ON wips.wo_id = work_orders.id").
-		Joins("JOIN items ON wip_items.uniq = items.uniq_code").
-		Joins("LEFT JOIN kanban_parameters ON wip_items.uniq = kanban_parameters.item_uniq_code").
-		Where("wip_items.status <> ?", "done").
-		Count(&total).Error
-
-	if err != nil {
+	if err := r.wipListBase(ctx, includeDone).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// ambil data
-	err = db.
-		Table("wips").
+	err := r.wipListBase(ctx, includeDone).
 		Select(`
 			wips.id AS id,
 			CASE
-				WHEN wip_items.status = 'queue'
+				WHEN COALESCE(wip_items.status, 'queue') = 'queue'
 					AND COALESCE(wip_items.from_process, '') <> ''
 				THEN wip_items.from_process
 				ELSE wip_items.process_name
 			END AS process,
-			wip_items.status AS status,
+			COALESCE(wip_items.status, 'queue') AS status,
 			wip_items.process_name AS waiting_process,
 			wip_items.uniq AS uniq,
-			items.part_number AS part_number,
-			items.part_name AS part_info,
-			work_orders.wo_number AS wo_number,
-			wip_items.stock AS stock,
-			wip_items.packing_number AS kanban_number,
-			wip_items.wip_type AS type,
-			kanban_parameters.kanban_qty AS stock_to_complete_kanban,
-			kanban_parameters.kanban_qty AS kanban
+			COALESCE(items.part_number, '') AS part_number,
+			COALESCE(items.part_name, '') AS part_info,
+			COALESCE(work_orders.wo_number, '') AS wo_number,
+			COALESCE(wip_items.stock, 0) AS stock,
+			COALESCE(wip_items.packing_number, '') AS kanban_number,
+			COALESCE(wip_items.wip_type, '') AS type,
+			COALESCE((SELECT kp.kanban_qty FROM kanban_parameters kp
+				WHERE kp.item_uniq_code = wip_items.uniq
+				ORDER BY kp.id DESC LIMIT 1), 0) AS stock_to_complete_kanban,
+			COALESCE((SELECT kp.kanban_qty FROM kanban_parameters kp
+				WHERE kp.item_uniq_code = wip_items.uniq
+				ORDER BY kp.id DESC LIMIT 1), 0) AS kanban
 		`).
-		Joins("JOIN wip_items ON wips.id = wip_items.wip_id").
-		Joins("JOIN work_orders ON wips.wo_id = work_orders.id").
-		Joins("JOIN items ON wip_items.uniq = items.uniq_code").
-		Joins("LEFT JOIN kanban_parameters ON wip_items.uniq = kanban_parameters.item_uniq_code").
-		Where("wip_items.status <> ?", "done").
-		Order("wips.created_at DESC").
+		Order("wip_items.updated_at DESC, wip_items.id DESC").
 		Offset((page - 1) * limit).
 		Limit(limit).
 		Scan(&data).Error
-
 	if err != nil {
 		return nil, 0, err
 	}

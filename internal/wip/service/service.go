@@ -14,7 +14,7 @@ import (
 
 type IWIPService interface {
 	// WIP
-	GetAll(ctx context.Context, page, limit int) ([]models.WIPListResponse, int64, error)
+	GetAll(ctx context.Context, page, limit int, includeDone bool) ([]models.WIPListResponse, int64, error)
 	GetByID(ctx context.Context, id int64) (*models.WIPDetailResponse, error)
 	Create(ctx context.Context, req models.CreateWIPRequest) (*models.WIP, error)
 	Update(ctx context.Context, id int64, req models.UpdateWIPRequest) (*models.WIP, error)
@@ -39,8 +39,8 @@ func New(repo wipRepo.IWIPRepository) IWIPService {
 	return &service{repo: repo}
 }
 
-func (s *service) GetAll(ctx context.Context, page, limit int) ([]models.WIPListResponse, int64, error) {
-	return s.repo.FindAllWIPPaginated(ctx, page, limit)
+func (s *service) GetAll(ctx context.Context, page, limit int, includeDone bool) ([]models.WIPListResponse, int64, error) {
+	return s.repo.FindAllWIPPaginated(ctx, page, limit, includeDone)
 }
 
 func (s *service) GetByID(ctx context.Context, id int64) (*models.WIPDetailResponse, error) {
