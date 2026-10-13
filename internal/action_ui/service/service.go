@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -2031,10 +2032,21 @@ func parseProcessFlow(flowJSON string) ([]models.ProcessFlow, error) {
 		return nil, errors.New("process flow empty")
 	}
 
-	var flow []models.ProcessFlow
-	if err := json.Unmarshal([]byte(flowJSON), &flow); err != nil {
+	var raw []models.ProcessFlow
+	if err := json.Unmarshal([]byte(flowJSON), &raw); err != nil {
 		return nil, errors.New("invalid process flow")
 	}
+
+	// Samakan dengan detail WO di ERP (work_order.buildProcessSteps): urut
+	// op_seq dan lewati langkah tanpa nama proses.
+	flow := make([]models.ProcessFlow, 0, len(raw))
+	for _, f := range raw {
+		f.ProcessName = strings.TrimSpace(f.ProcessName)
+		if f.ProcessName != "" {
+			flow = append(flow, f)
+		}
+	}
+	sort.SliceStable(flow, func(i, j int) bool { return flow[i].OpSeq < flow[j].OpSeq })
 
 	if len(flow) == 0 {
 		return nil, errors.New("process flow empty")
@@ -3003,7 +3015,7 @@ func (s *service) ScanMachine(ctx context.Context, req dto.ScanMachineRequest) (
 			Valid:           false,
 			Message:         fmt.Sprintf("Mesin \"%s\" tidak ditemukan.", req.Machine),
 			ExpectedProcess: expectedProcess,
-			CurrentStep:     currentIdx + 1,
+			CurrentStep:     currentIndex + 1,
 			TotalStep:       totalStep,
 			NextProcess:     nextProcess,
 			ProcessFlow:     steps,
@@ -3036,7 +3048,7 @@ func (s *service) ScanMachine(ctx context.Context, req dto.ScanMachineRequest) (
 		ProductionLine:  machine.ProductionLine,
 		ScannedProcess:  scannedProcess,
 		ExpectedProcess: expectedProcess,
-		CurrentStep:     currentIdx + 1,
+		CurrentStep:     currentIndex + 1,
 		TotalStep:       totalStep,
 		NextProcess:     nextProcess,
 		ProcessFlow:     steps,
