@@ -2,8 +2,12 @@ package adjuster
 
 import (
 	"context"
+	"strings"
+	"time"
 
+	bomModels "github.com/ganasa18/go-template/internal/billmaterial/models"
 	stockModels "github.com/ganasa18/go-template/internal/stock_opname/models"
+	"github.com/ganasa18/go-template/pkg/apperror"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -70,4 +74,75 @@ func lockInventoryRow(ctx context.Context, tx *gorm.DB, dest interface{}, entry 
 type UniqSnapshotResult struct {
 	UniqCode string
 	UniqSnapshot
+}
+
+// findBOMItem mencari item BOM (tidak soft-deleted) berdasarkan uniq code.
+// Mengembalikan nil tanpa error bila tidak ada.
+func findBOMItem(ctx context.Context, tx *gorm.DB, uniqCode string) (*bomModels.Item, error) {
+	var item bomModels.Item
+	err := tx.WithContext(ctx).
+		Where("LOWER(TRIM(uniq_code)) = LOWER(TRIM(?)) AND deleted_at IS NULL", uniqCode).
+		Order("id").Take(&item).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, apperror.Internal("resolve BOM item: " + err.Error())
+	}
+	return &item, nil
+}
+
+// newUniqSnapshot dipakai saat uniq belum ada di inventory: tidak ada
+// validasi not-found, SystemQty 0, info part diambil dari BOM bila ada.
+func newUniqSnapshot(ctx context.Context, tx *gorm.DB, uniqCode string) (*UniqSnapshot, error) {
+	snap := &UniqSnapshot{SystemQty: 0}
+	item, err := findBOMItem(ctx, tx, strings.TrimSpace(uniqCode))
+	if err != nil {
+		return nil, err
+	}
+	if item != nil {
+		snap.PartNumber = item.PartNumber
+		snap.PartName = &item.PartName
+		snap.UOM = &item.Uom
+	}
+	return snap, nil
+}
+
+// liveOrRevive memastikan ada baris aktif untuk uniq. Urutan:
+//  1. baris aktif (tidak soft-deleted) -> dipakai apa adanya
+//  2. baris soft-deleted -> dipulihkan dengan stok 0 (uniq_code unik)
+//
+// Mengembalikan found=false bila belum pernah ada, sehingga pemanggil harus
+// membuat baris baru. dest harus pointer ke model inventory.
+func liveOrRevive(ctx context.Context, tx *gorm.DB, dest interface{}, uniqCode, stockCol, actor string) (bool, error) {
+	uniq := strings.TrimSpace(uniqCode)
+	match := "UPPER(BTRIM(uniq_code)) = UPPER(BTRIM(?))"
+
+	err := tx.WithContext(ctx).Where(match+" AND deleted_at IS NULL", uniq).Order("id").Take(dest).Error
+	if err == nil {
+		return true, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return false, apperror.Internal("lookup inventory row: " + err.Error())
+	}
+
+	err = tx.WithContext(ctx).Unscoped().Where(match+" AND deleted_at IS NOT NULL", uniq).Order("id").Take(dest).Error
+	if err == gorm.ErrRecordNotFound {
+		return false, nil
+	}
+	if err != nil {
+		return false, apperror.Internal("lookup soft-deleted inventory row: " + err.Error())
+	}
+	if err := tx.WithContext(ctx).Unscoped().Model(dest).Updates(map[string]interface{}{
+		"deleted_at": nil,
+		stockCol:     0,
+		"updated_by": actor,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		return false, apperror.Internal("restore inventory row: " + err.Error())
+	}
+	if err := tx.WithContext(ctx).Where(match+" AND deleted_at IS NULL", uniq).Order("id").Take(dest).Error; err != nil {
+		return false, apperror.Internal("reload restored inventory row: " + err.Error())
+	}
+	return true, nil
 }
