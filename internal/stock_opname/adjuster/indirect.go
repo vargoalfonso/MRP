@@ -2,12 +2,13 @@ package adjuster
 
 import (
 	"context"
-	"fmt"
+	"strings"
 	"time"
 
 	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	stockModels "github.com/ganasa18/go-template/internal/stock_opname/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -19,7 +20,7 @@ func (a *IndirectAdjuster) ResolveUniq(ctx context.Context, tx *gorm.DB, uniqCod
 	var row invModels.IndirectRawMaterial
 	err := tx.WithContext(ctx).Where("uniq_code = ? AND deleted_at IS NULL", uniqCode).Take(&row).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("indirect raw material uniq_code %s tidak ditemukan", uniqCode))
+		return newUniqSnapshot(ctx, tx, uniqCode)
 	}
 	if err != nil {
 		return nil, apperror.Internal("resolve indirect uniq: " + err.Error())
@@ -49,10 +50,30 @@ func (a *IndirectAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q strin
 func (a *IndirectAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry, sessionNumber, actor string) (*AdjustmentResult, error) {
 	var row invModels.IndirectRawMaterial
 	if err := lockInventoryRow(ctx, tx, &row, entry, ""); err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("indirect raw material record tidak ditemukan during stock opname")
+		if err != gorm.ErrRecordNotFound {
+			return nil, apperror.Internal("lock indirect row: " + err.Error())
 		}
-		return nil, apperror.Internal("lock indirect row: " + err.Error())
+		found, ferr := liveOrRevive(ctx, tx, &row, entry.UniqCode, "stock_qty", actor)
+		if ferr != nil {
+			return nil, ferr
+		}
+		if !found {
+			now := time.Now()
+			itemID := (*int64)(nil)
+			if item, ierr := findBOMItem(ctx, tx, entry.UniqCode); ierr == nil && item != nil {
+				itemID = &item.ID
+			}
+			normal := "normal"
+			row = invModels.IndirectRawMaterial{
+				UUID: uuid.New(), UniqCode: strings.TrimSpace(entry.UniqCode),
+				PartNumber: entry.PartNumber, PartName: entry.PartName, UOM: entry.UOM,
+				ItemID: itemID, Status: &normal,
+				CreatedBy: &actor, UpdatedBy: &actor, CreatedAt: now, UpdatedAt: now,
+			}
+			if cerr := tx.WithContext(ctx).Create(&row).Error; cerr != nil {
+				return nil, apperror.Internal("create indirect stock opname: " + cerr.Error())
+			}
+		}
 	}
 
 	qtyChange := entry.CountedQty - row.StockQty
