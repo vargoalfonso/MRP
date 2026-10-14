@@ -1032,6 +1032,12 @@ func (s *svc) GetPRLWithAllocation(ctx context.Context, prlID string, budgetType
 //
 //	existing_allocated + SUM(new suppliers for this item) ≤ item.Quantity
 func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req models.BulkFromPRLRequest, createdBy string) (*models.BulkFromPRLResult, error) {
+	// Sumber Customer PO / DN / SO (prl_id = "po:<uuid>" | "dn:<uuid>" | "so:<uuid>")
+	// tidak memakai baris PRL sama sekali.
+	if docUUID, ok := parseOrderSourceRef(req.PrlID); ok {
+		return s.bulkCreateFromOrderDocument(ctx, req, docUUID, createdBy)
+	}
+
 	periodDate, err := parsePeriod(req.Period)
 	if err != nil {
 		return nil, apperror.BadRequest("invalid period format, use 'Month YYYY', e.g. 'October 2025'")
