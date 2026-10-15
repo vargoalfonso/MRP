@@ -175,7 +175,11 @@ type FinishedGoods struct {
 }
 
 type ProcessFlow struct {
-	OpSeq        int     `json:"op_seq"`
+	OpSeq int `json:"op_seq"`
+	// process_id / process_code hanya ada di snapshot WO baru; dipakai untuk
+	// mencari nama proses terkini (display_name).
+	ProcessID    int64   `json:"process_id,omitempty"`
+	ProcessCode  string  `json:"process_code,omitempty"`
 	ProcessName  string  `json:"process_name"`
 	MachineName  *string `json:"machine_name"`
 	// Routing menyimpan nilai desimal (mis. 12.5). Dengan tipe int, json.Unmarshal

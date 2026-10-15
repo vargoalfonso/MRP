@@ -109,7 +109,8 @@ type WorkOrderSummaryResponse struct {
 // Status: "done" (SCAN_OUT recorded), "in_progress" (SCAN_IN only), "pending".
 type WorkOrderProcessStep struct {
 	OpSeq        int        `json:"op_seq"`
-	ProcessName  string     `json:"process_name"`
+	ProcessName  string     `json:"process_name"` // routing snapshot (scan key)
+	DisplayName  string     `json:"display_name"` // current process_name from System Parameters
 	Status       string     `json:"status"`
 	ScannedInAt  *time.Time `json:"scanned_in_at"`
 	ScannedOutAt *time.Time `json:"scanned_out_at"`

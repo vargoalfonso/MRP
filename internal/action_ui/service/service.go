@@ -19,6 +19,7 @@ import (
 	woModels "github.com/ganasa18/go-template/internal/work_order/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/ganasa18/go-template/pkg/inventoryconst"
+	"github.com/ganasa18/go-template/pkg/processname"
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -2107,7 +2108,16 @@ func isUniqFinished(status string) bool {
 	return false
 }
 
-func buildProcessSteps(flow []models.ProcessFlow, currentSeq int, finished bool) []dto.WODetailProcessStep {
+// loadProcessNames memuat nama proses terkini; gagal = pakai nama snapshot.
+func (s *service) loadProcessNames(ctx context.Context) processname.Resolver {
+	r, err := processname.Load(ctx, s.db)
+	if err != nil {
+		log.Printf("[poka-yoke] load process names: %v", err)
+	}
+	return r
+}
+
+func buildProcessSteps(flow []models.ProcessFlow, currentSeq int, finished bool, names processname.Resolver) []dto.WODetailProcessStep {
 	total := len(flow)
 	currentIndex := getCurrentIndex(currentSeq, total)
 	steps := make([]dto.WODetailProcessStep, 0, total)
@@ -2127,6 +2137,7 @@ func buildProcessSteps(flow []models.ProcessFlow, currentSeq int, finished bool)
 		steps = append(steps, dto.WODetailProcessStep{
 			OpSeq:       f.OpSeq,
 			ProcessName: f.ProcessName,
+			DisplayName: names.Name(f.ProcessID, f.ProcessCode, f.ProcessName),
 			MachineName: machineName,
 			Status:      status,
 		})
@@ -2478,6 +2489,7 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 
 	uniqs := make([]dto.WODetailUniq, 0, len(items))
 	var totalQty float64
+	processNames := s.loadProcessNames(ctx)
 
 	for _, item := range items {
 		totalQty += item.Quantity
@@ -2574,7 +2586,7 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 			ScanInCount:    item.ScanInCount,
 			ScanOutCount:   item.ScanOutCount,
 			MachineScanned: item.MachineID != 0,
-			ProcessFlow:    s.withScanProgress(ctx, item, buildProcessSteps(flow, item.CurrentStepSeq, isUniqFinished(item.Status))),
+			ProcessFlow:    s.withScanProgress(ctx, item, buildProcessSteps(flow, item.CurrentStepSeq, isUniqFinished(item.Status), processNames)),
 			SavedQty:       savedQty,
 			DandoriTime:    dandori,
 			SetupQCTime:    setupQC,
@@ -3011,7 +3023,7 @@ func (s *service) ScanMachine(ctx context.Context, req dto.ScanMachineRequest) (
 	if currentIndex+1 < totalStep {
 		nextProcess = flow[currentIndex+1].ProcessName
 	}
-	steps := s.withScanProgress(ctx, item, buildProcessSteps(flow, item.CurrentStepSeq, isUniqFinished(item.Status)))
+	steps := s.withScanProgress(ctx, item, buildProcessSteps(flow, item.CurrentStepSeq, isUniqFinished(item.Status), s.loadProcessNames(ctx)))
 
 	// Cari mesin yang di-scan
 	machine, err := s.repoProduction.FindMachineByNumber(ctx, strings.TrimSpace(req.Machine))
