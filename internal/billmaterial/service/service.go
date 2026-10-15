@@ -728,6 +728,7 @@ func (s *service) getBomDetail(ctx context.Context, bomID int64, version *int) (
 		IsCurrent:     bom.IsCurrent,
 		ReadOnly:      bom.Status != "Draft",
 		ChangeNote:    bom.ChangeNote,
+		QtyPerUniq:    bom.QtyPerUniq,
 		ID:            parent.ID,
 		UniqCode:      parent.UniqCode,
 		PartName:      parent.PartName,
@@ -899,6 +900,7 @@ func (s *service) CreateBomRevision(ctx context.Context, bomID int64, req models
 		Description:        sourceBom.Description,
 		ChangeNote:         req.ChangeNote,
 		IsCurrent:          true,
+		QtyPerUniq:         sourceBom.QtyPerUniq,
 	}
 	if err := s.repo.CreateBomItem(ctx, newBom); err != nil {
 		return nil, err
@@ -1200,6 +1202,7 @@ func (s *service) createDraftRevisionFrom(ctx context.Context, sourceBom *models
 		Status:             "Draft",
 		Description:        sourceBom.Description,
 		IsCurrent:          false,
+		QtyPerUniq:         sourceBom.QtyPerUniq,
 	}
 	if err := s.repo.CreateBomItem(ctx, newBom); err != nil {
 		return nil, err
@@ -3003,6 +3006,7 @@ func (s *service) GetBomFull(ctx context.Context, bomID int64) (*models.BomFullR
 		BomID:       bom.ID,
 		BomVersion:  bom.Version,
 		IsArchived:  !bom.IsCurrent,
+		QtyPerUniq:  bom.QtyPerUniq,
 		UniqCode:    parent.UniqCode,
 		PartName:    parent.PartName,
 		PartNumber:  parent.PartNumber,
@@ -3214,6 +3218,10 @@ func (s *service) ReplaceBom(ctx context.Context, bomID int64, req models.Replac
 			Description:        req.Description,
 			ChangeNote:         req.ChangeNote,
 			IsCurrent:          true,
+			QtyPerUniq:         oldBom.QtyPerUniq,
+		}
+		if req.QtyPerUniq != nil {
+			newBom.QtyPerUniq = *req.QtyPerUniq
 		}
 		if err := txSvc.repo.CreateBomItem(ctx, newBom); err != nil {
 			return err

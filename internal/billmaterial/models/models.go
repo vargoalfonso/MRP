@@ -189,8 +189,10 @@ type BomItem struct {
 	ChangeNote         *string    `gorm:"column:change_note;type:text"`
 	CreatedBy          *uuid.UUID `gorm:"column:created_by;type:uuid"`
 	IsCurrent          bool       `gorm:"column:is_current;default:false"`
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	// QtyPerUniq: QPU parent (header BOM). Default 1.
+	QtyPerUniq float64 `gorm:"column:qty_per_uniq;not null;default:1"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 func (BomItem) TableName() string { return "bom_item" }
