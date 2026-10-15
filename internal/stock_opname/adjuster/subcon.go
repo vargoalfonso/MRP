@@ -2,12 +2,13 @@ package adjuster
 
 import (
 	"context"
-	"fmt"
+	"strings"
 	"time"
 
 	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	stockModels "github.com/ganasa18/go-template/internal/stock_opname/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -21,7 +22,7 @@ func (a *SubconAdjuster) ResolveUniq(ctx context.Context, tx *gorm.DB, uniqCode 
 	var row invModels.SubconInventory
 	err := tx.WithContext(ctx).Where("uniq_code = ? AND deleted_at IS NULL", uniqCode).Take(&row).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("subcon inventory uniq_code %s tidak ditemukan", uniqCode))
+		return newUniqSnapshot(ctx, tx, uniqCode)
 	}
 	if err != nil {
 		return nil, apperror.Internal("resolve subcon uniq: " + err.Error())
@@ -55,10 +56,25 @@ func (a *SubconAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q string,
 func (a *SubconAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry, sessionNumber, actor string) (*AdjustmentResult, error) {
 	var row invModels.SubconInventory
 	if err := lockInventoryRow(ctx, tx, &row, entry, "COALESCE(total_received_qty, 0) = 0"); err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("subcon inventory record tidak ditemukan during stock opname")
+		if err != gorm.ErrRecordNotFound {
+			return nil, apperror.Internal("lock subcon row: " + err.Error())
 		}
-		return nil, apperror.Internal("lock subcon row: " + err.Error())
+		found, ferr := liveOrRevive(ctx, tx, &row, entry.UniqCode, "stock_at_vendor_qty", actor)
+		if ferr != nil {
+			return nil, ferr
+		}
+		if !found {
+			now := time.Now()
+			row = invModels.SubconInventory{
+				UUID: uuid.New(), UniqCode: strings.TrimSpace(entry.UniqCode),
+				PartNumber: entry.PartNumber, PartName: entry.PartName,
+				Status: "normal", ApprovalStatus: "approved",
+				CreatedBy: &actor, UpdatedBy: &actor, CreatedAt: now, UpdatedAt: now,
+			}
+			if cerr := tx.WithContext(ctx).Create(&row).Error; cerr != nil {
+				return nil, apperror.Internal("create subcon stock opname: " + cerr.Error())
+			}
+		}
 	}
 
 	qtyChange := entry.CountedQty - row.StockAtVendorQty

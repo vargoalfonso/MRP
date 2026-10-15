@@ -131,7 +131,7 @@ type BulkFromPRLRequest struct {
 // BulkItemInput is one UNIQ row from Step 2, with one or more supplier allocations.
 // The sum of all Suppliers[].Quantity MUST NOT exceed the PRL item quantity ceiling.
 type BulkItemInput struct {
-	PrlItemID           int64                  `json:"prl_item_id"   validate:"required"`
+	PrlItemID           int64                  `json:"prl_item_id"` // wajib untuk sumber PRL; kosong untuk sumber Customer PO / DN / SO
 	UniqCode            string                 `json:"uniq_code"     validate:"required"`
 	ChildUniqCode       *string                `json:"child_uniq_code"`
 	ProductModel        *string                `json:"product_model"`

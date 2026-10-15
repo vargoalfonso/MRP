@@ -2,7 +2,6 @@ package adjuster
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"time"
 
@@ -24,7 +23,7 @@ func (a *WIPAdjuster) ResolveUniq(ctx context.Context, tx *gorm.DB, uniqCode str
 	var row wipModels.WIPItem
 	err := tx.WithContext(ctx).Where("uniq = ?", uniqCode).Take(&row).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("wip uniq %s tidak ditemukan", uniqCode))
+		return newUniqSnapshot(ctx, tx, uniqCode)
 	}
 	if err != nil {
 		return nil, apperror.Internal("resolve WIP uniq: " + err.Error())
@@ -63,10 +62,9 @@ func ResolveWIPBOMUniq(ctx context.Context, tx *gorm.DB, uniqCode string) (*Uniq
 	err := tx.WithContext(ctx).
 		Where("LOWER(TRIM(uniq_code)) = LOWER(TRIM(?))", uniqCode).
 		Where("deleted_at IS NULL").
-		Where("LOWER(TRIM(COALESCE(status, ''))) = 'active'").
 		Take(&row).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("BOM item uniq %s tidak ditemukan atau belum Active", uniqCode))
+		return newUniqSnapshot(ctx, tx, uniqCode)
 	}
 	if err != nil {
 		return nil, apperror.Internal("resolve bulk WIP BOM item: " + err.Error())
@@ -116,9 +114,14 @@ func SearchWIPBOMUniqs(ctx context.Context, tx *gorm.DB, q string, limit int) ([
 
 func (a *WIPAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry, sessionNumber, actor string) (*AdjustmentResult, error) {
 	var row wipModels.WIPItem
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", entry.EntityID).Take(&row).Error; err != nil {
+	if entry.EntityID == nil {
+		// Belum ada baris wip_items: opname WIP bersifat audit-only, jadi tidak
+		// ada stok yang diubah dan tidak ada baris untuk dicatat di wip_logs.
+		return &AdjustmentResult{QtyChange: math.Round(entry.CountedQty)}, nil
+	}
+	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", *entry.EntityID).Take(&row).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("wip item tidak ditemukan during stock opname")
+			return &AdjustmentResult{QtyChange: math.Round(entry.CountedQty)}, nil
 		}
 		return nil, apperror.Internal("lock WIP row: " + err.Error())
 	}
@@ -138,13 +141,16 @@ func (a *WIPAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *s
 // active BOM item reference and keeps the operation audit-only because the
 // bulk WIP workflow has no wip_items stock row to update.
 func ApplyWIPBOMAdjustment(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry) (*AdjustmentResult, error) {
+	if entry.EntityID == nil {
+		return &AdjustmentResult{QtyChange: entry.CountedQty}, nil
+	}
 	var item bomModels.Item
 	if err := tx.WithContext(ctx).
 		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ? AND deleted_at IS NULL", entry.EntityID).
+		Where("id = ? AND deleted_at IS NULL", *entry.EntityID).
 		Take(&item).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("BOM item tidak ditemukan during bulk WIP stock opname")
+			return &AdjustmentResult{QtyChange: entry.CountedQty}, nil
 		}
 		return nil, apperror.Internal("lock bulk WIP BOM item: " + err.Error())
 	}

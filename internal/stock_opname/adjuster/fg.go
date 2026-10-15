@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
+	bomModels "github.com/ganasa18/go-template/internal/billmaterial/models"
 	fgModels "github.com/ganasa18/go-template/internal/finished_goods/models"
 	stockModels "github.com/ganasa18/go-template/internal/stock_opname/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/ganasa18/go-template/pkg/inventoryconst"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -17,16 +20,35 @@ type FGAdjuster struct{}
 
 func NewFGAdjuster() InventoryAdjuster { return &FGAdjuster{} }
 
+// ResolveUniq tidak lagi menolak uniq yang belum ada di finished_goods.
+// Urutan: (1) pakai baris finished_goods yang aktif, (2) kalau belum ada,
+// ambil data part dari BOM item (kalau ada) dengan SystemQty 0. Baris
+// finished_goods baru dibuat saat entry di-approve (lihat ApplyAdjustment).
 func (a *FGAdjuster) ResolveUniq(ctx context.Context, tx *gorm.DB, uniqCode string) (*UniqSnapshot, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
 	var row fgModels.FinishedGoods
 	err := tx.WithContext(ctx).Where("uniq_code = ? AND deleted_at IS NULL", uniqCode).Take(&row).Error
-	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound(fmt.Sprintf("finished goods uniq_code %s tidak ditemukan", uniqCode))
+	if err == nil {
+		return &UniqSnapshot{EntityID: &row.ID, PartNumber: row.PartNumber, PartName: row.PartName, UOM: row.UOM, SystemQty: row.StockQty}, nil
 	}
-	if err != nil {
+	if err != gorm.ErrRecordNotFound {
 		return nil, apperror.Internal("resolve FG uniq: " + err.Error())
 	}
-	return &UniqSnapshot{EntityID: &row.ID, PartNumber: row.PartNumber, PartName: row.PartName, UOM: row.UOM, SystemQty: row.StockQty}, nil
+
+	// FG belum ada -> data baru. Lengkapi info part dari BOM bila tersedia.
+	snap := &UniqSnapshot{SystemQty: 0}
+	var item bomModels.Item
+	ierr := tx.WithContext(ctx).
+		Where("LOWER(TRIM(uniq_code)) = LOWER(TRIM(?)) AND deleted_at IS NULL", uniqCode).
+		Take(&item).Error
+	if ierr == nil {
+		snap.PartNumber = item.PartNumber
+		snap.PartName = &item.PartName
+		snap.UOM = &item.Uom
+	} else if ierr != gorm.ErrRecordNotFound {
+		return nil, apperror.Internal("resolve FG BOM item: " + ierr.Error())
+	}
+	return snap, nil
 }
 
 func (a *FGAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q string, limit int) ([]UniqSnapshotResult, error) {
@@ -51,10 +73,16 @@ func (a *FGAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q string, lim
 func (a *FGAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry, sessionNumber, actor string) (*AdjustmentResult, error) {
 	var row fgModels.FinishedGoods
 	if err := lockInventoryRow(ctx, tx, &row, entry, ""); err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("finished goods record tidak ditemukan during stock opname")
+		if err != gorm.ErrRecordNotFound {
+			return nil, apperror.Internal("lock FG row: " + err.Error())
 		}
-		return nil, apperror.Internal("lock FG row: " + err.Error())
+		// Belum ada di finished_goods -> buat data baru (atau pulihkan yang
+		// pernah di-soft-delete) lalu lanjut sebagai penyesuaian dari qty 0.
+		created, cerr := a.createOrRestoreFG(ctx, tx, entry, actor)
+		if cerr != nil {
+			return nil, cerr
+		}
+		row = *created
 	}
 
 	before := row.StockQty
@@ -95,6 +123,62 @@ func (a *FGAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *st
 		return nil, apperror.Internal("append FG movement log: " + err.Error())
 	}
 	return &AdjustmentResult{QtyChange: delta, EntityID: &row.ID}, nil
+}
+
+// createOrRestoreFG membuat baris finished_goods baru untuk uniq yang belum
+// ada. Kalau ada baris soft-deleted dengan uniq_code sama (uniq_code unik),
+// baris itu dipulihkan dengan stok 0 supaya tidak bentrok unique.
+func (a *FGAdjuster) createOrRestoreFG(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry, actor string) (*fgModels.FinishedGoods, error) {
+	uniq := strings.TrimSpace(entry.UniqCode)
+	now := time.Now()
+
+	var existing fgModels.FinishedGoods
+	err := tx.WithContext(ctx).Unscoped().Where("uniq_code = ?", uniq).Take(&existing).Error
+	if err == nil {
+		updates := map[string]interface{}{
+			"deleted_at": nil,
+			"stock_qty":  0,
+			"updated_by": actor,
+			"updated_at": now,
+		}
+		if existing.PartNumber == nil && entry.PartNumber != nil {
+			updates["part_number"] = *entry.PartNumber
+		}
+		if existing.PartName == nil && entry.PartName != nil {
+			updates["part_name"] = *entry.PartName
+		}
+		if existing.UOM == nil && entry.UOM != nil {
+			updates["uom"] = *entry.UOM
+		}
+		if uerr := tx.WithContext(ctx).Unscoped().Model(&fgModels.FinishedGoods{}).
+			Where("id = ?", existing.ID).Updates(updates).Error; uerr != nil {
+			return nil, apperror.Internal("restore FG stock opname: " + uerr.Error())
+		}
+		existing.DeletedAt = nil
+		existing.StockQty = 0
+		return &existing, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return nil, apperror.Internal("lookup FG (unscoped): " + err.Error())
+	}
+
+	fg := &fgModels.FinishedGoods{
+		UUID:       uuid.New(),
+		UniqCode:   uniq,
+		PartNumber: entry.PartNumber,
+		PartName:   entry.PartName,
+		UOM:        entry.UOM,
+		StockQty:   0,
+		Status:     fgModels.FGStatusNormal,
+		CreatedBy:  &actor,
+		UpdatedBy:  &actor,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	if cerr := tx.WithContext(ctx).Create(fg).Error; cerr != nil {
+		return nil, apperror.Internal("create FG stock opname: " + cerr.Error())
+	}
+	return fg, nil
 }
 
 func fgStatus(stockQty float64, minThreshold, maxThreshold *float64) string {
