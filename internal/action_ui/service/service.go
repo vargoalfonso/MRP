@@ -3018,12 +3018,18 @@ func (s *service) ScanMachine(ctx context.Context, req dto.ScanMachineRequest) (
 	flow := resolveProcessFlow(item)
 	totalStep := len(flow)
 	currentIndex := getCurrentIndex(item.CurrentStepSeq, totalStep)
-	expectedProcess := flow[currentIndex].ProcessName
+	currentFlow := flow[currentIndex]
+	processNames := s.loadProcessNames(ctx)
+	// expectedProcess = key snapshot (disimpan ke WO item); yang dikirim ke FE
+	// adalah nama proses terkini dari System Parameters.
+	expectedProcess := currentFlow.ProcessName
+	expectedName := processNames.Name(currentFlow.ProcessID, currentFlow.ProcessCode, currentFlow.ProcessName)
 	nextProcess := ""
 	if currentIndex+1 < totalStep {
-		nextProcess = flow[currentIndex+1].ProcessName
+		nf := flow[currentIndex+1]
+		nextProcess = processNames.Name(nf.ProcessID, nf.ProcessCode, nf.ProcessName)
 	}
-	steps := s.withScanProgress(ctx, item, buildProcessSteps(flow, item.CurrentStepSeq, isUniqFinished(item.Status), s.loadProcessNames(ctx)))
+	steps := s.withScanProgress(ctx, item, buildProcessSteps(flow, item.CurrentStepSeq, isUniqFinished(item.Status), processNames))
 
 	// Cari mesin yang di-scan
 	machine, err := s.repoProduction.FindMachineByNumber(ctx, strings.TrimSpace(req.Machine))
@@ -3031,7 +3037,7 @@ func (s *service) ScanMachine(ctx context.Context, req dto.ScanMachineRequest) (
 		return &dto.ScanMachineResponse{
 			Valid:           false,
 			Message:         fmt.Sprintf("Mesin \"%s\" tidak ditemukan.", req.Machine),
-			ExpectedProcess: expectedProcess,
+			ExpectedProcess: expectedName,
 			CurrentStep:     currentIndex + 1,
 			TotalStep:       totalStep,
 			NextProcess:     nextProcess,
@@ -3039,17 +3045,44 @@ func (s *service) ScanMachine(ctx context.Context, req dto.ScanMachineRequest) (
 		}, nil
 	}
 
-	// Proses milik mesin tsb
+	// Proses milik mesin tsb (Master Machine > Process Name)
+	var machineProcessID int64
 	scannedProcess := ""
 	if machine.ProcessID != nil {
-		if name, e := s.repoProduction.FindProcessNameByID(ctx, *machine.ProcessID); e == nil {
-			scannedProcess = name
+		machineProcessID = *machine.ProcessID
+		scannedProcess = processNames.NameByID(machineProcessID)
+		if scannedProcess == "" {
+			if name, e := s.repoProduction.FindProcessNameByID(ctx, machineProcessID); e == nil {
+				scannedProcess = name
+			}
 		}
 	}
 
-	// [flex-machine] Validasi "proses mesin harus sama dengan proses uniq" DIHAPUS agar
-	// mesin apa pun bisa dipakai untuk proses ini (lebih fleksibel). scannedProcess tetap
-	// dihitung & dikembalikan sebagai informasi saja.
+	// [machine-process-match] Mesin hanya boleh dipakai untuk proses yang sama
+	// dengan proses terdaftar di Master Machine. Proses yang tidak terdaftar di
+	// System Parameters (mis. "RM Processing") tidak divalidasi.
+	if processNames.Known(currentFlow.ProcessID, currentFlow.ProcessCode, currentFlow.ProcessName) &&
+		!processNames.SameProcess(machineProcessID, currentFlow.ProcessID, currentFlow.ProcessCode, currentFlow.ProcessName) {
+		msg := fmt.Sprintf("Mesin %s terdaftar untuk proses \"%s\", tidak sesuai dengan proses saat ini \"%s\".",
+			machine.MachineNumber, scannedProcess, expectedName)
+		if machineProcessID == 0 {
+			msg = fmt.Sprintf("Mesin %s belum memiliki proses di Master Machine, tidak bisa dipakai untuk proses \"%s\".",
+				machine.MachineNumber, expectedName)
+		}
+		return &dto.ScanMachineResponse{
+			Valid:           false,
+			Message:         msg,
+			MachineNumber:   machine.MachineNumber,
+			MachineName:     machine.MachineName,
+			ProductionLine:  machine.ProductionLine,
+			ScannedProcess:  scannedProcess,
+			ExpectedProcess: expectedName,
+			CurrentStep:     currentIndex + 1,
+			TotalStep:       totalStep,
+			NextProcess:     nextProcess,
+			ProcessFlow:     steps,
+		}, nil
+	}
 
 	// Set mesin ke uniq (proses tetap = expectedProcess milik uniq ini).
 	if err := s.repoProduction.UpdateWOItemMachine(ctx, item.ID, int(machine.ID), expectedProcess); err != nil {
@@ -3058,13 +3091,13 @@ func (s *service) ScanMachine(ctx context.Context, req dto.ScanMachineRequest) (
 
 	return &dto.ScanMachineResponse{
 		Valid:           true,
-		Message:         fmt.Sprintf("Mesin %s digunakan untuk proses \"%s\".", machine.MachineNumber, expectedProcess),
+		Message:         fmt.Sprintf("Mesin %s digunakan untuk proses \"%s\".", machine.MachineNumber, expectedName),
 		MachineID:       strconv.Itoa(int(machine.ID)),
 		MachineNumber:   machine.MachineNumber,
 		MachineName:     machine.MachineName,
 		ProductionLine:  machine.ProductionLine,
 		ScannedProcess:  scannedProcess,
-		ExpectedProcess: expectedProcess,
+		ExpectedProcess: expectedName,
 		CurrentStep:     currentIndex + 1,
 		TotalStep:       totalStep,
 		NextProcess:     nextProcess,
