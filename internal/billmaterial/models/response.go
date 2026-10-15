@@ -123,6 +123,7 @@ type BomDetailResponse struct {
 	PartNumber    *string              `json:"part_number"`
 	Model         *string              `json:"model"`
 	Version       *string              `json:"version"`
+	QtyPerUniq    float64              `json:"qty_per_uniq"` // QPU parent
 	Asset         AssetInfo            `json:"asset"`
 	Status        string               `json:"status"`
 	Description   *string              `json:"description"`
@@ -197,6 +198,7 @@ type BomFullResponse struct {
 	PartNumber    *string              `json:"part_number"`
 	Model         *string              `json:"model"`
 	Uom           string               `json:"uom"`
+	QtyPerUniq    float64              `json:"qty_per_uniq"` // QPU parent
 	Status        string               `json:"status"`
 	Description   *string              `json:"description"`
 	Asset         AssetInfo            `json:"asset"`

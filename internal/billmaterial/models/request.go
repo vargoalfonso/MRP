@@ -221,13 +221,15 @@ type ReplaceBomChildInput struct {
 
 // ReplaceBomRequest is the JSON payload in the "payload" multipart field.
 type ReplaceBomRequest struct {
-	ChangeNote    *string                `json:"change_note" validate:"omitempty,max=2000"`
-	PartName      string                 `json:"part_name" validate:"required,max=255"`
-	PartNumber    *string                `json:"part_number"`
-	Model         *string                `json:"model"`
-	Uom           string                 `json:"uom" validate:"required,max=32"`
-	Status        string                 `json:"status" validate:"omitempty,oneof=Active Inactive Draft"`
-	Description   *string                `json:"description"`
+	ChangeNote  *string `json:"change_note" validate:"omitempty,max=2000"`
+	PartName    string  `json:"part_name" validate:"required,max=255"`
+	PartNumber  *string `json:"part_number"`
+	Model       *string `json:"model"`
+	Uom         string  `json:"uom" validate:"required,max=32"`
+	Status      string  `json:"status" validate:"omitempty,oneof=Active Inactive Draft"`
+	Description *string `json:"description"`
+	// QtyPerUniq: QPU parent (opsional). nil = pertahankan nilai BOM lama.
+	QtyPerUniq    *float64               `json:"qty_per_uniq" validate:"omitempty,gt=0"`
 	AssetID       *int64                 `json:"asset_id"`
 	UploadKey     *string                `json:"upload_key"`
 	MaterialSpec  *MaterialSpecInput     `json:"material_spec"`

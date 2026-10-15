@@ -554,7 +554,7 @@ func (r *repository) GetRoutingWithOps(ctx context.Context, itemID int64) (*mode
 	if err := r.db.WithContext(ctx).
 		Joins("JOIN process_parameters pp ON pp.id = routing_operations.process_id").
 		Where("routing_header_id = ?", header.ID).
-		Order("pp.sequence ASC, routing_operations.op_seq ASC").
+		Order("routing_operations.op_seq ASC, pp.sequence ASC, routing_operations.id ASC").
 		Find(&ops).Error; err != nil {
 		return nil, nil, nil, apperror.InternalWrap("GetRoutingOps", err)
 	}
@@ -741,7 +741,7 @@ func (r *repository) GetRoutingOperationsByHeaderIDs(ctx context.Context, header
 	if err := r.db.WithContext(ctx).
 		Joins("JOIN process_parameters pp ON pp.id = routing_operations.process_id").
 		Where("routing_header_id IN ?", headerIDs).
-		Order("routing_header_id ASC, pp.sequence ASC, routing_operations.op_seq ASC").
+		Order("routing_header_id ASC, routing_operations.op_seq ASC, pp.sequence ASC, routing_operations.id ASC").
 		Find(&ops).Error; err != nil {
 		return nil, apperror.InternalWrap("GetRoutingOperationsByHeaderIDs", err)
 	}
