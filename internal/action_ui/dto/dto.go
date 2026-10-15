@@ -440,7 +440,9 @@ type RMRepackResponse struct {
 // Langkah proses lengkap untuk Poka Yoke (Step 1)
 type WODetailProcessStep struct {
 	OpSeq       int    `json:"op_seq"`
-	ProcessName string `json:"process_name"`
+	ProcessName string `json:"process_name"` // snapshot routing (key scan log)
+	// Nama proses terkini dari System Parameters (untuk tampilan).
+	DisplayName string `json:"display_name"`
 	MachineName string `json:"machine_name"`
 	// done | in_progress (sudah SCAN_IN, belum SCAN_OUT) | current | pending
 	Status string `json:"status"`

@@ -20,6 +20,7 @@ import (
 	"github.com/ganasa18/go-template/pkg/bulkimport"
 	"github.com/ganasa18/go-template/pkg/creatorresolver"
 	"github.com/ganasa18/go-template/pkg/pagination"
+	"github.com/ganasa18/go-template/pkg/processname"
 	"github.com/google/uuid"
 	"github.com/skip2/go-qrcode"
 	"github.com/xuri/excelize/v2"
@@ -1391,7 +1392,8 @@ func (s *service) GetRMProcessingSummary(ctx context.Context) (*woModels.WorkOrd
 // when only SCAN_IN exists, otherwise "pending". Process names are matched
 // case-insensitively; scan types accept both "SCAN_IN"/"IN" and "SCAN_OUT"/"OUT".
 // When the routing is empty, the steps are derived from process_name / scans.
-func buildProcessSteps(flow datatypes.JSON, scans []woRepo.ProcessScanRow) []woModels.WorkOrderProcessStep {
+// DisplayName carries the current process_name from System Parameters.
+func buildProcessSteps(flow datatypes.JSON, scans []woRepo.ProcessScanRow, names processname.Resolver) []woModels.WorkOrderProcessStep {
 	type scanState struct{ in, out *time.Time }
 	byProcess := make(map[string]*scanState)
 	norm := func(v string) string { return strings.ToLower(strings.TrimSpace(v)) }
@@ -1428,7 +1430,12 @@ func buildProcessSteps(flow datatypes.JSON, scans []woRepo.ProcessScanRow) []woM
 		if name == "" {
 			continue
 		}
-		step := woModels.WorkOrderProcessStep{OpSeq: fs.OpSeq, ProcessName: name, Status: "pending"}
+		step := woModels.WorkOrderProcessStep{
+			OpSeq:       fs.OpSeq,
+			ProcessName: name,
+			DisplayName: names.Name(fs.ProcessID, fs.ProcessCode, name),
+			Status:      "pending",
+		}
 		if st := byProcess[norm(name)]; st != nil {
 			step.ScannedInAt, step.ScannedOutAt = st.in, st.out
 			switch {
@@ -1468,6 +1475,11 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 		}
 	}
 
+	processNames, nameErr := processname.Load(ctx, s.db)
+	if nameErr != nil {
+		slog.Warn("work order detail: load process names failed", slog.Any("error", nameErr))
+	}
+
 	items := make([]woModels.WorkOrderDetailItem, 0, len(itemRows))
 	for _, it := range itemRows {
 		var itemQR *string
@@ -1484,7 +1496,7 @@ func (s *service) GetDetail(ctx context.Context, woUUID string) (*woModels.WorkO
 			ProcessName:     it.ProcessName,
 			Status:          it.Status,
 			ProcessFlowJSON: jsonRawOrEmpty(it.ProcessFlowJSON),
-			ProcessSteps:    buildProcessSteps(it.ProcessFlowJSON, scansByItem[it.ID]),
+			ProcessSteps:    buildProcessSteps(it.ProcessFlowJSON, scansByItem[it.ID], processNames),
 			QRDataURL:       itemQR,
 		})
 	}
@@ -2077,6 +2089,8 @@ func (s *service) fetchPartMeta(ctx context.Context, tx *gorm.DB, uniqCodes []st
 // work_order_items.process_flow_json at WO creation time.
 type processFlowStep struct {
 	OpSeq        int      `json:"op_seq"`
+	ProcessID    int64    `json:"process_id,omitempty"`
+	ProcessCode  string   `json:"process_code,omitempty"`
 	ProcessName  string   `json:"process_name"`
 	SubCon       bool     `json:"sub_con"`
 	IsAssembly   bool     `json:"is_assembly"`
@@ -2100,6 +2114,8 @@ func (s *service) fetchProcessFlows(ctx context.Context, tx *gorm.DB, uniqCodes 
 	type opRow struct {
 		UniqCode     string   `gorm:"column:uniq_code"`
 		OpSeq        int      `gorm:"column:op_seq"`
+		ProcessID    int64    `gorm:"column:process_id"`
+		ProcessCode  string   `gorm:"column:process_code"`
 		ProcessName  string   `gorm:"column:process_name"`
 		SubCon       bool     `gorm:"column:sub_con"`
 		IsAssembly   bool     `gorm:"column:is_assembly"`
@@ -2112,6 +2128,8 @@ func (s *service) fetchProcessFlows(ctx context.Context, tx *gorm.DB, uniqCodes 
 		SELECT DISTINCT ON (i.uniq_code, ro.op_seq)
 		       i.uniq_code,
 		       ro.op_seq,
+		       pp.id               AS process_id,
+		       pp.process_code,
 		       pp.process_name,
 		       pp.sub_con,
 		       pp.is_assembly,
@@ -2140,6 +2158,8 @@ func (s *service) fetchProcessFlows(ctx context.Context, tx *gorm.DB, uniqCodes 
 	for _, r := range opRows {
 		grouped[r.UniqCode] = append(grouped[r.UniqCode], processFlowStep{
 			OpSeq:        r.OpSeq,
+			ProcessID:    r.ProcessID,
+			ProcessCode:  r.ProcessCode,
 			ProcessName:  r.ProcessName,
 			SubCon:       r.SubCon,
 			IsAssembly:   r.IsAssembly,
