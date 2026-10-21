@@ -233,6 +233,12 @@ func (s *service) reconcileFGAfterQCFinish(ctx context.Context, tx *gorm.DB, ite
 		moves = append(moves, fgMove{fgMoveQCFinal, 0, kanban,
 			fmt.Sprintf("QC Round 3 selesai: good %s, tanpa NG/scrap", fmtQty(good))})
 	}
+	// [assembly-stock] hasil WO ini masuk Inventory WIP: koreksi QC diterapkan ke WIP.
+	if toWIP, err := s.finalOutputGoesToWIP(tx, item.ItemUniqCode, wo); err != nil {
+		return err
+	} else if toWIP {
+		return s.applyWIPMoves(tx, item, wo, performedBy, moves)
+	}
 	return s.applyFGMoves(tx, item.ItemUniqCode, wo.WONumber, performedBy, now, moves)
 }
 

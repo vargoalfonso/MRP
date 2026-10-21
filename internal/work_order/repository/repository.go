@@ -216,6 +216,13 @@ func (r *repository) UpdateWorkOrderApprovalStatus(ctx context.Context, tx *gorm
 	if approvalStatus == "Approved" {
 		cols["status"] = "Pending"
 	}
+	// [assembly-stock] WO ditolak -> lepaskan lock stok komponen (jika ada).
+	if approvalStatus == "Rejected" {
+		if err := r.q(ctx, tx).Exec(`UPDATE assembly_stock_locks SET status = 'released', updated_at = NOW()
+			WHERE wo_id = ? AND status = 'active'`, woID).Error; err != nil {
+			return err
+		}
+	}
 	res := r.q(ctx, tx).
 		Table("work_orders").
 		Where("id = ?", woID).

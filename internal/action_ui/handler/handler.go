@@ -153,6 +153,7 @@ func (h *HTTPHandler) WOList(ctx *app.Context) *app.CostumeResponse {
 }
 
 // GET /api/v1/action-ui/production/wo-detail?wo=WO-204501
+// `wo` boleh berisi nomor kanban: yang dimuat adalah WO pemilik kanban.
 func (h *HTTPHandler) WODetail(ctx *app.Context) *app.CostumeResponse {
 	wo := ctx.Query("wo")
 	if wo == "" {

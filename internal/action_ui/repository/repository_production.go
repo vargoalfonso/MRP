@@ -19,6 +19,7 @@ type IProductionRepository interface {
 	FindMachineByID(ctx context.Context, id int) (models.MasterMachine, error)
 	FindWOByNumber(ctx context.Context, woNumber string) (models.WorkOrder, error)
 	FindWOByKanbanNumber(ctx context.Context, woNumber string) (models.WorkOrderItem, error)
+	FindWOItemByKanbanExact(ctx context.Context, kanbanNumber string) (models.WorkOrderItem, error)
 	FindWOItemsByWOID(ctx context.Context, woid int64) ([]models.WorkOrderItem, error)
 	FindWOItemByUniq(ctx context.Context, uniq string) (models.WorkOrderItem, error)
 	FindWOItemByUniqAndWO(ctx context.Context, uniq string, woID int64) (models.WorkOrderItem, error)
@@ -93,7 +94,7 @@ type IProductionRepository interface {
 	// [assembly-fg] children level 1 dari BOM UNIQ parent + stok Finished Goods.
 	FindAssemblyChildrenByUniq(ctx context.Context, uniq string) ([]AssemblyChildRow, error)
 	// [assembly-fg] kanban Finished Goods (kanban WO yang sudah FINISHED) satu UNIQ.
-	ListFGPackingList(ctx context.Context, uniqCode string) ([]RMPackingRow, error)
+	ListChildKanbanPackingList(ctx context.Context, uniqCode string) ([]RMPackingRow, error)
 	// [qpu-autocalc] QPU (qty_per_uniq) UNIQ sebagai child di BOM; found=false
 	// bila UNIQ tidak pernah jadi child (parent / root).
 	FindItemQPU(ctx context.Context, woID int64, uniq string) (qpu float64, found bool, err error)
@@ -369,6 +370,25 @@ func (r *productionRepo) FindWOByKanbanNumber(ctx context.Context, woNumber stri
 	}
 
 	return wo, nil
+}
+
+// [scan-kanban] cari kanban (wo item) dengan nomor kanban PERSIS sama, supaya
+// scan QR kanban di Step 1 langsung tertuju ke kanban yang benar.
+func (r *productionRepo) FindWOItemByKanbanExact(ctx context.Context, kanbanNumber string) (models.WorkOrderItem, error) {
+	var item models.WorkOrderItem
+
+	err := r.db.WithContext(ctx).
+		Where("kanban_number = ?", kanbanNumber).
+		First(&item).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return item, apperror.NotFound("kanban tidak ditemukan")
+		}
+		return item, err
+	}
+
+	return item, nil
 }
 
 func (r *productionRepo) FindWOItemsByWOID(ctx context.Context, woid int64) ([]models.WorkOrderItem, error) {
@@ -1236,14 +1256,15 @@ type AssemblyChildRow struct {
 	QtyPerUniq *float64 `gorm:"column:qty_per_uniq"`
 	LineUom    *string  `gorm:"column:line_uom"`
 	ItemUom    *string  `gorm:"column:item_uom"`
-	FGID       *int64   `gorm:"column:fg_id"`
-	FGUom      *string  `gorm:"column:fg_uom"`
+	WIPID      *int64   `gorm:"column:wip_id"`
+	WIPUom     *string  `gorm:"column:wip_uom"`
 	StockQty   *float64 `gorm:"column:stock_qty"`
 }
 
 // FindAssemblyChildrenByUniq mengembalikan children level 1 pada BOM aktif
-// milik UNIQ (parent), beserta stok Finished Goods masing-masing. Kosong bila
-// UNIQ tidak punya BOM sendiri / tidak punya children (bukan parent).
+// milik UNIQ (parent), beserta stok Inventory WIP masing-masing (hasil WO
+// child part masuk WIP, bukan FG). Kosong bila UNIQ tidak punya BOM sendiri /
+// tidak punya children (bukan parent).
 func (r *productionRepo) FindAssemblyChildrenByUniq(ctx context.Context, uniq string) ([]AssemblyChildRow, error) {
 	uniq = strings.TrimSpace(uniq)
 	if uniq == "" {
@@ -1267,11 +1288,11 @@ func (r *productionRepo) FindAssemblyChildrenByUniq(ctx context.Context, uniq st
 		SELECT
 			c.uniq_code, c.part_name, c.part_number,
 			bl.qty_per_uniq, bl.uom AS line_uom, c.uom AS item_uom,
-			fg.id AS fg_id, fg.uom AS fg_uom, fg.stock_qty
+			wi.id AS wip_id, wi.uom AS wip_uom, wi.stock_qty
 		FROM bom_lines bl
 		JOIN cur_bom cb ON cb.id = bl.bom_item_id
 		JOIN items c ON c.id = bl.child_item_id
-		LEFT JOIN finished_goods fg ON fg.uniq_code = c.uniq_code AND fg.deleted_at IS NULL
+		LEFT JOIN wip_inventories wi ON wi.uniq_code = c.uniq_code
 		WHERE bl.level = 1 AND bl.parent_item_id = cb.item_id
 		ORDER BY bl.line_no NULLS LAST, bl.id
 	`, uniq).Scan(&rows).Error
@@ -1281,10 +1302,11 @@ func (r *productionRepo) FindAssemblyChildrenByUniq(ctx context.Context, uniq st
 	return rows, nil
 }
 
-// ListFGPackingList mengambil kanban Finished Goods satu UNIQ: kanban WO yang
-// sudah selesai diproduksi. Qty saat ini = qty berjalan kanban (qty_opname,
-// fallback total_good_qty).
-func (r *productionRepo) ListFGPackingList(ctx context.Context, uniqCode string) ([]RMPackingRow, error) {
+// ListChildKanbanPackingList mengambil kanban child UNIQ untuk WO Assembly:
+// kanban WO yang sudah selesai diproduksi DAN hasilnya masuk Inventory WIP
+// (movement production_in). Kanban child lama yang masuk FG tidak ikut.
+// Qty saat ini = qty berjalan kanban (qty_opname, fallback total_good_qty).
+func (r *productionRepo) ListChildKanbanPackingList(ctx context.Context, uniqCode string) ([]RMPackingRow, error) {
 	uniqCode = strings.TrimSpace(uniqCode)
 	if uniqCode == "" {
 		return []RMPackingRow{}, nil
@@ -1304,7 +1326,7 @@ func (r *productionRepo) ListFGPackingList(ctx context.Context, uniqCode string)
 			) AS qty_max,
 			woi.status   AS status,
 			w.wo_number  AS wo_number,
-			'finished_goods' AS source
+			'wip_inventory' AS source
 		FROM work_order_items woi
 		JOIN work_orders w ON w.id = woi.wo_id
 		LEFT JOIN LATERAL (
@@ -1317,10 +1339,16 @@ func (r *productionRepo) ListFGPackingList(ctx context.Context, uniqCode string)
 		WHERE woi.item_uniq_code = ?
 		  AND UPPER(woi.status) IN ('FINISHED', 'DONE', 'COMPLETED')
 		  AND COALESCE(woi.kanban_number, '') <> ''
+		  AND EXISTS (
+			SELECT 1 FROM wip_inventory_movements m
+			WHERE m.kanban_number = woi.kanban_number
+			  AND m.uniq_code = woi.item_uniq_code
+			  AND m.movement_type = 'production_in'
+		  )
 		ORDER BY woi.updated_at ASC, woi.kanban_number ASC
 	`, uniqCode).Scan(&rows).Error
 	if err != nil {
-		return nil, apperror.Internal("action_ui list fg packing list: " + err.Error())
+		return nil, apperror.Internal("action_ui list child kanban packing list: " + err.Error())
 	}
 	if rows == nil {
 		rows = []RMPackingRow{}

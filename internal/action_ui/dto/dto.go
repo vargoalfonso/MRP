@@ -283,6 +283,11 @@ type WODetailUniq struct {
 	// [machine-optional] false = UNIQ tanpa proses di Poka Yoke atau material
 	// indirect; Scan In/Out tidak perlu scan mesin.
 	MachineRequired bool `json:"machine_required"`
+	// [hidden-kanban] true = kanban tidak diproses di Scan In/Out dan tidak
+	// menjadi syarat "Selesaikan Produksi". HiddenReason: "indirect" (semua
+	// Material Spec indirect) atau "child_part" (child BOM pada WO Assembly).
+	Hidden       bool   `json:"hidden"`
+	HiddenReason string `json:"hidden_reason,omitempty"`
 
 	SavedQty     float64                     `json:"saved_qty"`
 	DandoriTime  string                      `json:"dandori_time"`
