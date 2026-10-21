@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -85,17 +86,28 @@ func (r *repository) wipListBase(ctx context.Context, includeDone bool) *gorm.DB
 	return q
 }
 
+// wipInventoryKanbanSQL: pcs per kanban terbaru untuk sebuah uniq.
+const wipKanbanSubquery = `COALESCE((SELECT kp.kanban_qty FROM kanban_parameters kp
+				WHERE kp.item_uniq_code = %s
+				ORDER BY kp.id DESC LIMIT 1), 0)`
+
+// FindAllWIPPaginated menggabungkan dua sumber untuk halaman WIP Inventory:
+//   - wip_items       : antrean/proses WIP per WO (id = wips.id)
+//   - wip_inventories : stok WIP per UNIQ hasil WO New child part dan stock opname
+//     (id = -wip_inventories.id supaya tidak bentrok dengan wips.id)
 func (r *repository) FindAllWIPPaginated(ctx context.Context, page, limit int, includeDone bool) ([]models.WIPListResponse, int64, error) {
 	var data []models.WIPListResponse
 	var total int64
 
-	if err := r.wipListBase(ctx, includeDone).Count(&total).Error; err != nil {
-		return nil, 0, err
+	doneFilter := ""
+	if !includeDone {
+		doneFilter = " WHERE COALESCE(wip_items.status, 'queue') <> 'done'"
 	}
+	kanbanQueue := fmt.Sprintf(wipKanbanSubquery, "wip_items.uniq")
+	kanbanInv := fmt.Sprintf(wipKanbanSubquery, "wi.uniq_code")
 
-	err := r.wipListBase(ctx, includeDone).
-		Select(`
-			wips.id AS id,
+	union := `
+		SELECT wips.id AS id,
 			CASE
 				WHEN COALESCE(wip_items.status, 'queue') = 'queue'
 					AND COALESCE(wip_items.from_process, '') <> ''
@@ -108,20 +120,47 @@ func (r *repository) FindAllWIPPaginated(ctx context.Context, page, limit int, i
 			COALESCE(items.part_number, '') AS part_number,
 			COALESCE(items.part_name, '') AS part_info,
 			COALESCE(work_orders.wo_number, '') AS wo_number,
-			COALESCE(wip_items.stock, 0) AS stock,
+			COALESCE(wip_items.stock, 0)::int AS stock,
 			COALESCE(wip_items.packing_number, '') AS kanban_number,
 			COALESCE(wip_items.wip_type, '') AS type,
-			COALESCE((SELECT kp.kanban_qty FROM kanban_parameters kp
-				WHERE kp.item_uniq_code = wip_items.uniq
-				ORDER BY kp.id DESC LIMIT 1), 0) AS stock_to_complete_kanban,
-			COALESCE((SELECT kp.kanban_qty FROM kanban_parameters kp
-				WHERE kp.item_uniq_code = wip_items.uniq
-				ORDER BY kp.id DESC LIMIT 1), 0) AS kanban
-		`).
-		Order("wip_items.updated_at DESC, wip_items.id DESC").
-		Offset((page - 1) * limit).
-		Limit(limit).
-		Scan(&data).Error
+			` + kanbanQueue + ` AS stock_to_complete_kanban,
+			` + kanbanQueue + ` AS kanban,
+			wip_items.updated_at AS sort_at,
+			wip_items.id AS sort_id
+		FROM wip_items
+		JOIN wips ON wips.id = wip_items.wip_id
+		LEFT JOIN work_orders ON work_orders.id = wips.wo_id
+		LEFT JOIN items ON items.uniq_code = wip_items.uniq AND items.deleted_at IS NULL` + doneFilter + `
+		UNION ALL
+		SELECT -wi.id AS id,
+			'Inventory WIP' AS process,
+			'available' AS status,
+			'' AS waiting_process,
+			wi.uniq_code AS uniq,
+			COALESCE(i.part_number, wi.part_number, '') AS part_number,
+			COALESCE(i.part_name, wi.part_name, '') AS part_info,
+			COALESCE(wi.wo_number, '') AS wo_number,
+			ROUND(wi.stock_qty)::int AS stock,
+			'' AS kanban_number,
+			'inventory' AS type,
+			` + kanbanInv + ` AS stock_to_complete_kanban,
+			` + kanbanInv + ` AS kanban,
+			wi.updated_at AS sort_at,
+			wi.id AS sort_id
+		FROM wip_inventories wi
+		LEFT JOIN items i ON i.uniq_code = wi.uniq_code AND i.deleted_at IS NULL
+		WHERE wi.stock_qty > 0`
+
+	if err := r.db.WithContext(ctx).Raw(`SELECT COUNT(*) FROM (` + union + `) u`).Scan(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT id, process, status, waiting_process, uniq, part_number, part_info, wo_number,
+		       stock, kanban_number, type, stock_to_complete_kanban, kanban
+		FROM (`+union+`) u
+		ORDER BY sort_at DESC, sort_id DESC
+		LIMIT ? OFFSET ?`, limit, (page-1)*limit).Scan(&data).Error
 	if err != nil {
 		return nil, 0, err
 	}
@@ -130,6 +169,39 @@ func (r *repository) FindAllWIPPaginated(ctx context.Context, page, limit int, i
 }
 
 func (r *repository) FindWIPByID(ctx context.Context, id int64) (*models.WIPDetailResponse, error) {
+	// id negatif = baris Inventory WIP (wip_inventories), bukan antrean wip_items.
+	if id < 0 {
+		var inv struct {
+			Uniq       string
+			PartNumber string
+			PartName   string
+			WONumber   string
+			Stock      int
+		}
+		res := r.db.WithContext(ctx).Raw(`
+			SELECT wi.uniq_code AS uniq,
+			       COALESCE(i.part_number, wi.part_number, '') AS part_number,
+			       COALESCE(i.part_name, wi.part_name, '') AS part_name,
+			       COALESCE(wi.wo_number, '') AS wo_number,
+			       ROUND(wi.stock_qty)::int AS stock
+			FROM wip_inventories wi
+			LEFT JOIN items i ON i.uniq_code = wi.uniq_code AND i.deleted_at IS NULL
+			WHERE wi.id = ?`, -id).Scan(&inv)
+		if res.Error != nil {
+			return nil, res.Error
+		}
+		if res.RowsAffected == 0 {
+			return nil, gorm.ErrRecordNotFound
+		}
+		return &models.WIPDetailResponse{
+			ID:         id,
+			WONumber:   inv.WONumber,
+			Uniq:       inv.Uniq,
+			PartNumber: inv.PartNumber,
+			PartName:   inv.PartName,
+			Processes:  []models.WIPProcess{{Process: "Inventory WIP", Stock: inv.Stock}},
+		}, nil
+	}
 	var rows []struct {
 		ID         int64
 		WONumber   string

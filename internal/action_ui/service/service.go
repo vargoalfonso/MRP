@@ -18,6 +18,7 @@ import (
 	scrapModels "github.com/ganasa18/go-template/internal/scrap_stock/models"
 	woModels "github.com/ganasa18/go-template/internal/work_order/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/assemblystock"
 	"github.com/ganasa18/go-template/pkg/inventoryconst"
 	"github.com/ganasa18/go-template/pkg/processname"
 	"github.com/google/uuid"
@@ -659,6 +660,11 @@ func (s *service) scanOut(ctx context.Context, req dto.ScanOutRequest) error {
 		// Process Round 3 (QCFinish) berdasarkan Total Production Quantity.
 		item.TotalGoodQty = qtyOut
 
+		// [assembly-stock] Scan Out proses assembly: kurangi stok komponen yang di-lock WO Assembly.
+		if err := s.consumeAssemblyComponents(tx, item, flow, currentIndex, qtyOut, req.ScannedBy, now); err != nil {
+			return err
+		}
+
 		if err := s.advanceProcessAfterScanOut(ctx, tx, &item, qtyOut, req.ScannedBy); err != nil {
 			return err
 		}
@@ -690,6 +696,11 @@ func (s *service) CompleteProduction(ctx context.Context, woID int64) error {
 	// 2) 🔥 sinkronkan WIP: semua wip_items milik WO ini ikut "done"
 	//    sehingga hilang dari board Work in Progress di Raigine.
 	if err := s.repoProduction.MarkWIPDoneByWO(ctx, woID); err != nil {
+		return err
+	}
+
+	// [assembly-stock] lepaskan sisa lock komponen WO Assembly (produksi < rencana).
+	if err := assemblystock.ReleaseByWO(s.db.WithContext(ctx), woID); err != nil {
 		return err
 	}
 
@@ -1229,6 +1240,16 @@ func (s *service) advanceProcessAfterQCFinish(ctx context.Context, tx *gorm.DB, 
 		item.Status = "PENDING"
 		item.LastScannedProcess = ""
 		return tx.Save(item).Error
+	}
+
+	// [assembly-stock] Proses terakhir: child part / item di tengah BOM (WO bukan
+	// Assembly) masuk Inventory WIP, bukan Finished Goods.
+	toWIP, err := s.finalOutputGoesToWIP(tx, item.ItemUniqCode, wo)
+	if err != nil {
+		return err
+	}
+	if toWIP {
+		return s.postFinalOutputToWIP(tx, item, wo, currentStep.ProcessName, qtyProduced, performedBy)
 	}
 
 	// Proses terakhir -> Finished Goods.

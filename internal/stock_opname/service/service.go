@@ -1058,7 +1058,7 @@ func (s *service) addEntryTx(ctx context.Context, sessionID int64, req stockMode
 
 func (s *service) applyStockOpnameAdjustment(ctx context.Context, tx *gorm.DB, session *stockModels.StockOpnameSession, adj adjuster.InventoryAdjuster, entry *stockModels.StockOpnameEntry, actor string) (*adjuster.AdjustmentResult, error) {
 	if session.InventoryType == stockModels.InventoryTypeWIP && session.Method == stockModels.MethodBulk {
-		return adjuster.ApplyWIPBOMAdjustment(ctx, tx, entry)
+		return adjuster.ApplyWIPBOMAdjustment(ctx, tx, entry, session.SessionNumber, actor)
 	}
 	return adj.ApplyAdjustment(ctx, tx, entry, session.SessionNumber, actor)
 }

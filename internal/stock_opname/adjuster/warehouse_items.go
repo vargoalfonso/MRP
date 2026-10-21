@@ -91,13 +91,13 @@ func ListWarehouseItems(ctx context.Context, db *gorm.DB, inventoryType, warehou
 		return out, nil
 
 	case stockModels.InventoryTypeWIP:
-		// wip_items has no warehouse column: reuse the live-row search.
-		rows, err := NewWIPAdjuster().SearchUniqs(ctx, db, strings.TrimSpace(q), limit)
+		// wip_inventories has no warehouse column: list only rows that really exist.
+		rows, err := SearchWIPInventoryUniqs(ctx, db, strings.TrimSpace(q), limit)
 		return toWarehouseItems(rows, warehouse), err
 
 	case stockModels.InventoryTypeSubcon:
 		// Same "still in vendor" rule as the manual start-count list.
-		rows, err := NewSubconAdjuster().SearchUniqs(ctx, db, strings.TrimSpace(q), limit)
+		rows, err := searchSubconLive(ctx, db, strings.TrimSpace(q), limit)
 		return toWarehouseItems(rows, warehouse), err
 	}
 	return nil, apperror.BadRequest("inventory type tidak valid")

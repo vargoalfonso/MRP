@@ -281,6 +281,11 @@ func (s *service) CreateBulk(ctx context.Context, req woModels.CreateBulkWorkOrd
 			return err
 		}
 
+		// [assembly-stock] sama seperti Create: cek + kunci stok komponen untuk WO Assembly.
+		if err := s.reserveAssemblyStock(tx, wo.ID, woNumber, req.WOType, assemblyRequestsFromBulkItems(req.Items)); err != nil {
+			return err
+		}
+
 		uniqCodes := make([]string, 0, len(req.Items))
 		for _, it := range req.Items {
 			uniqCodes = append(uniqCodes, it.ItemUniqCode)
@@ -622,6 +627,12 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 			return err
 		}
 
+		// [assembly-stock] WO Assembly: cek stok komponen (WIP / raw material) dan kunci
+		// agar tidak dipakai ganda. Stok baru berkurang saat Scan Out proses assembly.
+		if err := s.reserveAssemblyStock(tx, wo.ID, woNumber, req.WOType, assemblyRequestsFromItems(req.Items)); err != nil {
+			return err
+		}
+
 		kbPrefix := strings.TrimPrefix(woNumber, "WO-") // still used for legacy trace/debug
 		seq := 0
 		perUniqSeq := map[string]int{}
@@ -738,6 +749,11 @@ func (s *service) Create(ctx context.Context, req woModels.CreateWorkOrderReques
 }
 
 func (s *service) Preview(ctx context.Context, req woModels.CreateWorkOrderRequest) (*woModels.WorkOrderPreviewResponse, error) {
+	// [assembly-stock] beri tahu user sedini mungkin bila stok komponen belum cukup.
+	if err := s.checkAssemblyStock(req.WOType, assemblyRequestsFromItems(req.Items)); err != nil {
+		return nil, err
+	}
+
 	year := time.Now().Year()
 	prefix := fmt.Sprintf("%s-%d", workOrderPrefixStandard, year)
 	last, err := s.repo.FindLastWONumber(ctx, nil, prefix)
@@ -894,12 +910,14 @@ func (s *service) ListUniqOptions(ctx context.Context, q string, limit int, sour
 	if limit <= 0 {
 		limit = 20
 	}
-	if limit > 100 {
-		limit = 100
+	if limit > 10000 {
+		limit = 10000
 	}
 
-	allowed := map[string]bool{"items": true, "raw_material": true, "indirect": true, "subcon": true}
-	include := map[string]bool{"items": true, "raw_material": true, "indirect": true, "subcon": true}
+	// assembly_items: hanya item yang routing-nya punya proses is_assembly = true
+	// (dipakai form WO Assembly). Tidak ikut default; harus diminta lewat sources.
+	allowed := map[string]bool{"items": true, "raw_material": true, "indirect": true, "subcon": true, "assembly_items": true}
+	include := map[string]bool{"items": true, "raw_material": true, "indirect": true, "subcon": true, "assembly_items": false}
 	if len(sources) > 0 {
 		for k := range include {
 			include[k] = false
@@ -919,6 +937,8 @@ func (s *service) ListUniqOptions(ctx context.Context, q string, limit int, sour
 				s0 = "indirect"
 			case "subcon", "subcon_inventory", "subcon_inventories":
 				s0 = "subcon"
+			case "assembly", "assembly_items":
+				s0 = "assembly_items"
 			}
 			if allowed[s0] {
 				include[s0] = true
@@ -953,6 +973,13 @@ func (s *service) ListUniqOptions(ctx context.Context, q string, limit int, sour
 	var unions []string
 	if include["items"] {
 		unions = append(unions, "SELECT uniq_code, part_name, part_number, uom, NULL::numeric AS qty, 'items' AS source FROM items WHERE deleted_at IS NULL")
+	}
+	if include["assembly_items"] {
+		unions = append(unions, "SELECT i.uniq_code, i.part_name, i.part_number, i.uom, NULL::numeric AS qty, 'items' AS source FROM items i WHERE i.deleted_at IS NULL "+
+			"AND EXISTS (SELECT 1 FROM routing_headers rh "+
+			"JOIN routing_operations ro ON ro.routing_header_id = rh.id "+
+			"JOIN process_parameters pp ON pp.id = ro.process_id "+
+			"WHERE rh.item_id = i.id AND pp.is_assembly = TRUE)")
 	}
 	if include["raw_material"] {
 		unions = append(unions, "SELECT uniq_code, part_name, part_number, uom, stock_qty AS qty, 'raw_material' AS source FROM raw_materials WHERE deleted_at IS NULL")

@@ -2,57 +2,88 @@ package adjuster
 
 import (
 	"context"
-	"math"
-	"time"
+	"strings"
 
 	bomModels "github.com/ganasa18/go-template/internal/billmaterial/models"
 	stockModels "github.com/ganasa18/go-template/internal/stock_opname/models"
-	wipModels "github.com/ganasa18/go-template/internal/wip/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/assemblystock"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 type WIPAdjuster struct{}
 
 func NewWIPAdjuster() InventoryAdjuster { return &WIPAdjuster{} }
 
-// ResolveUniq is used by manual stock opname and keeps the original WIP
-// behavior: manual input resolves against a live wip_items row.
-func (a *WIPAdjuster) ResolveUniq(ctx context.Context, tx *gorm.DB, uniqCode string) (*UniqSnapshot, error) {
-	var row wipModels.WIPItem
-	err := tx.WithContext(ctx).Where("uniq = ?", uniqCode).Take(&row).Error
-	if err == gorm.ErrRecordNotFound {
-		return newUniqSnapshot(ctx, tx, uniqCode)
-	}
-	if err != nil {
-		return nil, apperror.Internal("resolve WIP uniq: " + err.Error())
-	}
-	qty := float64(row.Stock)
-	uom := row.UOM
-	return &UniqSnapshot{EntityID: &row.ID, PartName: &row.ProcessName, UOM: &uom, SystemQty: qty}, nil
+// wipInventoryRow adalah baris Inventory WIP (wip_inventories): stok per UNIQ
+// hasil WO New child part, dipakai WO Assembly sebagai komponen.
+type wipInventoryRow struct {
+	ID         int64   `gorm:"column:id"`
+	UniqCode   string  `gorm:"column:uniq_code"`
+	PartNumber *string `gorm:"column:part_number"`
+	PartName   *string `gorm:"column:part_name"`
+	UOM        *string `gorm:"column:uom"`
+	StockQty   float64 `gorm:"column:stock_qty"`
 }
 
-// SearchUniqs is used by manual stock opname and searches live WIP rows.
-func (a *WIPAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q string, limit int) ([]UniqSnapshotResult, error) {
+func wipStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return strings.TrimSpace(*p)
+}
+
+// ResolveUniq: stok sistem diambil dari Inventory WIP. UNIQ yang belum ada di
+// inventory TIDAK divalidasi: SystemQty 0 dan info part diambil dari BOM bila ada.
+func (a *WIPAdjuster) ResolveUniq(ctx context.Context, tx *gorm.DB, uniqCode string) (*UniqSnapshot, error) {
+	var row wipInventoryRow
+	if err := tx.WithContext(ctx).Raw(`
+		SELECT id, uniq_code, part_number, part_name, uom, stock_qty
+		FROM wip_inventories
+		WHERE UPPER(BTRIM(uniq_code)) = UPPER(BTRIM(?))
+		ORDER BY id LIMIT 1`, uniqCode).Scan(&row).Error; err != nil {
+		return nil, apperror.Internal("resolve WIP uniq: " + err.Error())
+	}
+	if row.ID == 0 {
+		return newUniqSnapshot(ctx, tx, uniqCode)
+	}
+	id := row.ID
+	return &UniqSnapshot{EntityID: &id, PartNumber: row.PartNumber, PartName: row.PartName, UOM: row.UOM, SystemQty: row.StockQty}, nil
+}
+
+// SearchWIPInventoryUniqs mencari baris yang benar-benar ada di Inventory WIP.
+func SearchWIPInventoryUniqs(ctx context.Context, tx *gorm.DB, q string, limit int) ([]UniqSnapshotResult, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	var rows []wipModels.WIPItem
-	query := tx.WithContext(ctx).Model(&wipModels.WIPItem{})
-	if q != "" {
-		query = query.Where("uniq ILIKE ? OR packing_number ILIKE ? OR process_name ILIKE ?", "%"+q+"%", "%"+q+"%", "%"+q+"%")
-	}
-	if err := query.Order("updated_at DESC").Limit(limit).Find(&rows).Error; err != nil {
-		return nil, apperror.Internal("search WIP uniq options: " + err.Error())
+	like := "%" + strings.TrimSpace(q) + "%"
+	var rows []wipInventoryRow
+	if err := tx.WithContext(ctx).Raw(`
+		SELECT id, uniq_code, part_number, part_name, uom, stock_qty
+		FROM wip_inventories
+		WHERE (? = '%%' OR uniq_code ILIKE ? OR COALESCE(part_name,'') ILIKE ? OR COALESCE(part_number,'') ILIKE ?)
+		ORDER BY updated_at DESC LIMIT ?`, like, like, like, like, limit).Scan(&rows).Error; err != nil {
+		return nil, apperror.Internal("search WIP inventory options: " + err.Error())
 	}
 	items := make([]UniqSnapshotResult, 0, len(rows))
 	for i := range rows {
-		uom := rows[i].UOM
-		processName := rows[i].ProcessName
-		items = append(items, UniqSnapshotResult{UniqCode: rows[i].Uniq, UniqSnapshot: UniqSnapshot{EntityID: &rows[i].ID, PartName: &processName, UOM: &uom, SystemQty: float64(rows[i].Stock)}})
+		id := rows[i].ID
+		items = append(items, UniqSnapshotResult{UniqCode: rows[i].UniqCode, UniqSnapshot: UniqSnapshot{
+			EntityID: &id, PartNumber: rows[i].PartNumber, PartName: rows[i].PartName, UOM: rows[i].UOM, SystemQty: rows[i].StockQty,
+		}})
 	}
 	return items, nil
+}
+
+// SearchUniqs (stock opname manual): UNIQ yang sudah ada di Inventory WIP lebih dulu,
+// lalu semua item BOM aktif, supaya UNIQ yang belum ada di inventory tetap bisa dipilih
+// dan akan "muncul" di Inventory WIP setelah opname disetujui.
+func (a *WIPAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q string, limit int) ([]UniqSnapshotResult, error) {
+	live, err := SearchWIPInventoryUniqs(ctx, tx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	return mergeUniqWithBOM(ctx, tx, q, limit, live)
 }
 
 // ResolveWIPBOMUniq is used only by bulk stock opname. Bulk Excel rows are
@@ -112,47 +143,42 @@ func SearchWIPBOMUniqs(ctx context.Context, tx *gorm.DB, q string, limit int) ([
 	return items, nil
 }
 
+// ApplyAdjustment (stock opname manual): Inventory WIP di-set ke qty hasil hitung.
+// UNIQ yang belum ada di Inventory WIP dibuat baru (tanpa validasi apapun).
 func (a *WIPAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry, sessionNumber, actor string) (*AdjustmentResult, error) {
-	var row wipModels.WIPItem
-	if entry.EntityID == nil {
-		// Belum ada baris wip_items: opname WIP bersifat audit-only, jadi tidak
-		// ada stok yang diubah dan tidak ada baris untuk dicatat di wip_logs.
-		return &AdjustmentResult{QtyChange: math.Round(entry.CountedQty)}, nil
+	var row wipInventoryRow
+	if err := tx.WithContext(ctx).
+		Raw(`SELECT id, uniq_code, part_number, part_name, uom, stock_qty
+			FROM wip_inventories WHERE UPPER(BTRIM(uniq_code)) = UPPER(BTRIM(?)) ORDER BY id LIMIT 1 FOR UPDATE`, entry.UniqCode).
+		Scan(&row).Error; err != nil {
+		return nil, apperror.Internal("lock WIP inventory row: " + err.Error())
 	}
-	if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", *entry.EntityID).Take(&row).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return &AdjustmentResult{QtyChange: math.Round(entry.CountedQty)}, nil
-		}
-		return nil, apperror.Internal("lock WIP row: " + err.Error())
-	}
-
-	after := int(math.Round(entry.CountedQty))
-	delta := after - row.Stock
-	now := time.Now()
-	// Manual WIP stock opname is audit-only: keep current WIP stock untouched and record the variance.
-	log := &wipModels.WIPLog{WipItemID: row.ID, Action: "stock_opname", Qty: delta, CreatedAt: now}
-	if err := tx.WithContext(ctx).Create(log).Error; err != nil {
-		return nil, apperror.Internal("append WIP log: " + err.Error())
-	}
-	return &AdjustmentResult{QtyChange: float64(delta)}, nil
+	return postWIPOpname(ctx, tx, entry, sessionNumber, actor, entry.CountedQty-row.StockQty)
 }
 
-// ApplyWIPBOMAdjustment is used only for bulk stock opname. It validates the
-// active BOM item reference and keeps the operation audit-only because the
-// bulk WIP workflow has no wip_items stock row to update.
-func ApplyWIPBOMAdjustment(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry) (*AdjustmentResult, error) {
-	if entry.EntityID == nil {
-		return &AdjustmentResult{QtyChange: entry.CountedQty}, nil
+// ApplyWIPBOMAdjustment (stock opname bulk): baris bulk dicatat terhadap baseline 0,
+// jadi qty hitung DITAMBAHKAN ke Inventory WIP (dibuat baru bila belum ada).
+func ApplyWIPBOMAdjustment(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry, sessionNumber, actor string) (*AdjustmentResult, error) {
+	return postWIPOpname(ctx, tx, entry, sessionNumber, actor, entry.CountedQty)
+}
+
+func postWIPOpname(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry, sessionNumber, actor string, delta float64) (*AdjustmentResult, error) {
+	id, _, _, err := assemblystock.AdjustWIP(tx.WithContext(ctx), assemblystock.WIPPost{
+		UniqCode:     strings.TrimSpace(entry.UniqCode),
+		PartNumber:   wipStr(entry.PartNumber),
+		PartName:     wipStr(entry.PartName),
+		UOM:          wipStr(entry.UOM),
+		MovementType: "stock_opname",
+		Notes:        "stock opname " + sessionNumber,
+		By:           actor,
+		Delta:        delta,
+	})
+	if err != nil {
+		return nil, apperror.Internal("post WIP stock opname: " + err.Error())
 	}
-	var item bomModels.Item
-	if err := tx.WithContext(ctx).
-		Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ? AND deleted_at IS NULL", *entry.EntityID).
-		Take(&item).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return &AdjustmentResult{QtyChange: entry.CountedQty}, nil
-		}
-		return nil, apperror.Internal("lock bulk WIP BOM item: " + err.Error())
+	res := &AdjustmentResult{QtyChange: delta}
+	if id > 0 {
+		res.EntityID = &id
 	}
-	return &AdjustmentResult{QtyChange: entry.CountedQty}, nil
+	return res, nil
 }
