@@ -280,6 +280,9 @@ type WODetailUniq struct {
 	ScanOutCount   int                   `json:"scan_out_count"`
 	MachineScanned bool                  `json:"machine_scanned"`
 	ProcessFlow    []WODetailProcessStep `json:"process_flow"`
+	// [machine-optional] false = UNIQ tanpa proses di Poka Yoke atau material
+	// indirect; Scan In/Out tidak perlu scan mesin.
+	MachineRequired bool `json:"machine_required"`
 
 	SavedQty     float64                     `json:"saved_qty"`
 	DandoriTime  string                      `json:"dandori_time"`
@@ -491,16 +494,18 @@ type ScanOutContextRawMaterial struct {
 }
 
 type ScanOutContextItem struct {
-	WOItemID       int64                       `json:"wo_item_id"`
-	Uniq           string                      `json:"uniq"`
-	MachineScanned bool                        `json:"machine_scanned"`
-	Status         string                      `json:"status"`
-	CurrentStep    int                         `json:"current_step"`
-	TotalStep      int                         `json:"total_step"`
-	ScanInCount    int                         `json:"scan_in_count"`
-	ScanOutCount   int                         `json:"scan_out_count"`
-	TotalOutput    float64                     `json:"total_output"`
-	RawMaterials   []ScanOutContextRawMaterial `json:"raw_materials"`
+	WOItemID       int64  `json:"wo_item_id"`
+	Uniq           string `json:"uniq"`
+	MachineScanned bool   `json:"machine_scanned"`
+	// [machine-optional] lihat WODetailUniq.MachineRequired.
+	MachineRequired bool                        `json:"machine_required"`
+	Status          string                      `json:"status"`
+	CurrentStep     int                         `json:"current_step"`
+	TotalStep       int                         `json:"total_step"`
+	ScanInCount     int                         `json:"scan_in_count"`
+	ScanOutCount    int                         `json:"scan_out_count"`
+	TotalOutput     float64                     `json:"total_output"`
+	RawMaterials    []ScanOutContextRawMaterial `json:"raw_materials"`
 }
 
 type ScanOutContextResponse struct {
