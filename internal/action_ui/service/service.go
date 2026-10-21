@@ -2100,6 +2100,31 @@ func resolveProcessFlow(item models.WorkOrderItem) []models.ProcessFlow {
 	return flow
 }
 
+// [machine-optional] machineRequired: scan mesin tidak wajib bila UNIQ tidak
+// punya proses di Poka Yoke (routing kosong / nama proses aktif kosong) atau
+// seluruh Material Spec milik UNIQ bertipe indirect. ownBom nil = dimuat di sini.
+func (s *service) machineRequired(ctx context.Context, item models.WorkOrderItem, ownBom []dto.BomMaterial) bool {
+	flow, err := parseProcessFlow(item.ProcessFlowJSON)
+	if err != nil || len(flow) == 0 {
+		return false
+	}
+	if strings.TrimSpace(flow[getCurrentIndex(item.CurrentStepSeq, len(flow))].ProcessName) == "" {
+		return false
+	}
+	if ownBom == nil {
+		ownBom, _ = s.buildOwnBomMaterials(ctx, item.ItemUniqCode)
+	}
+	if len(ownBom) == 0 {
+		return true
+	}
+	for _, b := range ownBom {
+		if !strings.EqualFold(strings.TrimSpace(b.TypeMaterial), "indirect") {
+			return true
+		}
+	}
+	return false
+}
+
 func isUniqFinished(status string) bool {
 	switch strings.ToUpper(strings.TrimSpace(status)) {
 	case "FINISHED", "DONE", "COMPLETED":
@@ -2568,31 +2593,32 @@ func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailR
 		}
 
 		uniqs = append(uniqs, dto.WODetailUniq{
-			WOItemID:       item.ID,
-			Uniq:           item.ItemUniqCode,
-			PartName:       item.PartName,
-			PartNumber:     item.PartNumber,
-			KanbanNumber:   item.KanbanNumber,
-			UOM:            item.UOM,
-			Qty:            item.Quantity,
-			Status:         item.Status,
-			MachineID:      strconv.Itoa(item.MachineID),
-			MachineNumber:  machineNumber,
-			ProductionLine: productionLine,
-			ProcessName:    currentProcess,
-			NextProcess:    nextProcess,
-			CurrentStep:    currentIndex + 1,
-			TotalStep:      totalStep,
-			ScanInCount:    item.ScanInCount,
-			ScanOutCount:   item.ScanOutCount,
-			MachineScanned: item.MachineID != 0,
-			ProcessFlow:    s.withScanProgress(ctx, item, buildProcessSteps(flow, item.CurrentStepSeq, isUniqFinished(item.Status), processNames)),
-			SavedQty:       savedQty,
-			DandoriTime:    dandori,
-			SetupQCTime:    setupQC,
-			RawMaterials:   rmList,
-			BomMaterials:   bomList,
-			WIPMaterial:    wipMaterial,
+			WOItemID:        item.ID,
+			Uniq:            item.ItemUniqCode,
+			PartName:        item.PartName,
+			PartNumber:      item.PartNumber,
+			KanbanNumber:    item.KanbanNumber,
+			UOM:             item.UOM,
+			Qty:             item.Quantity,
+			Status:          item.Status,
+			MachineID:       strconv.Itoa(item.MachineID),
+			MachineNumber:   machineNumber,
+			ProductionLine:  productionLine,
+			ProcessName:     currentProcess,
+			NextProcess:     nextProcess,
+			CurrentStep:     currentIndex + 1,
+			TotalStep:       totalStep,
+			ScanInCount:     item.ScanInCount,
+			ScanOutCount:    item.ScanOutCount,
+			MachineScanned:  item.MachineID != 0,
+			MachineRequired: s.machineRequired(ctx, item, bomList),
+			ProcessFlow:     s.withScanProgress(ctx, item, buildProcessSteps(flow, item.CurrentStepSeq, isUniqFinished(item.Status), processNames)),
+			SavedQty:        savedQty,
+			DandoriTime:     dandori,
+			SetupQCTime:     setupQC,
+			RawMaterials:    rmList,
+			BomMaterials:    bomList,
+			WIPMaterial:     wipMaterial,
 		})
 	}
 
@@ -3344,16 +3370,17 @@ func (s *service) ScanOutContext(
 		}
 
 		resp.Items = append(resp.Items, dto.ScanOutContextItem{
-			WOItemID:       item.ID,
-			Uniq:           item.ItemUniqCode,
-			MachineScanned: item.MachineID != 0,
-			Status:         item.Status,
-			CurrentStep:    soCurrentIndex + 1,
-			TotalStep:      soTotalStep,
-			ScanInCount:    item.ScanInCount,
-			ScanOutCount:   item.ScanOutCount,
-			TotalOutput:    soTotalOutput,
-			RawMaterials:   rms,
+			WOItemID:        item.ID,
+			Uniq:            item.ItemUniqCode,
+			MachineScanned:  item.MachineID != 0,
+			MachineRequired: s.machineRequired(ctx, item, nil),
+			Status:          item.Status,
+			CurrentStep:     soCurrentIndex + 1,
+			TotalStep:       soTotalStep,
+			ScanInCount:     item.ScanInCount,
+			ScanOutCount:    item.ScanOutCount,
+			TotalOutput:     soTotalOutput,
+			RawMaterials:    rms,
 		})
 	}
 
