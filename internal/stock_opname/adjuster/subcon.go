@@ -30,7 +30,18 @@ func (a *SubconAdjuster) ResolveUniq(ctx context.Context, tx *gorm.DB, uniqCode 
 	return &UniqSnapshot{EntityID: &row.ID, PartNumber: row.PartNumber, PartName: row.PartName, SystemQty: row.StockAtVendorQty}, nil
 }
 
+// SearchUniqs: uniq "Stock In Vendor" yang sudah ada + item BOM aktif (uniq baru
+// tetap bisa dipilih, tanpa validasi).
 func (a *SubconAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q string, limit int) ([]UniqSnapshotResult, error) {
+	live, err := searchSubconLive(ctx, tx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	return mergeUniqWithBOM(ctx, tx, q, limit, live)
+}
+
+// searchSubconLive hanya mengembalikan baris yang benar-benar ada di tab "Stock In Vendor".
+func searchSubconLive(ctx context.Context, tx *gorm.DB, q string, limit int) ([]UniqSnapshotResult, error) {
 	if limit <= 0 {
 		limit = 20
 	}

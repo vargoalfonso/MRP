@@ -65,9 +65,9 @@ type WorkOrderItem struct {
 	OverflowSourceItemID *int64
 	// [overflow-topup] daftar sumber kelebihan yg mengisi kanban ini (bisa >1)
 	OverflowSources datatypes.JSON `gorm:"column:overflow_sources;type:jsonb" json:"overflow_sources"`
-	Model              string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	Model           string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type ProductionScanLog struct {
@@ -115,11 +115,11 @@ type QCLog struct {
 	ProcessName  string
 	DefectSource string
 	// [qc-reason] jenis + detail issue dari round 1 / 2
-	IssueType    string
-	IssueNote    string
-	CheckedBy    string
-	CheckedAt    time.Time
-	CreatedAt    time.Time
+	IssueType string
+	IssueNote string
+	CheckedBy string
+	CheckedAt time.Time
+	CreatedAt time.Time
 }
 
 func (QCLog) TableName() string { return "qc_logs" }
@@ -138,12 +138,12 @@ type QCDefectItem struct {
 	QtyDefect        float64
 	QtyScrap         float64
 	// [qc-issue-table] qty eksplisit per baris issue/reason
-	Qty              float64
-	IsRepairable     bool
-	MachineID        *string
-	ProcessName      string
-	ReportedBy       string
-	ReportedAt       time.Time
+	Qty          float64
+	IsRepairable bool
+	MachineID    *string
+	ProcessName  string
+	ReportedBy   string
+	ReportedAt   time.Time
 }
 
 func (QCDefectItem) TableName() string { return "qc_defect_items" }
@@ -178,10 +178,13 @@ type ProcessFlow struct {
 	OpSeq int `json:"op_seq"`
 	// process_id / process_code hanya ada di snapshot WO baru; dipakai untuk
 	// mencari nama proses terkini (display_name).
-	ProcessID    int64   `json:"process_id,omitempty"`
-	ProcessCode  string  `json:"process_code,omitempty"`
-	ProcessName  string  `json:"process_name"`
-	MachineName  *string `json:"machine_name"`
+	ProcessID   int64   `json:"process_id,omitempty"`
+	ProcessCode string  `json:"process_code,omitempty"`
+	ProcessName string  `json:"process_name"`
+	MachineName *string `json:"machine_name"`
+	// [assembly-stock] proses assembly (process_parameters.is_assembly): di Scan Out
+	// proses ini stok komponen WO Assembly dikurangi.
+	IsAssembly bool `json:"is_assembly,omitempty"`
 	// Routing menyimpan nilai desimal (mis. 12.5). Dengan tipe int, json.Unmarshal
 	// gagal sehingga Poka Yoke jatuh ke fallback 1 proses saja.
 	CycleTimeSec *float64 `json:"cycle_time_sec"`
@@ -254,23 +257,23 @@ type DeliveryNoteItem struct {
 }
 
 type ProductionIssue struct {
-	ID             int64      `db:"id" json:"id"`
-	UUID           string     `db:"uuid" json:"uuid"`
-	WOID           int64      `db:"wo_id" json:"wo_id"`
-	WOItemID       int64      `db:"wo_item_id" json:"wo_item_id"`
-	MachineID      int64      `db:"machine_id" json:"machine_id,omitempty"`
-	ProcessName    string     `db:"process_name" json:"process_name"`
-	ProductionLine string     `db:"production_line" json:"production_line"`
-	IssueType      string     `db:"issue_type" json:"issue_type"`
+	ID             int64  `db:"id" json:"id"`
+	UUID           string `db:"uuid" json:"uuid"`
+	WOID           int64  `db:"wo_id" json:"wo_id"`
+	WOItemID       int64  `db:"wo_item_id" json:"wo_item_id"`
+	MachineID      int64  `db:"machine_id" json:"machine_id,omitempty"`
+	ProcessName    string `db:"process_name" json:"process_name"`
+	ProductionLine string `db:"production_line" json:"production_line"`
+	IssueType      string `db:"issue_type" json:"issue_type"`
 	// [rm-source] detail bebas untuk jenis issue "Lainnya"
-	IssueNote      string     `db:"issue_note" json:"issue_note"`
-	IssueDuration  int64      `db:"issue_duration" json:"issue_duration"` // menit
-	QtyAffected    float64    `db:"qty_affected" json:"qty_affected"`
-	ReportedBy     string     `db:"reported_by" json:"reported_by"`
-	ReportedAt     time.Time  `db:"reported_at" json:"reported_at"`
-	CreatedAt      time.Time  `db:"created_at" json:"created_at"`
-	UpdatedAt      *time.Time `db:"updated_at,omitempty" json:"updated_at,omitempty"`
-	DeletedAt      *time.Time `db:"deleted_at,omitempty" json:"deleted_at,omitempty"`
+	IssueNote     string     `db:"issue_note" json:"issue_note"`
+	IssueDuration int64      `db:"issue_duration" json:"issue_duration"` // menit
+	QtyAffected   float64    `db:"qty_affected" json:"qty_affected"`
+	ReportedBy    string     `db:"reported_by" json:"reported_by"`
+	ReportedAt    time.Time  `db:"reported_at" json:"reported_at"`
+	CreatedAt     time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt     *time.Time `db:"updated_at,omitempty" json:"updated_at,omitempty"`
+	DeletedAt     *time.Time `db:"deleted_at,omitempty" json:"deleted_at,omitempty"`
 }
 
 type WIP struct {
@@ -358,7 +361,7 @@ type InventoryMovementLog struct {
 	QtyChange    float64  `gorm:"column:qty_change"`
 	WeightChange *float64 `gorm:"column:weight_change"`
 
-	SourceFlag  *string `gorm:"column:source_flag"`  // QC_FINAL / DELIVERY / ADJUSTMENT / wo_scan
+	SourceFlag  *string `gorm:"column:source_flag"` // QC_FINAL / DELIVERY / ADJUSTMENT / wo_scan
 	DNNumber    *string `gorm:"column:dn_number"`
 	ReferenceID *string `gorm:"column:reference_id"` // WO Number / DO Number / SO Number
 	Notes       *string `gorm:"column:notes"`

@@ -28,7 +28,18 @@ func (a *IndirectAdjuster) ResolveUniq(ctx context.Context, tx *gorm.DB, uniqCod
 	return &UniqSnapshot{EntityID: &row.ID, PartNumber: row.PartNumber, PartName: row.PartName, UOM: row.UOM, SystemQty: row.StockQty, WeightKg: row.StockWeightKg}, nil
 }
 
+// SearchUniqs: uniq yang sudah ada di inventory indirect + item BOM aktif (uniq baru
+// tetap bisa dipilih, tanpa validasi).
 func (a *IndirectAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q string, limit int) ([]UniqSnapshotResult, error) {
+	live, err := searchIndirectLive(ctx, tx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	return mergeUniqWithBOM(ctx, tx, q, limit, live)
+}
+
+// searchIndirectLive hanya mengembalikan baris yang benar-benar ada di inventory indirect.
+func searchIndirectLive(ctx context.Context, tx *gorm.DB, q string, limit int) ([]UniqSnapshotResult, error) {
 	if limit <= 0 {
 		limit = 20
 	}
