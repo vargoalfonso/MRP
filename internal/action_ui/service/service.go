@@ -2504,7 +2504,16 @@ func (s *service) WOList(ctx context.Context, search string) ([]dto.WOListItem, 
 func (s *service) WODetail(ctx context.Context, woNumber string) (*dto.WODetailResponse, error) {
 	wo, err := s.repoProduction.FindWOByNumber(ctx, strings.TrimSpace(woNumber))
 	if err != nil {
-		return nil, errors.New("work order tidak ditemukan")
+		// [scan-kanban] nilai bisa berupa nomor kanban (QR kanban WO):
+		// muat WO pemilik kanban tersebut.
+		item, kErr := s.repoProduction.FindWOItemByKanbanExact(ctx, strings.TrimSpace(woNumber))
+		if kErr != nil {
+			return nil, errors.New("work order / kanban tidak ditemukan")
+		}
+		wo, err = s.repoProduction.FindWOByID(ctx, item.WOID)
+		if err != nil {
+			return nil, errors.New("work order tidak ditemukan")
+		}
 	}
 
 	items, err := s.repoProduction.FindWOItemsByWOID(ctx, wo.ID)

@@ -19,6 +19,7 @@ type IProductionRepository interface {
 	FindMachineByID(ctx context.Context, id int) (models.MasterMachine, error)
 	FindWOByNumber(ctx context.Context, woNumber string) (models.WorkOrder, error)
 	FindWOByKanbanNumber(ctx context.Context, woNumber string) (models.WorkOrderItem, error)
+	FindWOItemByKanbanExact(ctx context.Context, kanbanNumber string) (models.WorkOrderItem, error)
 	FindWOItemsByWOID(ctx context.Context, woid int64) ([]models.WorkOrderItem, error)
 	FindWOItemByUniq(ctx context.Context, uniq string) (models.WorkOrderItem, error)
 	FindWOItemByUniqAndWO(ctx context.Context, uniq string, woID int64) (models.WorkOrderItem, error)
@@ -369,6 +370,25 @@ func (r *productionRepo) FindWOByKanbanNumber(ctx context.Context, woNumber stri
 	}
 
 	return wo, nil
+}
+
+// [scan-kanban] cari kanban (wo item) dengan nomor kanban PERSIS sama, supaya
+// scan QR kanban di Step 1 langsung tertuju ke kanban yang benar.
+func (r *productionRepo) FindWOItemByKanbanExact(ctx context.Context, kanbanNumber string) (models.WorkOrderItem, error) {
+	var item models.WorkOrderItem
+
+	err := r.db.WithContext(ctx).
+		Where("kanban_number = ?", kanbanNumber).
+		First(&item).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return item, apperror.NotFound("kanban tidak ditemukan")
+		}
+		return item, err
+	}
+
+	return item, nil
 }
 
 func (r *productionRepo) FindWOItemsByWOID(ctx context.Context, woid int64) ([]models.WorkOrderItem, error) {
