@@ -28,6 +28,11 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	group := v1.Group("/supplier-info")
 	group.Use(authMiddleware.JWTMiddleware(m.authenticator))
 	{
+		// Bulk import Excel (daftarkan sebelum "/:id")
+		group.GET("/import/template", m.handler.DownloadImportTemplateRaw)
+		group.POST("/import", m.base.RunAction(m.handler.ImportExcel))
+		group.GET("/import/errors/:token", m.handler.DownloadImportErrorsRaw)
+
 		group.POST("", m.base.RunAction(m.handler.Create))
 		group.GET("", m.base.RunAction(m.handler.List))
 		group.GET("/:id", m.base.RunAction(m.handler.GetByID))

@@ -3,11 +3,14 @@ package service
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
+	"sync"
 
 	siModels "github.com/ganasa18/go-template/internal/supplier_info/models"
 	siRepo "github.com/ganasa18/go-template/internal/supplier_info/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/bulkimport"
 	"github.com/google/uuid"
 )
 
@@ -17,10 +20,18 @@ type SupplierInfoService interface {
 	List(ctx context.Context, query siModels.ListSupplierInfoQuery) ([]siModels.SupplierInfo, int64, error)
 	Update(ctx context.Context, id string, req siModels.UpdateSupplierInfoRequest) (*siModels.SupplierInfo, error)
 	Delete(ctx context.Context, id string) error
+
+	// Bulk import via Excel.
+	ImportFromExcel(ctx context.Context, r io.Reader, filename string) (bulkimport.BulkResult, error)
+	DownloadImportTemplate(ctx context.Context) ([]byte, error)
+	DownloadImportErrors(ctx context.Context, token string) ([]byte, error)
 }
 
 type svc struct {
 	repo siRepo.IRepository
+
+	errorStoreMu sync.Mutex
+	errorStore   bulkimport.ErrorStore
 }
 
 func New(repo siRepo.IRepository) SupplierInfoService {
@@ -41,6 +52,21 @@ func normalizeTypeLabel(t string) string {
 	}
 }
 
+// itemTypeFromLabel memetakan label tampilan (RM/IRM/SUBCON) kembali ke
+// nilai supplier_item.type. Nilai yang sudah berupa tipe asli ikut diterima.
+func itemTypeFromLabel(t string) string {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "rm", "raw_material":
+		return "raw_material"
+	case "irm", "indirect":
+		return "indirect"
+	case "subcon":
+		return "subcon"
+	default:
+		return strings.ToLower(strings.TrimSpace(t))
+	}
+}
+
 func toOptStr(s string) *string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -50,24 +76,25 @@ func toOptStr(s string) *string {
 }
 
 func (s *svc) Create(ctx context.Context, req siModels.CreateSupplierInfoRequest) (*siModels.SupplierInfo, error) {
-	// Validate UNIQ exists in supplier_item
-	item, err := s.repo.FindSupplierItemByUniq(ctx, req.Uniq)
+	// Cari supplier_item sesuai pilihan user (uniq + supplier + type). Jangan
+	// hanya berdasarkan uniq: UNIQ yang sama bisa dimiliki beberapa supplier/type.
+	item, err := s.repo.FindSupplierItem(ctx, req.Uniq, req.SupplierName, itemTypeFromLabel(req.Type))
 	if err != nil {
 		return nil, err
 	}
 
-	// Check duplicate
-	exists, err := s.repo.ExistsByUniq(ctx, req.Uniq)
+	supplierName := item.SupplierName
+	typeLabel := normalizeTypeLabel(item.Type)
+
+	// Duplikat dicek per kombinasi (uniq, supplier, type)
+	exists, err := s.repo.ExistsByUniqSupplierType(ctx, req.Uniq, supplierName, typeLabel)
 	if err != nil {
 		return nil, err
 	}
 	if exists {
-		return nil, apperror.BadRequest(fmt.Sprintf("UNIQ '%s' sudah terdaftar di supplier info", strings.ToUpper(req.Uniq)))
+		return nil, apperror.BadRequest(fmt.Sprintf("UNIQ '%s' untuk %s (%s) sudah terdaftar di supplier info",
+			strings.ToUpper(strings.TrimSpace(req.Uniq)), supplierName, typeLabel))
 	}
-
-	// Auto-fill supplier name and type from supplier_item
-	supplierName := item.SupplierName
-	typeLabel := normalizeTypeLabel(item.Type)
 
 	info := &siModels.SupplierInfo{
 		UUID:         uuid.NewString(),

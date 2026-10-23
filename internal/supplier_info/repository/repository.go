@@ -16,8 +16,12 @@ type IRepository interface {
 	List(ctx context.Context, query siModels.ListSupplierInfoQuery) ([]siModels.SupplierInfo, int64, error)
 	Update(ctx context.Context, info *siModels.SupplierInfo) error
 	Delete(ctx context.Context, info *siModels.SupplierInfo) error
-	FindSupplierItemByUniq(ctx context.Context, uniq string) (*supplierItemModels.SupplierItem, error)
-	ExistsByUniq(ctx context.Context, uniq string) (bool, error)
+	FindSupplierItem(ctx context.Context, uniq, supplierName, itemType string) (*supplierItemModels.SupplierItem, error)
+	ExistsByUniqSupplierType(ctx context.Context, uniq, supplierName, typeLabel string) (bool, error)
+	// ListActiveSupplierItems dan ListAll dipakai bulk import agar validasi
+	// dilakukan in-memory (tanpa query per baris).
+	ListActiveSupplierItems(ctx context.Context) ([]supplierItemModels.SupplierItem, error)
+	ListAll(ctx context.Context) ([]siModels.SupplierInfo, error)
 }
 
 type repository struct {
@@ -96,27 +100,56 @@ func (r *repository) Delete(ctx context.Context, info *siModels.SupplierInfo) er
 	return nil
 }
 
-func (r *repository) FindSupplierItemByUniq(ctx context.Context, uniq string) (*supplierItemModels.SupplierItem, error) {
+// FindSupplierItem mencari supplier_item berdasarkan kombinasi (uniq, supplier, type).
+// Satu UNIQ boleh dimiliki beberapa supplier/type (lihat migrasi 0103), sehingga
+// pencarian hanya berdasarkan uniq_code akan non-deterministik.
+func (r *repository) FindSupplierItem(ctx context.Context, uniq, supplierName, itemType string) (*supplierItemModels.SupplierItem, error) {
 	var item supplierItemModels.SupplierItem
 	err := r.db.WithContext(ctx).
-		Where("uniq_code = ? AND status = 'active'", strings.TrimSpace(uniq)).
+		Where("uniq_code = ? AND supplier_name = ? AND type = ? AND status = 'active'",
+			strings.TrimSpace(uniq), strings.TrimSpace(supplierName), itemType).
+		Order("id ASC").
 		First(&item).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound("uniq tidak ditemukan di supplier item")
+			return nil, apperror.NotFound("kombinasi uniq, supplier, dan type tidak ditemukan di supplier item")
 		}
-		return nil, apperror.InternalWrap("find supplier item by uniq failed", err)
+		return nil, apperror.InternalWrap("find supplier item failed", err)
 	}
 	return &item, nil
 }
 
-func (r *repository) ExistsByUniq(ctx context.Context, uniq string) (bool, error) {
+// ExistsByUniqSupplierType memeriksa duplikat per kombinasi (uniq, supplier_name, type).
+func (r *repository) ExistsByUniqSupplierType(ctx context.Context, uniq, supplierName, typeLabel string) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&siModels.SupplierInfo{}).
-		Where("uniq = ?", strings.TrimSpace(uniq)).
+		Where("uniq = ? AND supplier_name = ? AND type = ?",
+			strings.TrimSpace(uniq), strings.TrimSpace(supplierName), typeLabel).
 		Count(&count).Error
 	if err != nil {
-		return false, apperror.InternalWrap("check supplier info uniq failed", err)
+		return false, apperror.InternalWrap("check supplier info duplicate failed", err)
 	}
 	return count > 0, nil
+}
+
+// ListActiveSupplierItems mengembalikan seluruh supplier_item aktif yang punya uniq_code.
+func (r *repository) ListActiveSupplierItems(ctx context.Context) ([]supplierItemModels.SupplierItem, error) {
+	var items []supplierItemModels.SupplierItem
+	err := r.db.WithContext(ctx).
+		Where("status = 'active' AND uniq_code IS NOT NULL AND TRIM(uniq_code) <> ''").
+		Order("uniq_code ASC, supplier_name ASC, type ASC").
+		Find(&items).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("list active supplier items failed", err)
+	}
+	return items, nil
+}
+
+// ListAll mengembalikan seluruh supplier_info (tanpa pagination).
+func (r *repository) ListAll(ctx context.Context) ([]siModels.SupplierInfo, error) {
+	var items []siModels.SupplierInfo
+	if err := r.db.WithContext(ctx).Find(&items).Error; err != nil {
+		return nil, apperror.InternalWrap("list all supplier info failed", err)
+	}
+	return items, nil
 }

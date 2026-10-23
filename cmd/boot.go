@@ -219,6 +219,10 @@ import (
 	workOrderHandler "github.com/ganasa18/go-template/internal/work_order/handler"
 	workOrderRepository "github.com/ganasa18/go-template/internal/work_order/repository"
 	workOrderService "github.com/ganasa18/go-template/internal/work_order/service"
+	woLogsModule "github.com/ganasa18/go-template/internal/work_order_logs"
+	woLogsHandler "github.com/ganasa18/go-template/internal/work_order_logs/handler"
+	woLogsRepository "github.com/ganasa18/go-template/internal/work_order_logs/repository"
+	woLogsService "github.com/ganasa18/go-template/internal/work_order_logs/service"
 	"github.com/ganasa18/go-template/pkg/concurrency"
 	forecastingclient "github.com/ganasa18/go-template/pkg/forecastingclient"
 
@@ -418,6 +422,11 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	coLogsSvc := coLogsService.New(coLogsRepo)
 	coLogsHTTPHandler := coLogsHandler.New(coLogsSvc)
 
+	// Work Order Automation Logs module
+	woLogsRepo := woLogsRepository.New(db)
+	woLogsSvc := woLogsService.New(woLogsRepo)
+	woLogsHTTPHandler := woLogsHandler.New(woLogsSvc)
+
 	// Admin Jobs module
 	adminJobsRepository := adminJobsRepo.New(db)
 	adminJobsSvc := adminJobsService.New(adminJobsRepository)
@@ -537,6 +546,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 		adminJobsModule.NewHTTPModule(cfg, baseHTTPHandler, adminJobsHTTPHandler, adminJobsSvc),
 		coModule.NewHTTPModule(cfg, baseHTTPHandler, coHTTPHandler, authSvc, roleSvc, coSvc),
 		coLogsModule.NewHTTPModule(cfg, baseHTTPHandler, coLogsHTTPHandler, authSvc),
+		woLogsModule.NewHTTPModule(cfg, baseHTTPHandler, woLogsHTTPHandler, authSvc),
 		dscModule.NewHTTPModule(baseHTTPHandler, dscHTTPHandler, authSvc, roleSvc, dscSvc),
 		spModule.NewHTTPModule(baseHTTPHandler, spHTTPHandler, authSvc, roleSvc),
 		productReturnModule.NewHTTPModule(cfg, baseHTTPHandler, productReturnHTTPHandler, authSvc, roleSvc, productReturnSvc),
