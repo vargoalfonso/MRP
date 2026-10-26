@@ -204,4 +204,6 @@ type POBoardRow struct {
 	Status        string   `gorm:"column:status"`
 	IsLate        bool     `gorm:"column:is_late"`
 	TotalAmount   *float64 `gorm:"column:total_amount"`
+	// ExternalPoNumber is the PO number typed in the external system (Zahir).
+	ExternalPoNumber *string `gorm:"column:external_po_number"`
 }

@@ -200,7 +200,7 @@ func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoa
 
 	if f.Search != "" {
 		like := "%" + f.Search + "%"
-		base = base.Where("po.po_number ILIKE ? OR s.supplier_name ILIKE ?", like, like)
+		base = base.Where("po.po_number ILIKE ? OR s.supplier_name ILIKE ? OR po.external_po_number ILIKE ?", like, like, like)
 	}
 
 	// Count
@@ -251,6 +251,7 @@ func (r *repo) ListPOBoard(ctx context.Context, f POBoardFilter) ([]models.POBoa
 			s.supplier_name,
 			po.status,
 			po.total_amount,
+			po.external_po_number,
 			false                                            AS is_late
 		`, dnQtySelect)).
 		Order(fmt.Sprintf("%s %s", orderBy, dir)).
