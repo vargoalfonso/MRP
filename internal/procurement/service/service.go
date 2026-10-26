@@ -104,6 +104,8 @@ func (s *svc) ListPOBoard(ctx context.Context, p pagination.POBoardPaginationInp
 			SupplierName:  r.SupplierName,
 			Status:        r.Status,
 			IsLate:        r.IsLate,
+
+			ExternalPoNumber: r.ExternalPoNumber,
 		})
 	}
 

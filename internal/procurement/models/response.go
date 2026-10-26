@@ -32,6 +32,8 @@ type POBoardItem struct {
 	SupplierName  *string `json:"supplier_name,omitempty"`
 	Status        string  `json:"status"`
 	IsLate        bool    `json:"is_late"`
+	// ExternalPoNumber is the PO number typed in the external system (Zahir).
+	ExternalPoNumber *string `json:"external_po_number,omitempty"`
 }
 
 // POBoardListResponse is the paginated response for the PO board.
