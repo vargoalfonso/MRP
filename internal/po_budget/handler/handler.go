@@ -197,6 +197,7 @@ func (h *HTTPHandler) GetEntryDetail(ctx *app.Context) *app.CostumeResponse {
 				PartName:     e.PartName,
 				PartNumber:   e.PartNumber,
 				SupplierName: e.SupplierName,
+				Suppliers:    e.Suppliers,
 				BudgetType:   e.BudgetType,
 				TypeLabel:    e.BudgetSubtype,
 				Period:       e.Period,

@@ -65,6 +65,11 @@ type EntryResponse struct {
 	CreatedByName   *string        `json:"created_by_name,omitempty"`
 	CreatedAt       time.Time      `json:"created_at"`
 	UpdatedAt       time.Time      `json:"updated_at"`
+
+	// Suppliers is the supplier breakdown (name + quantity per supplier) for
+	// every budget type. When the entry has several suppliers, supplier_name
+	// reads "Multiple" and this list tells which suppliers and how much each.
+	Suppliers []EntrySupplier `json:"suppliers"`
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +176,9 @@ type EntryBasicInformation struct {
 	BudgetType   string  `json:"budget_type"`
 	TypeLabel    *string `json:"type_label,omitempty"` // budget_subtype: regular|adhoc
 	Period       string  `json:"period"`
+
+	// Suppliers: supplier breakdown with quantity per supplier (see EntryResponse).
+	Suppliers []EntrySupplier `json:"suppliers"`
 }
 
 type EntryBudgetCalculations struct {

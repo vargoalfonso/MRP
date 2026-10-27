@@ -789,6 +789,7 @@ func toResponse(e models.POBudgetEntry) models.EntryResponse {
 		PrlRef:          e.PrlRef,
 		PrlRowID:        e.PrlRowID,
 		DetailJSON:      e.DetailJSON,
+		Suppliers:       models.BuildEntrySuppliers(e),
 		ApprovedBy:      e.ApprovedBy,
 		ApprovedAt:      e.ApprovedAt,
 		SubmittedBy:     e.CreatedBy,
