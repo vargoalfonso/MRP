@@ -34,7 +34,11 @@ func buildBulkEntryDetailJSON(
 	parentRows map[int64]models.PRLRow,
 	items []models.BulkItemInput,
 ) (datatypes.JSON, error) {
-	if !shouldAttachPRLChildren(budgetType) {
+	// raw_material and indirect always carry the PRL -> parent -> child tree.
+	// subcon now carries it too, so its supplier allocations (several suppliers,
+	// each with its own quantity) are stored instead of collapsing to "Multiple".
+	if !shouldAttachPRLChildren(budgetType) &&
+		strings.TrimSpace(strings.ToLower(budgetType)) != budgetTypeSubcon {
 		return emptyDetailJSON(), nil
 	}
 
