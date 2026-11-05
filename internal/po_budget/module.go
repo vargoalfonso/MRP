@@ -73,6 +73,9 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		settings.PUT("/:type", roleMiddleware.RequirePermission(m.roleService, "po_budget", "update"), m.base.RunAction(m.handler.UpdateSplitSetting))
 	}
 
+	// Material code lookup (uniq_code -> raw material master material_code)
+	r.POST("/api/v1/po-budget/material-codes", auth, roleMiddleware.RequirePermission(m.roleService, "po_budget", "view"), m.base.RunAction(m.handler.ListMaterialCodes))
+
 	// PRL lookup — Step 1 dropdown + Step 2 item list with allocation
 	prl := r.Group("/api/v1/po-budget/prl")
 	prl.Use(auth)
