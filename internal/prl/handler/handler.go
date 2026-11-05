@@ -176,6 +176,25 @@ func (h *HTTPHandler) ListPRLs(appCtx *app.Context) *app.CostumeResponse {
 	return ok(appCtx, result)
 }
 
+func (h *HTTPHandler) ListPRLGroups(appCtx *app.Context) *app.CostumeResponse {
+	var query models.ListPRLGroupQuery
+	if err := appCtx.ShouldBindQuery(&query); err != nil {
+		return badRequest(appCtx, "invalid query params")
+	}
+	result, err := h.service.ListPRLGroups(appCtx.Request.Context(), query)
+	if err != nil {
+		return app.NewError(appCtx, err)
+	}
+	return ok(appCtx, result)
+}
+
+func (h *HTTPHandler) DeletePRLGroup(appCtx *app.Context) *app.CostumeResponse {
+	if err := h.service.DeletePRLGroup(appCtx.Request.Context(), appCtx.Param("prl_id")); err != nil {
+		return app.NewError(appCtx, err)
+	}
+	return &app.CostumeResponse{RequestID: appCtx.APIReqID, Status: http.StatusOK, Message: "prl group deleted successfully"}
+}
+
 func (h *HTTPHandler) ListPRLHistoryVsDelivery(appCtx *app.Context) *app.CostumeResponse {
 	var query models.ListPRLHistoryQuery
 	if err := appCtx.ShouldBindQuery(&query); err != nil {
