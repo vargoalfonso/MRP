@@ -568,10 +568,11 @@ func (r *repo) GetPRLRowsByIDs(ctx context.Context, ids []int64) ([]models.PRLRo
 
 // ListMaterialCodesByUniqCodes returns the "Material Code" of each item exactly
 // as the Bill of Material detail page shows it, i.e.
-// item_material_specs.material_grade (e.g. "BR40"). The spec is taken from the
-// item's Released revision when there is one, otherwise from its latest
-// revision that has a material_grade. Items without one are absent from the
-// result (the caller falls back to its own code).
+// item_material_specs.material_grade (e.g. "BR40"), together with the item's
+// form and dimensions. The spec is taken from the item's revision that has a
+// material_grade (Released first, then newest), otherwise from its newest
+// revision that has any spec. Items without a spec are absent from the result
+// and rows may come back with an empty material_code when only dimensions exist.
 func (r *repo) ListMaterialCodesByUniqCodes(ctx context.Context, uniqCodes []string) ([]models.MaterialCodeLookupItem, error) {
 	if len(uniqCodes) == 0 {
 		return []models.MaterialCodeLookupItem{}, nil
@@ -579,15 +580,27 @@ func (r *repo) ListMaterialCodesByUniqCodes(ctx context.Context, uniqCodes []str
 
 	rows := make([]models.MaterialCodeLookupItem, 0, len(uniqCodes))
 	err := r.db.WithContext(ctx).Raw(`
-		SELECT c.uniq_code AS uniq_code, spec.material_grade AS material_code
+		SELECT
+			c.uniq_code                         AS uniq_code,
+			COALESCE(spec.material_grade, '')   AS material_code,
+			spec.form                           AS form,
+			spec.width_mm                       AS width_mm,
+			spec.diameter_mm                    AS diameter_mm,
+			spec.thickness_mm                   AS thickness_mm,
+			spec.length_mm                      AS length_mm
 		FROM items c
 		JOIN LATERAL (
-			SELECT TRIM(ims.material_grade) AS material_grade
+			SELECT
+				NULLIF(TRIM(COALESCE(ims.material_grade, '')), '') AS material_grade,
+				ims.form, ims.width_mm, ims.diameter_mm, ims.thickness_mm, ims.length_mm
 			FROM item_revisions ir
 			JOIN item_material_specs ims ON ims.item_revision_id = ir.id
 			WHERE ir.item_id = c.id
-			  AND NULLIF(TRIM(COALESCE(ims.material_grade, '')), '') IS NOT NULL
-			ORDER BY (ir.status = 'Released') DESC, ir.created_at DESC, ir.id DESC
+			ORDER BY
+				(NULLIF(TRIM(COALESCE(ims.material_grade, '')), '') IS NOT NULL) DESC,
+				(ir.status = 'Released') DESC,
+				ir.created_at DESC,
+				ir.id DESC
 			LIMIT 1
 		) spec ON TRUE
 		WHERE c.uniq_code IN ? AND c.deleted_at IS NULL
@@ -655,7 +668,10 @@ func (r *repo) ListCurrentBomChildrenByParentUniq(ctx context.Context, parentUni
 		Joins("JOIN items p ON p.id = b.item_id").
 		Joins("JOIN bom_lines bl ON bl.bom_item_id = b.id").
 		Joins("JOIN items c ON c.id = bl.child_item_id").
-		Joins("LEFT JOIN item_revisions ir ON ir.id = bl.child_item_revision_id").
+		// Sama seperti halaman BOM: bila BOM line tidak menunjuk revisi child
+		// secara eksplisit, pakai revisi terbaru child. Tanpa ini spec (grade,
+		// form, dst.) kosong dan grade jatuh ke uniq_code (mis. "Y01").
+		Joins("LEFT JOIN item_revisions ir ON ir.id = COALESCE(bl.child_item_revision_id, (SELECT MAX(ir_c.id) FROM item_revisions ir_c WHERE ir_c.item_id = bl.child_item_id))").
 		Joins("LEFT JOIN item_material_specs ims ON ims.item_revision_id = ir.id").
 		Where("b.is_current = ? AND p.uniq_code = ? AND c.uniq_code IN ?", true, parentUniqCode, childUniqCodes).
 		Order("bl.level ASC, bl.id ASC").
