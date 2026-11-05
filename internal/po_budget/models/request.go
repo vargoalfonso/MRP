@@ -202,7 +202,15 @@ type MaterialCodeLookupRequest struct {
 
 // MaterialCodeLookupItem maps an item uniq_code to its "Material Code" as shown
 // on the Bill of Material detail page (item_material_specs.material_grade).
+//
+// It also carries the item's material form and dimensions (mm) so printed
+// documents can show the size next to the description.
 type MaterialCodeLookupItem struct {
-	UniqCode     string `gorm:"column:uniq_code" json:"uniq_code"`
-	MaterialCode string `gorm:"column:material_code" json:"material_code"`
+	UniqCode     string   `gorm:"column:uniq_code" json:"uniq_code"`
+	MaterialCode string   `gorm:"column:material_code" json:"material_code"`
+	Form         *string  `gorm:"column:form" json:"form,omitempty"`
+	WidthMm      *float64 `gorm:"column:width_mm" json:"width_mm,omitempty"`
+	DiameterMm   *float64 `gorm:"column:diameter_mm" json:"diameter_mm,omitempty"`
+	ThicknessMm  *float64 `gorm:"column:thickness_mm" json:"thickness_mm,omitempty"`
+	LengthMm     *float64 `gorm:"column:length_mm" json:"length_mm,omitempty"`
 }
