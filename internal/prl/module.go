@@ -39,6 +39,8 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		prlGroup.POST("", m.base.RunAction(m.handler.CreatePRL))
 		prlGroup.POST("/bulk", m.base.RunAction(m.handler.BulkCreatePRLs))
 		prlGroup.GET("", m.base.RunAction(m.handler.ListPRLs))
+		prlGroup.GET("/groups", m.base.RunAction(m.handler.ListPRLGroups))
+		prlGroup.DELETE("/groups/:prl_id", m.base.RunAction(m.handler.DeletePRLGroup))
 		prlGroup.GET("/history-vs-delivery", m.base.RunAction(m.handler.ListPRLHistoryVsDelivery))
 		prlGroup.GET("/history-vs-delivery/detail", m.base.RunAction(m.handler.GetPRLHistoryVsDeliveryDetail))
 		prlGroup.GET("/machine-patterns", m.base.RunAction(m.handler.ListPRLMachinePatterns))

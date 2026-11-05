@@ -57,6 +57,8 @@ type IRepository interface {
 	FindPRLByBusinessKey(ctx context.Context, customerUUID, uniqCode, forecastPeriod string) (*models.PRL, error)
 	ListPRLs(ctx context.Context, filters models.PRLListFilters) ([]models.PRL, int64, error)
 	ListPRLsForExport(ctx context.Context, filters models.PRLListFilters) ([]models.PRL, error)
+	ListPRLGroups(ctx context.Context, filters models.PRLGroupFilters) ([]models.PRLGroupRow, int64, error)
+	FindPRLsByPRLID(ctx context.Context, prlID string) ([]models.PRL, error)
 	ListPRLHistoryVsDelivery(ctx context.Context, filters models.PRLHistoryFilters) ([]models.PRLHistoryListItem, int64, error)
 	ListPRLMachinePatterns(ctx context.Context, filters models.PRLHistoryFilters) ([]models.PRLMachinePatternListItem, int64, error)
 	GetPRLHistorySummary(ctx context.Context, uniqCode, forecastPeriod string) (*models.PRLHistoryDetailSummary, error)
@@ -329,6 +331,104 @@ func (r *repository) ListPRLs(ctx context.Context, filters models.PRLListFilters
 	}
 
 	return items, total, nil
+}
+
+// escapeLike escapes LIKE wildcards so user input is matched literally.
+func escapeLike(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return replacer.Replace(strings.TrimSpace(value))
+}
+
+func (r *repository) applyPRLGroupFilters(query *gorm.DB, f models.PRLGroupFilters) *gorm.DB {
+	if f.Search != "" {
+		term := "%" + escapeLike(f.Search) + "%"
+		query = query.Where("prl_id ILIKE ? OR customer_name ILIKE ? OR customer_code ILIKE ? OR uniq_code ILIKE ? OR product_model ILIKE ? OR part_name ILIKE ? OR part_number ILIKE ?", term, term, term, term, term, term, term)
+	}
+	if f.PRLID != "" {
+		query = query.Where("prl_id ILIKE ?", "%"+escapeLike(f.PRLID)+"%")
+	}
+	if f.UniqCode != "" {
+		query = query.Where("uniq_code ILIKE ?", "%"+escapeLike(f.UniqCode)+"%")
+	}
+	if f.CustomerName != "" {
+		query = query.Where("customer_name ILIKE ?", "%"+escapeLike(f.CustomerName)+"%")
+	}
+	if f.Status != nil {
+		query = query.Where("status = ?", *f.Status)
+	}
+	if f.ForecastPeriod != nil {
+		query = query.Where("forecast_period = ?", *f.ForecastPeriod)
+	}
+	if f.CustomerUUID != nil {
+		query = query.Where("customer_uuid = ?", *f.CustomerUUID)
+	}
+	if len(f.PRLTypes) > 0 {
+		query = query.Where("prl_type IN ?", f.PRLTypes)
+	}
+	return query
+}
+
+// ListPRLGroups returns one row per prl_id. Filtering and pagination are done
+// on the distinct prl_id set in SQL, so every PRL ID is reachable no matter how
+// many UNIQ rows each one holds. A group matches when ANY of its rows matches
+// the filters; the aggregates then cover ALL rows of the matched group.
+func (r *repository) ListPRLGroups(ctx context.Context, filters models.PRLGroupFilters) ([]models.PRLGroupRow, int64, error) {
+	matched := func() *gorm.DB {
+		return r.applyPRLGroupFilters(r.db.WithContext(ctx).Model(&models.PRL{}), filters).
+			Select("prl_id, MAX(created_at) AS last_created_at").
+			Group("prl_id")
+	}
+
+	var total int64
+	if err := r.db.WithContext(ctx).Table("(?) AS m", matched()).Count(&total).Error; err != nil {
+		return nil, 0, apperror.InternalWrap("count prl groups failed", err)
+	}
+	if total == 0 {
+		return []models.PRLGroupRow{}, 0, nil
+	}
+
+	pageIDs := matched().
+		Order("MAX(created_at) DESC, prl_id DESC").
+		Limit(filters.Limit).
+		Offset(filters.Offset)
+
+	rows := make([]models.PRLGroupRow, 0)
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			p.prl_id,
+			MIN(p.customer_uuid::text)                            AS customer_uuid,
+			MIN(p.customer_name)                                  AS customer_name,
+			(ARRAY_AGG(p.product_model ORDER BY p.id))[1]         AS product_model,
+			(ARRAY_AGG(p.part_name ORDER BY p.id))[1]             AS part_name,
+			(ARRAY_AGG(p.part_number ORDER BY p.id))[1]           AS part_number,
+			MIN(p.forecast_period)                                AS forecast_period,
+			COALESCE(SUM(p.quantity), 0)::bigint                  AS quantity,
+			CASE WHEN COUNT(DISTINCT p.status) = 1 THEN MIN(p.status) ELSE 'mixed' END AS status,
+			MIN(p.prl_type)                                       AS prl_type,
+			COUNT(*)                                              AS row_count,
+			COUNT(DISTINCT p.uniq_code)                           AS uniq_count,
+			BOOL_AND(p.status IN ('pending', 'rejected'))         AS deletable,
+			COALESCE(JSONB_AGG(DISTINCT p.uniq_code ORDER BY p.uniq_code), '[]'::jsonb) AS uniq_codes,
+			MIN(p.created_at)                                     AS created_at,
+			MAX(p.updated_at)                                     AS updated_at
+		FROM prls p
+		JOIN (?) m ON m.prl_id = p.prl_id
+		WHERE p.deleted_at IS NULL
+		GROUP BY p.prl_id, m.last_created_at
+		ORDER BY m.last_created_at DESC, p.prl_id DESC
+	`, pageIDs).Scan(&rows).Error
+	if err != nil {
+		return nil, 0, apperror.InternalWrap("list prl groups failed", err)
+	}
+	return rows, total, nil
+}
+
+func (r *repository) FindPRLsByPRLID(ctx context.Context, prlID string) ([]models.PRL, error) {
+	var items []models.PRL
+	if err := r.db.WithContext(ctx).Where("prl_id = ?", prlID).Find(&items).Error; err != nil {
+		return nil, apperror.InternalWrap("find prls by prl_id failed", err)
+	}
+	return items, nil
 }
 
 func (r *repository) ListPRLsForExport(ctx context.Context, filters models.PRLListFilters) ([]models.PRL, error) {
@@ -849,6 +949,9 @@ func (r *repository) applyPRLFilters(query *gorm.DB, filters models.PRLListFilte
 	}
 	if len(filters.PRLTypes) > 0 {
 		query = query.Where("prl_type IN ?", filters.PRLTypes)
+	}
+	if filters.PRLID != nil {
+		query = query.Where("prl_id = ?", *filters.PRLID)
 	}
 	return query
 }

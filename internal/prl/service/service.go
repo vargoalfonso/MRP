@@ -44,8 +44,10 @@ type Service interface {
 	GetPRLHistoryVsDeliveryDetail(ctx context.Context, query models.PRLHistoryDetailQuery) (*models.PRLHistoryDetailResponse, error)
 	ListPRLMachinePatterns(ctx context.Context, query models.ListPRLHistoryQuery) (*models.PRLMachinePatternListResponse, error)
 	ListPRLs(ctx context.Context, query models.ListPRLQuery) (*models.PRLListResult, error)
+	ListPRLGroups(ctx context.Context, query models.ListPRLGroupQuery) (*models.PRLGroupListResult, error)
 	UpdatePRL(ctx context.Context, uuid string, req models.UpdatePRLRequest) (*models.PRL, error)
 	DeletePRL(ctx context.Context, uuid string) error
+	DeletePRLGroup(ctx context.Context, prlID string) error
 	ApprovePRLs(ctx context.Context, req models.BulkStatusActionRequest, userID string, userRoles []string) (*models.BulkStatusActionResponse, error)
 	RejectPRLs(ctx context.Context, req models.BulkStatusActionRequest, userID string, userRoles []string) (*models.BulkStatusActionResponse, error)
 
@@ -499,6 +501,7 @@ func (s *service) ListPRLs(ctx context.Context, query models.ListPRLQuery) (*mod
 		CustomerUUID:   customerUUID,
 		UniqCode:       uniqCode,
 		PRLTypes:       prlTypes,
+		PRLID:          normalizeOptionalString(query.PRLID),
 		Page:           page,
 		Limit:          limit,
 		Offset:         (page - 1) * limit,
@@ -508,6 +511,49 @@ func (s *service) ListPRLs(ctx context.Context, query models.ListPRLQuery) (*mod
 		return nil, err
 	}
 	return &models.PRLListResult{Items: items, Pagination: models.NewPaginationMeta(page, limit, total)}, nil
+}
+
+func (s *service) ListPRLGroups(ctx context.Context, query models.ListPRLGroupQuery) (*models.PRLGroupListResult, error) {
+	page, limit := normalizePageLimit(query.Page, query.Limit)
+	status, err := normalizeOptionalStatus(query.Status)
+	if err != nil {
+		return nil, err
+	}
+	period, err := normalizeOptionalForecastPeriod(query.ForecastPeriod)
+	if err != nil {
+		return nil, err
+	}
+	prlTypes, err := normalizeOptionalPRLTypes(query.PRLType)
+	if err != nil {
+		return nil, err
+	}
+
+	filters := models.PRLGroupFilters{
+		Search:         models.Trimmed(query.Search),
+		Status:         status,
+		ForecastPeriod: period,
+		CustomerUUID:   normalizeOptionalString(query.CustomerUUID),
+		CustomerName:   models.Trimmed(query.CustomerName),
+		UniqCode:       models.Trimmed(query.UniqCode),
+		PRLID:          models.Trimmed(query.PRLID),
+		PRLTypes:       prlTypes,
+		Page:           page,
+		Limit:          limit,
+		Offset:         (page - 1) * limit,
+	}
+	items, total, err := s.repo.ListPRLGroups(ctx, filters)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].UniqCodes = []string{}
+		if len(items[i].UniqCodesRaw) > 0 {
+			if err := json.Unmarshal(items[i].UniqCodesRaw, &items[i].UniqCodes); err != nil {
+				return nil, apperror.InternalWrap("decode prl group uniq codes failed", err)
+			}
+		}
+	}
+	return &models.PRLGroupListResult{Items: items, Pagination: models.NewPaginationMeta(page, limit, total)}, nil
 }
 
 func (s *service) UpdatePRL(ctx context.Context, uuid string, req models.UpdatePRLRequest) (*models.PRL, error) {
@@ -552,6 +598,51 @@ func (s *service) DeletePRL(ctx context.Context, uuid string) error {
 			return apperror.InternalWrap("delete prl failed", err)
 		}
 
+		return nil
+	})
+}
+
+// DeletePRLGroup deletes every UNIQ row that shares the given PRL ID, together
+// with their approval instances, in a single transaction. The table shows one
+// row per PRL ID, so this is what its delete button must call. The whole group
+// is refused when any row is not pending/rejected, so a group is never left
+// half-deleted.
+func (s *service) DeletePRLGroup(ctx context.Context, prlID string) error {
+	prlID = models.Trimmed(prlID)
+	if prlID == "" {
+		return apperror.BadRequest("prl id is required")
+	}
+
+	items, err := s.repo.FindPRLsByPRLID(ctx, prlID)
+	if err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		return apperror.NotFound("prl tidak ditemukan")
+	}
+
+	ids := make([]int64, 0, len(items))
+	blocked := 0
+	for i := range items {
+		status := strings.ToLower(models.Trimmed(items[i].Status))
+		if status != models.PRLStatusPending && status != models.PRLStatusRejected {
+			blocked++
+		}
+		ids = append(ids, items[i].ID)
+	}
+	if blocked > 0 {
+		return apperror.BadRequest(fmt.Sprintf("PRL %s tidak dapat dihapus: %d dari %d entri berstatus selain pending atau rejected", prlID, blocked, len(items)))
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.WithContext(ctx).
+			Where("action_name = ? AND reference_table = ? AND reference_id IN ?", "prl", "prls", ids).
+			Delete(&awmodels.ApprovalInstance{}).Error; err != nil {
+			return apperror.InternalWrap("delete prl approval instances failed", err)
+		}
+		if err := tx.WithContext(ctx).Where("id IN ?", ids).Delete(&models.PRL{}).Error; err != nil {
+			return apperror.InternalWrap("delete prl group failed", err)
+		}
 		return nil
 	})
 }

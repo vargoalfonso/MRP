@@ -282,8 +282,27 @@ type ListPRLQuery struct {
 	// "reguler" or "reguler,additional", so the UI can filter by one or
 	// multiple PRL types at once.
 	PRLType string `form:"prl_type"`
-	Page    int    `form:"page"`
-	Limit   int    `form:"limit"`
+	// PRLID is an exact match on prl_id; used to load every UNIQ row that
+	// belongs to a single PRL (detail view).
+	PRLID string `form:"prl_id"`
+	Page  int    `form:"page"`
+	Limit int    `form:"limit"`
+}
+
+// ListPRLGroupQuery drives GET /prls/groups: one result row per PRL ID,
+// paginated and filtered in the database. Text filters are partial,
+// case-insensitive matches so the UI can use free-typed inputs.
+type ListPRLGroupQuery struct {
+	Search         string `form:"search"`
+	Status         string `form:"status"`
+	ForecastPeriod string `form:"forecast_period"`
+	CustomerUUID   string `form:"customer_uuid"`
+	CustomerName   string `form:"customer_name"`
+	UniqCode       string `form:"uniq_code"`
+	PRLID          string `form:"prl_id"`
+	PRLType        string `form:"prl_type"`
+	Page           int    `form:"page"`
+	Limit          int    `form:"limit"`
 }
 
 type ListPRLHistoryQuery struct {
@@ -410,9 +429,50 @@ type PRLListFilters struct {
 	CustomerUUID   *string
 	UniqCode       *string
 	PRLTypes       []string
+	PRLID          *string
 	Page           int
 	Limit          int
 	Offset         int
+}
+
+type PRLGroupFilters struct {
+	Search         string
+	Status         *string
+	ForecastPeriod *string
+	CustomerUUID   *string
+	CustomerName   string
+	UniqCode       string
+	PRLID          string
+	PRLTypes       []string
+	Page           int
+	Limit          int
+	Offset         int
+}
+
+// PRLGroupRow is the aggregate of every prls row (one per UNIQ) sharing a prl_id.
+type PRLGroupRow struct {
+	PRLID          string         `gorm:"column:prl_id" json:"prl_id"`
+	CustomerUUID   string         `gorm:"column:customer_uuid" json:"customer_uuid"`
+	CustomerName   string         `gorm:"column:customer_name" json:"customer_name"`
+	ProductModel   string         `gorm:"column:product_model" json:"product_model"`
+	PartName       string         `gorm:"column:part_name" json:"part_name"`
+	PartNumber     string         `gorm:"column:part_number" json:"part_number"`
+	ForecastPeriod string         `gorm:"column:forecast_period" json:"forecast_period"`
+	Quantity       int64          `gorm:"column:quantity" json:"quantity"`
+	Status         string         `gorm:"column:status" json:"status"`
+	PRLType        string         `gorm:"column:prl_type" json:"prl_type"`
+	RowCount       int64          `gorm:"column:row_count" json:"row_count"`
+	UniqCount      int64          `gorm:"column:uniq_count" json:"uniq_count"`
+	Deletable      bool           `gorm:"column:deletable" json:"deletable"`
+	UniqCodesRaw   datatypes.JSON `gorm:"column:uniq_codes" json:"-"`
+	UniqCodes      []string       `gorm:"-" json:"uniq_codes"`
+	CreatedAt      time.Time      `gorm:"column:created_at" json:"created_at"`
+	UpdatedAt      time.Time      `gorm:"column:updated_at" json:"updated_at"`
+}
+
+type PRLGroupListResult struct {
+	Items      []PRLGroupRow  `json:"items"`
+	Pagination PaginationMeta `json:"pagination"`
 }
 
 type PRLHistoryFilters struct {
