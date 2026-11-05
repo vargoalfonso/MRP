@@ -76,6 +76,7 @@ type IRepository interface {
 	GetPRLRowsByPrlID(ctx context.Context, prlID string) ([]models.PRLRow, error)
 	GetPRLRowsByIDs(ctx context.Context, ids []int64) ([]models.PRLRow, error)
 	ListCurrentBomChildrenByParentUniq(ctx context.Context, parentUniqCode string, childUniqCodes []string) ([]models.CurrentBomChildRow, error)
+	ListMaterialCodesByUniqCodes(ctx context.Context, uniqCodes []string) ([]models.MaterialCodeLookupItem, error)
 
 	// SumAllocatedQty returns how much of prl_row_id's quantity is already in po_budget_entries
 	// for the given budget_type. Used to enforce the ceiling constraint.
@@ -560,6 +561,38 @@ func (r *repo) GetPRLRowsByIDs(ctx context.Context, ids []int64) ([]models.PRLRo
 		Table("prls").
 		Where("id IN ? AND deleted_at IS NULL", ids).
 		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// ListMaterialCodesByUniqCodes returns the "Material Code" of each item exactly
+// as the Bill of Material detail page shows it, i.e.
+// item_material_specs.material_grade (e.g. "BR40"). The spec is taken from the
+// item's Released revision when there is one, otherwise from its latest
+// revision that has a material_grade. Items without one are absent from the
+// result (the caller falls back to its own code).
+func (r *repo) ListMaterialCodesByUniqCodes(ctx context.Context, uniqCodes []string) ([]models.MaterialCodeLookupItem, error) {
+	if len(uniqCodes) == 0 {
+		return []models.MaterialCodeLookupItem{}, nil
+	}
+
+	rows := make([]models.MaterialCodeLookupItem, 0, len(uniqCodes))
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT c.uniq_code AS uniq_code, spec.material_grade AS material_code
+		FROM items c
+		JOIN LATERAL (
+			SELECT TRIM(ims.material_grade) AS material_grade
+			FROM item_revisions ir
+			JOIN item_material_specs ims ON ims.item_revision_id = ir.id
+			WHERE ir.item_id = c.id
+			  AND NULLIF(TRIM(COALESCE(ims.material_grade, '')), '') IS NOT NULL
+			ORDER BY (ir.status = 'Released') DESC, ir.created_at DESC, ir.id DESC
+			LIMIT 1
+		) spec ON TRUE
+		WHERE c.uniq_code IN ? AND c.deleted_at IS NULL
+	`, uniqCodes).Scan(&rows).Error
+	if err != nil {
 		return nil, err
 	}
 	return rows, nil

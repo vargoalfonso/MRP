@@ -46,6 +46,7 @@ type IService interface {
 	// Bulk from PRL (wizard 3-step)
 	// Step 1 data: GET /prl (list) and GET /prl/:id (detail with items + allocation)
 	ListPRL(ctx context.Context, customerCode string, period string, page, limit int) (*models.ListPrlResponse, error)
+	ListMaterialCodes(ctx context.Context, uniqCodes []string) ([]models.MaterialCodeLookupItem, error)
 	GetPRLWithAllocation(ctx context.Context, prlID string, budgetType string) (*models.PrlForecastResponse, error)
 	// Step 2+3: create entries; enforces quantity ceiling per PRL item
 	BulkCreateFromPRL(ctx context.Context, budgetType string, req models.BulkFromPRLRequest, createdBy string) (*models.BulkFromPRLResult, error)
@@ -900,6 +901,25 @@ func displayFromForecastPeriod(fp string) string {
 // ---------------------------------------------------------------------------
 // PRL — list + detail with allocation
 // ---------------------------------------------------------------------------
+
+// ListMaterialCodes resolves item uniq_codes to their BOM "Material Code"
+// (item_material_specs.material_grade). Input is trimmed and de-duplicated.
+func (s *svc) ListMaterialCodes(ctx context.Context, uniqCodes []string) ([]models.MaterialCodeLookupItem, error) {
+	seen := make(map[string]struct{}, len(uniqCodes))
+	cleaned := make([]string, 0, len(uniqCodes))
+	for _, code := range uniqCodes {
+		code = strings.TrimSpace(code)
+		if code == "" {
+			continue
+		}
+		if _, ok := seen[code]; ok {
+			continue
+		}
+		seen[code] = struct{}{}
+		cleaned = append(cleaned, code)
+	}
+	return s.repo.ListMaterialCodesByUniqCodes(ctx, cleaned)
+}
 
 func (s *svc) ListPRL(ctx context.Context, customerCode string, period string, page, limit int) (*models.ListPrlResponse, error) {
 	forecastPeriod, err := normalizeForecastPeriod(period)

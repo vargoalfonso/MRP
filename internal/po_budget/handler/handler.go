@@ -472,6 +472,28 @@ func (h *HTTPHandler) UpdateSplitSetting(ctx *app.Context) *app.CostumeResponse 
 // ListPRL  GET /api/v1/sales/prl
 //
 // Query params: customer_id, period, limit, page
+// ListMaterialCodes  POST /api/v1/po-budget/material-codes
+//
+// Body: {"uniq_codes": ["Y01", "Y03"]}
+// Returns [{"uniq_code": "Y01", "material_code": "RM-001"}, ...]. Used by the
+// Permintaan Barang PDF so "Kode Barang" shows the material code, not the uniq.
+func (h *HTTPHandler) ListMaterialCodes(ctx *app.Context) *app.CostumeResponse {
+	var req models.MaterialCodeLookupRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		return &app.CostumeResponse{RequestID: ctx.APIReqID, Status: http.StatusBadRequest, Message: "invalid request body"}
+	}
+	items, err := h.svc.ListMaterialCodes(ctx.Request.Context(), req.UniqCodes)
+	if err != nil {
+		return app.NewError(ctx, err)
+	}
+	return &app.CostumeResponse{
+		RequestID: ctx.APIReqID,
+		Status:    http.StatusOK,
+		Message:   http.StatusText(http.StatusOK),
+		Data:      items,
+	}
+}
+
 func (h *HTTPHandler) ListPRL(ctx *app.Context) *app.CostumeResponse {
 	p := pagination.Pagination(ctx)
 	// Data asli uses customer_code (varchar) not numeric customer_id.

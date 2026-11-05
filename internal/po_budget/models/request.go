@@ -190,3 +190,19 @@ type ImportRow struct {
 	PurchaseRequest float64 `json:"purchase_request"`
 	Prl             float64 `json:"prl"`
 }
+
+// ---------------------------------------------------------------------------
+// Material code lookup (used by the "Permintaan Barang" PDF)
+// ---------------------------------------------------------------------------
+
+// MaterialCodeLookupRequest asks for the material code of one or more items.
+type MaterialCodeLookupRequest struct {
+	UniqCodes []string `json:"uniq_codes"`
+}
+
+// MaterialCodeLookupItem maps an item uniq_code to its "Material Code" as shown
+// on the Bill of Material detail page (item_material_specs.material_grade).
+type MaterialCodeLookupItem struct {
+	UniqCode     string `gorm:"column:uniq_code" json:"uniq_code"`
+	MaterialCode string `gorm:"column:material_code" json:"material_code"`
+}
