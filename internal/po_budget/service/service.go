@@ -1148,14 +1148,15 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 		}
 
 		existingAllocated := allocMap[item.PrlItemID]
-		if existingAllocated+newTotal > r.Quantity {
+		ceiling, tolerance := bulkItemAllocationCeiling(r.Quantity, item)
+		if existingAllocated+newTotal > ceiling+tolerance {
 			uniqCode := ptrVal(r.UniqCode)
 			if uniqCode == "" {
 				uniqCode = item.UniqCode
 			}
 			result.Errors = append(result.Errors,
 				fmt.Sprintf("uniq %s: total allocated (%.2f existing + %.2f new = %.2f) exceeds PRL budget (%.2f)",
-					uniqCode, existingAllocated, newTotal, existingAllocated+newTotal, r.Quantity),
+					uniqCode, existingAllocated, newTotal, existingAllocated+newTotal, ceiling),
 			)
 			continue
 		}
@@ -1321,6 +1322,29 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 
 	result.Created = len(entries)
 	return result, nil
+}
+
+// bulkItemAllocationCeiling returns the most a bulk item may allocate against
+// its PRL row, plus a rounding tolerance.
+//
+// A child item's quantity is the PRL row quantity x its QPU (qty_per_uniq), and
+// for WIRE form x its weight in kg (the quantity is then a weight). Capping it
+// at the raw PRL row quantity would reject any QPU > 1, so the cap scales with
+// the same factors the UI uses. A missing/zero QPU counts as 1.
+func bulkItemAllocationCeiling(prlQuantity float64, item models.BulkItemInput) (ceiling, tolerance float64) {
+	qpu := 1.0
+	if item.QtyPerUniq != nil && *item.QtyPerUniq > 0 {
+		qpu = *item.QtyPerUniq
+	}
+	ceiling = prlQuantity * qpu
+	tolerance = 0.5 // the UI rounds quantities to whole units
+
+	form, _ := item.MaterialSpec["form"].(string)
+	if strings.EqualFold(strings.TrimSpace(form), "wire") && item.WeightKg != nil && *item.WeightKg > 0 {
+		ceiling *= *item.WeightKg
+		tolerance = 0.001 // wire quantities keep 3 decimals
+	}
+	return ceiling, tolerance
 }
 
 // itemTypeUniqCode returns the uniq_code used to classify an item's
