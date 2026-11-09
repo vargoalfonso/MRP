@@ -68,6 +68,7 @@ type IDeliveryNoteRepository interface {
 	ReduceFGStock(tx *gorm.DB, fgID int64, qty float64) error
 
 	GetMaterialGradeByItemUniqCode(ctx context.Context, uniqCode string) (string, error)
+	GetMaterialCodesByUniqCodes(ctx context.Context, uniqCodes []string) (map[string]string, error)
 
 	CountKanban(ctx context.Context) (int64, error)
 	CreateKanban(ctx context.Context, data *models.KanbanParameter) error
@@ -621,4 +622,44 @@ func (r *repository) MarkDNSupplierReceived(ctx context.Context, tx *gorm.DB, dn
 		Table("delivery_note_suppliers").
 		Where("id = ?", dnID).
 		Updates(updates).Error
+}
+
+// GetMaterialCodesByUniqCodes memetakan uniq_code item BOM ke material code-nya
+// (item_material_specs.material_grade), memakai spec dari revisi terbaik tiap
+// item (yang punya material_grade, Released dulu, lalu terbaru) -- aturan yang
+// sama dengan po_budget.ListMaterialCodesByUniqCodes.
+func (r *repository) GetMaterialCodesByUniqCodes(ctx context.Context, uniqCodes []string) (map[string]string, error) {
+	out := make(map[string]string, len(uniqCodes))
+	if len(uniqCodes) == 0 {
+		return out, nil
+	}
+	type row struct {
+		UniqCode     string `gorm:"column:uniq_code"`
+		MaterialCode string `gorm:"column:material_code"`
+	}
+	var rows []row
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT c.uniq_code AS uniq_code, spec.material_grade AS material_code
+		FROM items c
+		JOIN LATERAL (
+			SELECT NULLIF(TRIM(COALESCE(ims.material_grade, '')), '') AS material_grade
+			FROM item_revisions ir
+			JOIN item_material_specs ims ON ims.item_revision_id = ir.id
+			WHERE ir.item_id = c.id
+			ORDER BY
+				(NULLIF(TRIM(COALESCE(ims.material_grade, '')), '') IS NOT NULL) DESC,
+				(ir.status = 'Released') DESC,
+				ir.created_at DESC,
+				ir.id DESC
+			LIMIT 1
+		) spec ON TRUE
+		WHERE c.uniq_code IN ? AND c.deleted_at IS NULL AND spec.material_grade IS NOT NULL
+	`, uniqCodes).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, rw := range rows {
+		out[rw.UniqCode] = rw.MaterialCode
+	}
+	return out, nil
 }

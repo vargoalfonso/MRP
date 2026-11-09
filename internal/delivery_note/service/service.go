@@ -753,6 +753,37 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.PreviewD
 	next := count + 1
 	dnNumber := fmt.Sprintf("%s-%04d", prefix, next)
 
+	// Material code tiap baris PO: kolom material_grade; bila kosong, cari dari
+	// spec BOM berdasarkan uniq child lalu uniq baris.
+	materialCodeByLine := make(map[int]string, len(poItems))
+	lookupCodes := make([]string, 0)
+	for i, poItem := range poItems {
+		if g := strings.TrimSpace(poItem.MaterialGrade); g != "" {
+			materialCodeByLine[i] = g
+			continue
+		}
+		if c := strings.TrimSpace(poItem.ChildUniqCode); c != "" {
+			lookupCodes = append(lookupCodes, c)
+		}
+		if c := strings.TrimSpace(poItem.ItemUniqCode); c != "" {
+			lookupCodes = append(lookupCodes, c)
+		}
+	}
+	if len(lookupCodes) > 0 {
+		if byUniq, lookupErr := s.repo.GetMaterialCodesByUniqCodes(ctx, lookupCodes); lookupErr == nil {
+			for i, poItem := range poItems {
+				if _, ok := materialCodeByLine[i]; ok {
+					continue
+				}
+				if g := byUniq[strings.TrimSpace(poItem.ChildUniqCode)]; g != "" {
+					materialCodeByLine[i] = g
+				} else if g := byUniq[strings.TrimSpace(poItem.ItemUniqCode)]; g != "" {
+					materialCodeByLine[i] = g
+				}
+			}
+		}
+	}
+
 	// 🔥 7. mapping items
 	items := make([]models.PreviewDNItemResponse, 0, len(poItems))
 
@@ -776,6 +807,8 @@ func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.PreviewD
 
 		items = append(items, models.PreviewDNItemResponse{
 			ItemUniqCode:  poItem.ItemUniqCode,
+			ChildUniqCode: strings.TrimSpace(poItem.ChildUniqCode),
+			MaterialCode:  materialCodeByLine[i],
 			MaterialInfo:  poItem.ItemUniqCode,
 			TotalQty:      int64(poItem.OrderedQty),
 			RemainingQty:  int64(poItem.OrderedQty), // lebih masuk akal daripada 0

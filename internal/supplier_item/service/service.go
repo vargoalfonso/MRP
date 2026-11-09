@@ -21,6 +21,8 @@ type SupplierItemService interface {
 	List(ctx context.Context, query models.ListSupplierItemQuery) (*models.SupplierItemListResult, error)
 	Update(ctx context.Context, uuid string, req models.UpdateSupplierItemRequest, rawPayload []byte) (*models.SupplierItem, error)
 	Delete(ctx context.Context, uuid string) error
+	PreviewByMaterialCode(ctx context.Context, q models.MaterialCodePreviewQuery) ([]models.MaterialCodeUniq, error)
+	CreateByMaterialCode(ctx context.Context, req models.BulkByMaterialCodeRequest) (*models.BulkByMaterialCodeResult, error)
 }
 
 type service struct {
@@ -118,11 +120,24 @@ func (s *service) Create(ctx context.Context, req models.CreateSupplierItemReque
 	return item, nil
 }
 
-func (s *service) GetByUUID(ctx context.Context, uuid string) (*models.SupplierItem, error) {
+// getRawByUUID membaca apa adanya dari database (dipakai Update/Delete supaya
+// terjemahan material code saat-baca tidak ikut tersimpan).
+func (s *service) getRawByUUID(ctx context.Context, uuid string) (*models.SupplierItem, error) {
 	if strings.TrimSpace(uuid) == "" {
 		return nil, apperror.BadRequest("supplier item id is required")
 	}
 	return s.repo.FindByUUID(ctx, uuid)
+}
+
+func (s *service) GetByUUID(ctx context.Context, uuid string) (*models.SupplierItem, error) {
+	item, err := s.getRawByUUID(ctx, uuid)
+	if err != nil {
+		return nil, err
+	}
+	s.resolveLegacyMaterialCodes(ctx, []models.SupplierItem{*item}, func(_ int, code string) {
+		item.SebangoCode = &code
+	})
+	return item, nil
 }
 
 func (s *service) List(ctx context.Context, query models.ListSupplierItemQuery) (*models.SupplierItemListResult, error) {
@@ -161,6 +176,9 @@ func (s *service) List(ctx context.Context, query models.ListSupplierItemQuery) 
 	if err != nil {
 		return nil, err
 	}
+	s.resolveLegacyMaterialCodes(ctx, items, func(i int, code string) {
+		items[i].SebangoCode = &code
+	})
 	return &models.SupplierItemListResult{
 		Items:      items,
 		Pagination: models.NewPaginationMeta(page, limit, total),
@@ -168,7 +186,7 @@ func (s *service) List(ctx context.Context, query models.ListSupplierItemQuery) 
 }
 
 func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupplierItemRequest, rawPayload []byte) (*models.SupplierItem, error) {
-	item, err := s.GetByUUID(ctx, uuid)
+	item, err := s.getRawByUUID(ctx, uuid)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +272,7 @@ func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupp
 }
 
 func (s *service) Delete(ctx context.Context, uuid string) error {
-	item, err := s.GetByUUID(ctx, uuid)
+	item, err := s.getRawByUUID(ctx, uuid)
 	if err != nil {
 		return err
 	}

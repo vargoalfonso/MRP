@@ -29,6 +29,8 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 	group.Use(authMiddleware.JWTMiddleware(m.authenticator))
 	{
 		group.POST("", m.base.RunAction(m.handler.Create))
+		group.POST("/bulk-by-material-code", m.base.RunAction(m.handler.CreateByMaterialCode))
+		group.GET("/by-material-code", m.base.RunAction(m.handler.PreviewByMaterialCode))
 		group.GET("", m.base.RunAction(m.handler.List))
 		group.GET("/:id", m.base.RunAction(m.handler.GetByID))
 		group.PUT("/:id", m.base.RunAction(m.handler.Update))

@@ -40,6 +40,11 @@ type IRepository interface {
 	FindSupplierByUUID(ctx context.Context, uuid string) (*supplierModels.Supplier, error)
 	FindWarehouseByUUID(ctx context.Context, uuid string) (*warehouseModels.Warehouse, error)
 	ExistsBySupplierAndUniqType(ctx context.Context, supplierUUID, uniqCode, itemType, excludeUUID string) (bool, error)
+	ListUniqsByMaterialCode(ctx context.Context, materialCode string, typeMaterials []string) ([]models.MaterialCodeUniq, error)
+	ListRegisteredUniqs(ctx context.Context, supplierUUID, itemType string, uniqCodes []string) (map[string]bool, error)
+	CreateMany(ctx context.Context, items []*models.SupplierItem) error
+	ResolveMasterGradesByName(ctx context.Context, nameKeys []string) (map[string]string, error)
+	SupplierHasLegacyMaterialRow(ctx context.Context, supplierUUID, itemType, materialCode string) (bool, error)
 }
 
 type repository struct {

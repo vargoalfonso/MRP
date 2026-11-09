@@ -34,7 +34,11 @@ type PreviewDNResponse struct {
 }
 
 type PreviewDNItemResponse struct {
-	ItemUniqCode  string `json:"item_uniq_code"`
+	ItemUniqCode string `json:"item_uniq_code"`
+	// ChildUniqCode = uniq BOM child; MaterialCode = material code baris PO
+	// (mis. BR50). Dipakai label dropdown Uniq: "material code - uniq".
+	ChildUniqCode string `json:"child_uniq_code"`
+	MaterialCode  string `json:"material_code"`
 	MaterialInfo  string `json:"material_info"`
 	TotalQty      int64  `json:"total_qty"`
 	RemainingQty  int64  `json:"remaining_qty"`
