@@ -134,6 +134,7 @@ type PurchaseOrderItem struct {
 	LineNo          int64     `json:"line_no" db:"line_no"`
 	ItemUniqCode    string    `json:"item_uniq_code" db:"item_uniq_code"`
 	ChildUniqCode   string    `json:"child_uniq_code" db:"child_uniq_code"`
+	MaterialGrade   string    `json:"material_grade" db:"material_grade"` // material code baris PO (mis. BR50)
 	ProductModel    string    `json:"product_model" db:"product_model"`
 	MaterialType    string    `json:"material_type" db:"material_type"`
 	PartName        string    `json:"part_name" db:"part_name"`

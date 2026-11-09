@@ -208,6 +208,22 @@ func (r *repository) GetStatusMonitoring(ctx context.Context, f StatusMonitoring
 	}, nil
 }
 
+// normalizeStockStatusFilter menerima "low" / "low_on_stock" / "normal" /
+// "overstock" (tidak peka huruf besar) dan mengembalikan konstanta status.
+// Nilai kosong / "all" / tak dikenal = tanpa filter.
+func normalizeStockStatusFilter(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "low", "low_on_stock", "low-on-stock", "low stock":
+		return fgModels.FGStatusLowStock
+	case "normal":
+		return fgModels.FGStatusNormal
+	case "over", "overstock":
+		return fgModels.FGStatusOverstock
+	default:
+		return ""
+	}
+}
+
 // ---------------------------------------------------------------------------
 // List
 // ---------------------------------------------------------------------------
@@ -222,8 +238,32 @@ func (r *repository) ListFinishedGoods(ctx context.Context, f FinishedGoodsFilte
 	if f.Model != "" {
 		q = q.Where("LOWER(model) = ?", strings.ToLower(f.Model))
 	}
-	if f.Status != "" {
-		q = q.Where("status = ?", f.Status)
+	// Filter status dihitung dari parameter Kanban AKTIF terbaru (min_stock /
+	// max_stock) dengan aturan yang sama seperti computeStatus & tag di tabel,
+	// bukan dari kolom finished_goods.status yang hanya snapshot saat dibuat.
+	//   low       : stok < min_stock
+	//   overstock : bukan low, dan stok > max_stock
+	//   normal    : selain keduanya
+	statusFilter := normalizeStockStatusFilter(f.Status)
+	if statusFilter != "" {
+		q = q.Joins(`LEFT JOIN LATERAL (
+			SELECT kp0.min_stock AS kp_min_stock, kp0.max_stock AS kp_max_stock
+			FROM kanban_parameters kp0
+			WHERE kp0.item_uniq_code = finished_goods.uniq_code
+			  AND COALESCE(kp0.status, 'active') ILIKE 'active'
+			ORDER BY kp0.updated_at DESC, kp0.id DESC
+			LIMIT 1
+		) kp ON TRUE`)
+		const isLow = "(kp.kp_min_stock IS NOT NULL AND finished_goods.stock_qty < kp.kp_min_stock)"
+		const isOver = "(kp.kp_max_stock IS NOT NULL AND finished_goods.stock_qty > kp.kp_max_stock)"
+		switch statusFilter {
+		case fgModels.FGStatusLowStock:
+			q = q.Where(isLow)
+		case fgModels.FGStatusOverstock:
+			q = q.Where("NOT " + isLow + " AND " + isOver)
+		case fgModels.FGStatusNormal:
+			q = q.Where("NOT " + isLow + " AND NOT " + isOver)
+		}
 	}
 	if f.WarehouseLocation != "" {
 		q = q.Where("LOWER(warehouse_location) = ?", strings.ToLower(f.WarehouseLocation))
@@ -235,7 +275,7 @@ func (r *repository) ListFinishedGoods(ctx context.Context, f FinishedGoodsFilte
 	}
 
 	var rows []fgModels.FinishedGoods
-	if err := q.Order("created_at DESC").Limit(f.Limit).Offset(f.Offset).Find(&rows).Error; err != nil {
+	if err := q.Select("finished_goods.*").Order("finished_goods.created_at DESC").Limit(f.Limit).Offset(f.Offset).Find(&rows).Error; err != nil {
 		return nil, 0, apperror.Internal("fg list: " + err.Error())
 	}
 	return rows, total, nil
