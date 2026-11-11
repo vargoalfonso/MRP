@@ -96,7 +96,7 @@ func (s *svc) Create(ctx context.Context, req siModels.CreateSupplierInfoRequest
 		if !ok {
 			return nil, apperror.NotFound("kombinasi supplier dan type tidak ditemukan di supplier item")
 		}
-		key, keyLabel = mc, "Material Code"
+		key, keyLabel = mc, "UNIQ"
 	} else {
 		// Mode lama: cari supplier_item sesuai pilihan user (uniq + supplier + type).
 		// Jangan hanya berdasarkan uniq: UNIQ yang sama bisa dimiliki beberapa supplier/type.
