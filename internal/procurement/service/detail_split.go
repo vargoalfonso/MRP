@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/ganasa18/go-template/internal/procurement/models"
@@ -30,16 +31,19 @@ type splitChild struct {
 
 // budgetDetail mirrors the po_budget detail_jsonb shape we care about here.
 type budgetDetail struct {
-	Parents []budgetParent `json:"parents"`
+	// Suppliers: pembagian supplier level entri (entri tanpa child, mis. subcon /
+	// indirect flat) beserta qty masing-masing.
+	Suppliers []budgetChildSupplier `json:"suppliers"`
+	Parents   []budgetParent        `json:"parents"`
 	// Children is the flat backward-compat list; only used when parents is empty.
 	Children []budgetChild `json:"children"`
 }
 
 type budgetParent struct {
-	UniqCode   string         `json:"uniq_code"`
-	PartName   string         `json:"part_name"`
-	PartNumber string         `json:"part_number"`
-	Children   []budgetChild  `json:"children"`
+	UniqCode   string        `json:"uniq_code"`
+	PartName   string        `json:"part_name"`
+	PartNumber string        `json:"part_number"`
+	Children   []budgetChild `json:"children"`
 }
 
 type budgetChild struct {
@@ -114,11 +118,9 @@ func extractSplitChildren(e models.POBudgetEntry) []splitChild {
 			if len(suppliers) == 0 {
 				suppliers = []budgetChildSupplier{{SupplierName: supplierNameOf(e), SupplierID: e.SupplierID, Quantity: c.Quantity}}
 			}
-			for _, sup := range suppliers {
-				qty := sup.Quantity
-				if qty <= 0 {
-					qty = c.Quantity
-				}
+			shareQtys := childSupplierQtys(suppliers, c.Quantity)
+			for i, sup := range suppliers {
+				qty := shareQtys[i]
 				if qty <= 0 {
 					continue
 				}
@@ -143,6 +145,40 @@ func extractSplitChildren(e models.POBudgetEntry) []splitChild {
 
 	if len(out) == 0 {
 		return nil
+	}
+	return out
+}
+
+// childSupplierQtys menentukan qty tiap supplier sebuah child.
+//   - Ada supplier berqty > 0: pakai qty itu; supplier berqty 0 dilewati
+//     (sebelumnya mendapat seluruh qty child sehingga qty terhitung ganda).
+//   - Semua qty 0 dan hanya satu supplier: seluruh qty child.
+//   - Semua qty 0 dan beberapa supplier: dibagi sama rata (dibulatkan, sisa ke
+//     supplier terakhir) sehingga total tetap sama dengan qty child.
+func childSupplierQtys(suppliers []budgetChildSupplier, childQty float64) []float64 {
+	out := make([]float64, len(suppliers))
+	positives := 0
+	for i, s := range suppliers {
+		if s.Quantity > 0 {
+			out[i] = s.Quantity
+			positives++
+		}
+	}
+	if positives > 0 || childQty <= 0 || len(suppliers) == 0 {
+		return out
+	}
+	if len(suppliers) == 1 {
+		out[0] = childQty
+		return out
+	}
+	var used float64
+	for i := range suppliers {
+		if i == len(suppliers)-1 {
+			out[i] = childQty - used
+			break
+		}
+		out[i] = math.Round(childQty / float64(len(suppliers)))
+		used += out[i]
 	}
 	return out
 }
@@ -174,4 +210,71 @@ func stageQty(childQty float64, stage int, po1Pct, po2Pct float64) float64 {
 		pct = po2Pct
 	}
 	return math.Round(childQty * pct / 100)
+}
+
+// flatSupplierShare adalah bagian satu supplier pada entri tanpa child.
+type flatSupplierShare struct {
+	supplierID   *int64
+	supplierName string
+	qty          float64
+}
+
+// extractFlatSupplierShares membaca detail_jsonb.suppliers entri tanpa child.
+// Mengembalikan nil bila kurang dari DUA supplier berqty > 0 (entri tetap
+// diproses dengan supplier level entri seperti sebelumnya).
+func extractFlatSupplierShares(e models.POBudgetEntry) []flatSupplierShare {
+	raw := []byte(e.DetailJSON)
+	if len(raw) == 0 || string(raw) == "{}" || string(raw) == "null" {
+		return nil
+	}
+	var detail budgetDetail
+	if err := json.Unmarshal(raw, &detail); err != nil {
+		return nil
+	}
+
+	out := make([]flatSupplierShare, 0, len(detail.Suppliers))
+	index := map[string]int{}
+	for _, s := range detail.Suppliers {
+		name := strings.TrimSpace(s.SupplierName)
+		if (name == "" && (s.SupplierID == nil || *s.SupplierID <= 0)) || s.Quantity <= 0 {
+			continue
+		}
+		key := "name:" + strings.ToLower(name)
+		if s.SupplierID != nil && *s.SupplierID > 0 {
+			key = "id:" + strconv.FormatInt(*s.SupplierID, 10)
+		}
+		if i, ok := index[key]; ok {
+			out[i].qty += s.Quantity
+			continue
+		}
+		index[key] = len(out)
+		out = append(out, flatSupplierShare{supplierID: s.SupplierID, supplierName: name, qty: s.Quantity})
+	}
+	if len(out) < 2 {
+		return nil
+	}
+	return out
+}
+
+// splitQtyByShares membagi total ke tiap share secara proporsional, dibulatkan ke
+// bilangan bulat; share terakhir menerima sisanya supaya jumlahnya tetap sama.
+func splitQtyByShares(total float64, shares []flatSupplierShare) []float64 {
+	out := make([]float64, len(shares))
+	var sum float64
+	for _, sh := range shares {
+		sum += sh.qty
+	}
+	if sum <= 0 || total <= 0 {
+		return out
+	}
+	var used float64
+	for i, sh := range shares {
+		if i == len(shares)-1 {
+			out[i] = total - used
+			break
+		}
+		out[i] = math.Round(total * sh.qty / sum)
+		used += out[i]
+	}
+	return out
 }

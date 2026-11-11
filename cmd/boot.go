@@ -362,7 +362,7 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	woHTTPHandler := workOrderHandler.New(woSvc)
 
 	safetyStockRepository := safetyStockRepo.New(db)
-	safetyStockService := safetyStockService.New(safetyStockRepository)
+	safetyStockService := safetyStockService.NewWithForecast(safetyStockRepository, forecastingClient)
 	safetyStockHandler := safetyStockHandler.New(safetyStockService)
 
 	typeParameterRepo := typeParameterRepository.New(db)

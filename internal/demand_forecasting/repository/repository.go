@@ -9,6 +9,7 @@ import (
 	"github.com/ganasa18/go-template/pkg/apperror"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type IRepository interface {
@@ -26,6 +27,12 @@ type IRepository interface {
 	FindInferenceResultByUUID(ctx context.Context, uuid string) (*models.ForecastingInferenceResult, error)
 	FindInferenceResultByRequestID(ctx context.Context, requestID string) (*models.ForecastingInferenceResult, error)
 	ListInferenceResults(ctx context.Context, filters InferenceResultFilters, pagination PaginationInput) ([]models.ForecastingInferenceResult, int64, error)
+
+	// Training schedules (Automation)
+	ListSchedules(ctx context.Context) ([]models.ForecastingSchedule, error)
+	FindSchedule(ctx context.Context, domain string) (*models.ForecastingSchedule, error)
+	UpsertSchedule(ctx context.Context, s *models.ForecastingSchedule) error
+	UpdateScheduleRun(ctx context.Context, domain string, fields map[string]interface{}) error
 }
 
 // ExternalTrainingRunDetail is the shape returned by GET /admin/training-runs/{id}.
@@ -279,4 +286,54 @@ func (r *repository) ListInferenceResults(ctx context.Context, filters Inference
 	}
 
 	return results, total, nil
+}
+
+// ---------------------------------------------------------------------------
+// Training schedules (Automation)
+// ---------------------------------------------------------------------------
+
+func (r *repository) ListSchedules(ctx context.Context) ([]models.ForecastingSchedule, error) {
+	var out []models.ForecastingSchedule
+	if err := r.db.WithContext(ctx).Order("domain ASC").Find(&out).Error; err != nil {
+		return nil, apperror.InternalWrap("list forecasting schedules failed", err)
+	}
+	return out, nil
+}
+
+func (r *repository) FindSchedule(ctx context.Context, domain string) (*models.ForecastingSchedule, error) {
+	var s models.ForecastingSchedule
+	err := r.db.WithContext(ctx).Where("domain = ?", domain).First(&s).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, apperror.InternalWrap("find forecasting schedule failed", err)
+	}
+	return &s, nil
+}
+
+// UpsertSchedule menyimpan pengaturan jadwal; kolom last_run_* tidak disentuh.
+func (r *repository) UpsertSchedule(ctx context.Context, s *models.ForecastingSchedule) error {
+	err := r.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "domain"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"is_active", "frequency", "run_time", "day_of_week", "day_of_month",
+			"timezone", "selected_model", "next_run_at", "updated_at", "updated_by",
+		}),
+	}).Create(s).Error
+	if err != nil {
+		return apperror.InternalWrap("save forecasting schedule failed", err)
+	}
+	return nil
+}
+
+func (r *repository) UpdateScheduleRun(ctx context.Context, domain string, fields map[string]interface{}) error {
+	res := r.db.WithContext(ctx).Model(&models.ForecastingSchedule{}).Where("domain = ?", domain).Updates(fields)
+	if res.Error != nil {
+		return apperror.InternalWrap("update forecasting schedule run failed", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return apperror.NotFound("schedule for this domain has not been configured")
+	}
+	return nil
 }

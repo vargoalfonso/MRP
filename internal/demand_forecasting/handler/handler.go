@@ -476,3 +476,59 @@ func mustUserID(c *app.Context) (string, error) {
 	}
 	return userCtx.UserID, nil
 }
+
+// ---------------------------------------------------------------------------
+// Training schedule (System Settings -> Automation)
+// ---------------------------------------------------------------------------
+
+// ListSchedules returns the training schedules (max 1 per domain: dn, prl).
+//
+//	GET /api/v1/forecasting/schedules          (JWT, forecasting:view)
+//	GET /api/v1/forecasting/service/schedules  (Basic Auth, dibaca script forecasting)
+func (h *HTTPHandler) ListSchedules(c *app.Context) *app.CostumeResponse {
+	resp, err := h.svc.ListSchedules(c.Request.Context())
+	if err != nil {
+		return app.NewError(c, err)
+	}
+	return app.NewSuccess(c, http.StatusOK, resp)
+}
+
+// UpsertSchedule saves the schedule of one domain.
+//
+//	PUT /api/v1/forecasting/schedules/:domain  (JWT, forecasting:update)
+func (h *HTTPHandler) UpsertSchedule(c *app.Context) *app.CostumeResponse {
+	var req models.UpsertScheduleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return app.NewError(c, apperror.BadRequest("invalid request body: "+err.Error()))
+	}
+
+	userCtx := userPkg.MustExtractUserContext(c)
+	updatedBy := userCtx.Username
+	if updatedBy == "" {
+		updatedBy = userCtx.UserID
+	}
+	if updatedBy == "" {
+		return app.NewError(c, apperror.Unauthorized("user not authenticated"))
+	}
+
+	resp, err := h.svc.UpsertSchedule(c.Request.Context(), c.Param("domain"), req, updatedBy)
+	if err != nil {
+		return app.NewError(c, err)
+	}
+	return app.NewSuccess(c, http.StatusOK, resp)
+}
+
+// ReportScheduleRun lets the forecasting script report a run of a schedule.
+//
+//	POST /api/v1/forecasting/service/schedules/:domain/runs  (Basic Auth)
+func (h *HTTPHandler) ReportScheduleRun(c *app.Context) *app.CostumeResponse {
+	var req models.ScheduleRunReport
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return app.NewError(c, apperror.BadRequest("invalid request body: "+err.Error()))
+	}
+	resp, err := h.svc.ReportScheduleRun(c.Request.Context(), c.Param("domain"), req)
+	if err != nil {
+		return app.NewError(c, err)
+	}
+	return app.NewSuccess(c, http.StatusOK, resp)
+}

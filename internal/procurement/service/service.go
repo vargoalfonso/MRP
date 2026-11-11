@@ -480,6 +480,25 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 			continue
 		}
 
+		// Entri tanpa child tetapi punya beberapa supplier (detail_jsonb.suppliers):
+		// pecah per supplier (qty proporsional) supaya tiap supplier mendapat PO sendiri,
+		// bukan satu PO "Multiple". Berlaku untuk semua tipe (raw, indirect, subcon).
+		if shares := extractFlatSupplierShares(e); len(shares) > 1 {
+			po1 := splitQtyByShares(e.Po1Qty, shares)
+			po2 := splitQtyByShares(e.Po2Qty, shares)
+			pr := splitQtyByShares(e.PurchaseRequest, shares)
+			sp := splitQtyByShares(e.SalesPlan, shares)
+			for i, sh := range shares {
+				part := e
+				part.Po1Qty, part.Po2Qty = po1[i], po2[i]
+				part.PurchaseRequest, part.SalesPlan = pr[i], sp[i]
+				part.Quantity = e.Quantity * sh.qty / sumShareQty(shares)
+				g := ensureGroup(sh.supplierID, sh.supplierName)
+				g.entries = append(g.entries, part)
+			}
+			continue
+		}
+
 		// Fallback: entry-level grouping + flat po1_qty/po2_qty split.
 		name := ""
 		if e.SupplierName != nil {
@@ -522,7 +541,11 @@ func (s *svc) GeneratePO(ctx context.Context, req models.GeneratePORequest, crea
 		stats.merge(computeChildStats(grp.children))
 
 		for _, stage := range stagesToGenerate {
-			po, poItems, err := s.buildStagePO(ctx, grp.legacyID, grp.entries, grp.children, req, createdBy, stage)
+			// Nomor eksternal (Zahir) bersifat opsional dan per PO (stage + supplier).
+			poReq := req
+			poReq.ExternalPoNumber = resolveExternalPoNumber(req, grp.supplierName, stage)
+
+			po, poItems, err := s.buildStagePO(ctx, grp.legacyID, grp.entries, grp.children, poReq, createdBy, stage)
 			if err != nil {
 				return nil, err
 			}
@@ -860,6 +883,35 @@ func (s *svc) buildStagePO(ctx context.Context, legacySupID int64, entries []mod
 	}
 
 	return po, items, nil
+}
+
+func sumShareQty(shares []flatSupplierShare) float64 {
+	var sum float64
+	for _, sh := range shares {
+		sum += sh.qty
+	}
+	return sum
+}
+
+// resolveExternalPoNumber memilih nomor PO eksternal (Zahir) untuk satu PO.
+//   - Ada req.ExternalPoNumbers: ambil entri yang cocok stage + nama supplier
+//     (tanpa membedakan huruf besar/kecil); tidak ada yang cocok / kosong -> "" (tanpa nomor).
+//   - Tidak ada: perilaku lama, req.ExternalPoNumber dipakai apa adanya.
+func resolveExternalPoNumber(req models.GeneratePORequest, supplierName string, stage int) string {
+	if len(req.ExternalPoNumbers) == 0 {
+		return req.ExternalPoNumber
+	}
+	want := strings.ToLower(strings.TrimSpace(supplierName))
+	for _, e := range req.ExternalPoNumbers {
+		if e.Stage != stage {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(e.SupplierName)) != want {
+			continue
+		}
+		return strings.TrimSpace(e.Number)
+	}
+	return ""
 }
 
 // mapToJSON encodes a generic map into a jsonb column value (nil when empty).

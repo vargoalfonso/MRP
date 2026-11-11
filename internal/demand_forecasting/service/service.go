@@ -32,6 +32,11 @@ type Service interface {
 	ListDatasets(ctx context.Context, name string, limit int) ([]forecastingclient.DatasetListItem, error)
 	ListModelVersions(ctx context.Context, opts forecastingclient.ListModelVersionsOptions) ([]forecastingclient.ModelVersionItem, error)
 	GetInventoryPlan(ctx context.Context, opts forecastingclient.GetInventoryPlanOptions) ([]forecastingclient.InventoryPlanItem, error)
+
+	// Training schedule (Automation)
+	ListSchedules(ctx context.Context) ([]models.ForecastingSchedule, error)
+	UpsertSchedule(ctx context.Context, domain string, req models.UpsertScheduleRequest, updatedBy string) (*models.ForecastingSchedule, error)
+	ReportScheduleRun(ctx context.Context, domain string, rep models.ScheduleRunReport) (*models.ForecastingSchedule, error)
 	ListDeployments(ctx context.Context, opts forecastingclient.ListDeploymentsOptions) ([]forecastingclient.DeploymentItem, error)
 
 	// Promote
