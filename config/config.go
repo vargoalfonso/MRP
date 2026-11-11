@@ -29,6 +29,7 @@ type Config struct {
 	HTTPIdleTimeout     time.Duration
 	HTTPShutdownTimeout time.Duration
 	MaxBodyBytes        int64
+	MaxChunkBytes       int64
 
 	// CORS
 	CORSAllowedOrigins []string
@@ -70,6 +71,20 @@ type Config struct {
 	// Logging
 	LogLevel  string
 	LogFormat string
+
+	// External integrations
+	RobotSplitURL string // URL of the robot split-percentage service
+
+	// Admin job basic auth (used by cron-triggered endpoints)
+	AdminJobUser string
+	AdminJobPass string
+
+	// Forecasting API (external AI pipeline)
+	ForecastingAPIURL         string
+	ForecastingAPIUser        string
+	ForecastingAPIPass        string
+	ForecastingAPITimeout     time.Duration
+	ForecastingAPILongTimeout time.Duration
 }
 
 // IsDevelopment returns true when AppEnv == "development".
@@ -96,7 +111,8 @@ func InitAppConfig() *Config {
 		HTTPWriteTimeout:    getEnvDuration("HTTP_WRITE_TIMEOUT", 30*time.Second),
 		HTTPIdleTimeout:     getEnvDuration("HTTP_IDLE_TIMEOUT", 60*time.Second),
 		HTTPShutdownTimeout: getEnvDuration("HTTP_SHUTDOWN_TIMEOUT", 10*time.Second),
-		MaxBodyBytes:        getEnvInt64("MAX_BODY_BYTES", 4<<20), // 4 MB
+		MaxBodyBytes:        getEnvInt64("MAX_BODY_BYTES", 4<<20),   // 4 MB
+		MaxChunkBytes:       getEnvInt64("MAX_CHUNK_BYTES", 50<<20), // 50 MB
 
 		CORSAllowedOrigins: getEnvStringSlice("CORS_ALLOWED_ORIGINS", nil),
 
@@ -137,6 +153,18 @@ func InitAppConfig() *Config {
 
 		LogLevel:  getEnv("LOG_LEVEL", "info"),
 		LogFormat: getEnv("LOG_FORMAT", "text"),
+
+		RobotSplitURL: getEnv("ROBOT_SPLIT_URL", ""),
+
+		AdminJobUser: getEnv("ADMIN_JOB_USER", "admin_job"),
+		AdminJobPass: mustEnv("ADMIN_JOB_PASS"),
+
+		// Forecasting API (external AI pipeline)
+		ForecastingAPIURL:         getEnv("FORECASTING_API_URL", "https://dev-mrp-forecasting-482804304.asia-southeast1.run.app"),
+		ForecastingAPIUser:        getEnv("FORECASTING_API_USER", ""),
+		ForecastingAPIPass:        getEnv("FORECASTING_API_PASS", ""),
+		ForecastingAPITimeout:     getEnvDuration("FORECASTING_API_TIMEOUT", 60*time.Second),
+		ForecastingAPILongTimeout: getEnvDuration("FORECASTING_API_LONG_TIMEOUT", 300*time.Second),
 	}
 
 	// Stateful mode requires a separate refresh secret.

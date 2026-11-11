@@ -3,17 +3,28 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
+	"time"
 
 	"github.com/ganasa18/go-template/internal/employee/models"
+	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
 type IEmployeeRepository interface {
 	FindAll(ctx context.Context) ([]models.Employee, error)
 	FindByID(ctx context.Context, id int64) (*models.Employee, error)
-	Create(ctx context.Context, req models.CreateEmployeeRequest) (*models.Employee, error)
+
+	Create(ctx context.Context, req models.CreateEmployeeRequest) (*models.CreateEmployee, error)
 	Update(ctx context.Context, id int64, req models.UpdateEmployeeRequest) (*models.Employee, error)
 	Delete(ctx context.Context, id int64) error
+
+	IsEmailExist(ctx context.Context, email string) (bool, error)
+	SaveActivationToken(ctx context.Context, token *models.UserActivation) error
+
+	Tx(ctx context.Context, fn func(repo IEmployeeRepository) error) error
+	GetTx() *gorm.DB
 }
 
 type repository struct {
@@ -22,6 +33,17 @@ type repository struct {
 
 func New(db *gorm.DB) IEmployeeRepository {
 	return &repository{db: db}
+}
+
+func (r *repository) Tx(ctx context.Context, fn func(repo IEmployeeRepository) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		repoTx := &repository{db: tx}
+		return fn(repoTx)
+	})
+}
+
+func (r *repository) GetTx() *gorm.DB {
+	return r.db
 }
 
 func (r *repository) FindAll(ctx context.Context) ([]models.Employee, error) {
@@ -42,36 +64,24 @@ func (r *repository) FindByID(ctx context.Context, id int64) (*models.Employee, 
 	var employee models.Employee
 
 	err := r.db.WithContext(ctx).
-		First(&employee, id).Error
+		Table("employees e").
+		Select(`
+			e.*,
+			manager.full_name as reports_to_name
+		`).
+		Joins(`
+			LEFT JOIN employees manager
+			ON manager.id = e.reports_to_id
+		`).
+		Where("e.id = ?", id).
+		Scan(&employee).Error
 
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("employee not found")
-		}
 		return nil, err
 	}
 
-	return &employee, nil
-}
-
-func (r *repository) Create(ctx context.Context, req models.CreateEmployeeRequest) (*models.Employee, error) {
-	employee := models.Employee{
-		FullName:     req.FullName,
-		Email:        req.Email,
-		PhoneNumber:  req.PhoneNumber,
-		JobTitle:     req.JobTitle,
-		UnitCost:     req.UnitCost,
-		JoinDate:     req.JoinDate,
-		RoleID:       req.RoleID,
-		DepartmentID: req.DepartmentID,
-		ReportsToID:  req.ReportsToID,
-		Status:       req.Status,
-		Notes:        req.Notes,
-	}
-
-	if err := r.db.WithContext(ctx).
-		Create(&employee).Error; err != nil {
-		return nil, err
+	if employee.ID == 0 {
+		return nil, errors.New("employee tidak ditemukan")
 	}
 
 	return &employee, nil
@@ -85,7 +95,7 @@ func (r *repository) Update(ctx context.Context, id int64, req models.UpdateEmpl
 		First(&employee, id).Error; err != nil {
 
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("employee not found")
+			return nil, errors.New("employee tidak ditemukan")
 		}
 		return nil, err
 	}
@@ -108,13 +118,29 @@ func (r *repository) Update(ctx context.Context, id int64, req models.UpdateEmpl
 	if err := r.db.WithContext(ctx).
 		Model(&employee).
 		Updates(updateData).Error; err != nil {
-		return nil, err
+		return nil, mapWriteError(err)
 	}
 
 	// ambil data terbaru
-	if err := r.db.WithContext(ctx).
-		First(&employee, id).Error; err != nil {
+	err := r.db.WithContext(ctx).
+		Table("employees e").
+		Select(`
+			e.*,
+			manager.full_name as reports_to_name
+		`).
+		Joins(`
+			LEFT JOIN employees manager
+			ON manager.id = e.reports_to_id
+		`).
+		Where("e.id = ?", id).
+		Scan(&employee).Error
+
+	if err != nil {
 		return nil, err
+	}
+
+	if employee.ID == 0 {
+		return nil, errors.New("employee tidak ditemukan")
 	}
 
 	return &employee, nil
@@ -129,8 +155,93 @@ func (r *repository) Delete(ctx context.Context, id int64) error {
 	}
 
 	if result.RowsAffected == 0 {
-		return errors.New("employee not found")
+		return errors.New("employee tidak ditemukan")
 	}
 
 	return nil
+}
+
+func (r *repository) Create(ctx context.Context, req models.CreateEmployeeRequest) (*models.CreateEmployee, error) {
+	if req.DepartmentID != nil && *req.DepartmentID <= 0 {
+		req.DepartmentID = nil
+	}
+
+	emp := models.CreateEmployee{
+		FullName:     req.FullName,
+		Email:        req.Email,
+		PhoneNumber:  req.PhoneNumber,
+		JobTitle:     req.JobTitle,
+		UnitCost:     req.UnitCost,
+		JoinDate:     req.JoinDate,
+		RoleID:       req.RoleID,
+		DepartmentID: req.DepartmentID,
+		ReportsToID:  req.ReportsToID,
+		Status:       req.Status,
+		Notes:        req.Notes,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+
+	if err := r.db.WithContext(ctx).Create(&emp).Error; err != nil {
+		return nil, mapWriteError(err)
+	}
+
+	return &emp, nil
+}
+
+func (r *repository) IsEmailExist(ctx context.Context, email string) (bool, error) {
+	var count int64
+
+	err := r.db.WithContext(ctx).
+		Model(&models.Employee{}).
+		Where("email = ?", email).
+		Count(&count).Error
+
+	return count > 0, err
+}
+
+func (r *repository) SaveActivationToken(ctx context.Context, token *models.UserActivation) error {
+	return r.db.WithContext(ctx).Create(token).Error
+}
+
+func (r *repository) CreateUserTx(ctx context.Context, tx *gorm.DB, user *models.User) error {
+	return tx.WithContext(ctx).Create(user).Error
+}
+
+func mapWriteError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.ConstraintName {
+		case "fk_employee_role":
+			return apperror.BadRequest("role_id tidak valid")
+		case "fk_employee_department":
+			return apperror.BadRequest("department_id tidak valid")
+		case "fk_employee_manager":
+			return apperror.BadRequest("reports_to_id tidak valid")
+		}
+
+		switch pgErr.Code {
+		case "23503":
+			return apperror.BadRequest("referensi data employee tidak valid")
+		case "23505":
+			return apperror.Conflict("data employee sudah terdaftar")
+		}
+	}
+
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "fk_employee_role") {
+		return apperror.BadRequest("role_id tidak valid")
+	}
+	if strings.Contains(msg, "fk_employee_department") {
+		return apperror.BadRequest("department_id tidak valid")
+	}
+	if strings.Contains(msg, "fk_employee_manager") {
+		return apperror.BadRequest("reports_to_id tidak valid")
+	}
+
+	return err
 }

@@ -1,0 +1,1772 @@
+package repository
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/ganasa18/go-template/internal/initialpacking"
+	"github.com/ganasa18/go-template/internal/inventory/models"
+	invModels "github.com/ganasa18/go-template/internal/inventory/models"
+	"github.com/ganasa18/go-template/pkg/apperror"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+// ---------------------------------------------------------------------------
+// Filter types
+// ---------------------------------------------------------------------------
+
+type ListFilter struct {
+	Search         string
+	RMType         string
+	RMSource       string
+	Status         string
+	BuyNotBuy      string
+	Page           int
+	Limit          int
+	Offset         int
+	OrderBy        string
+	OrderDirection string
+}
+
+type SubconListFilter struct {
+	Search         string
+	PONumber       string
+	SupplierID     int64
+	Period         string
+	Status         string
+	Source         string
+	Page           int
+	Limit          int
+	Offset         int
+	OrderBy        string
+	OrderDirection string
+}
+
+type IncomingListFilter struct {
+	Search     string
+	DNType     string // RM | INDIRECT | SUBCON
+	PONumber   string
+	Status     string // pending | in_progress | approved | rejected
+	SupplierID int64
+	Page       int
+	Limit      int
+	Offset     int
+}
+
+// ---------------------------------------------------------------------------
+// Row types returned by queries
+// ---------------------------------------------------------------------------
+
+type RawMaterialRow struct {
+	ID                    int64     `gorm:"column:id"`
+	RawMaterialMasterID   *int64    `gorm:"column:raw_material_master_id"`
+	UniqCode              string    `gorm:"column:uniq_code"`
+	PartNumber            *string   `gorm:"column:part_number"`
+	PartName              *string   `gorm:"column:part_name"`
+	RawMaterialType       string    `gorm:"column:raw_material_type"`
+	RMSource              string    `gorm:"column:rm_source"`
+	WarehouseLocation     *string   `gorm:"column:warehouse_location"`
+	UOM                   *string   `gorm:"column:uom"`
+	StockQty              float64   `gorm:"column:stock_qty"`
+	StockWeightKg         *float64  `gorm:"column:stock_weight_kg"`
+	KanbanCount           *int      `gorm:"column:kanban_count"`
+	KanbanStandardQty     *int      `gorm:"column:kanban_standard_qty"`
+	SafetyStockQty        *float64  `gorm:"column:safety_stock_qty"`
+	DailyUsageQty         *float64  `gorm:"column:daily_usage_qty"`
+	Status                string    `gorm:"column:status"`
+	StockDays             *int      `gorm:"column:stock_days"`
+	BuyNotBuy             string    `gorm:"column:buy_not_buy"`
+	StockToCompleteKanban *float64  `gorm:"column:stock_to_complete_kanban"`
+	CreatedBy             *string   `gorm:"column:created_by"`
+	CreatedAt             time.Time `gorm:"column:created_at"`
+	UpdatedBy             *string   `gorm:"column:updated_by"`
+	UpdatedAt             time.Time `gorm:"column:updated_at"`
+	QR                    *string   `gorm:"column:qr"`
+	Model                 string    `gorm:"column:model"`
+	Grade                 string    `gorm:"column:material_grade"`
+	MaterialCode          string    `gorm:"column:material_code"`
+	ItemUniqCode          *string   `gorm:"column:item_uniq_code"`
+}
+
+type IndirectRow struct {
+	ID                    int64     `gorm:"column:id"`
+	UniqCode              string    `gorm:"column:uniq_code"`
+	PartNumber            *string   `gorm:"column:part_number"`
+	PartName              *string   `gorm:"column:part_name"`
+	WarehouseLocation     *string   `gorm:"column:warehouse_location"`
+	UOM                   *string   `gorm:"column:uom"`
+	StockQty              float64   `gorm:"column:stock_qty"`
+	StockWeightKg         *float64  `gorm:"column:stock_weight_kg"`
+	KanbanCount           *int      `gorm:"column:kanban_count"`
+	KanbanStandardQty     *int      `gorm:"column:kanban_standard_qty"`
+	SafetyStockQty        *float64  `gorm:"column:safety_stock_qty"`
+	DailyUsageQty         *float64  `gorm:"column:daily_usage_qty"`
+	Status                *string   `gorm:"column:status"`
+	StockDays             *int      `gorm:"column:stock_days"`
+	BuyNotBuy             string    `gorm:"column:buy_not_buy"`
+	StockToCompleteKanban *float64  `gorm:"column:stock_to_complete_kanban"`
+	CreatedBy             *string   `gorm:"column:created_by"`
+	CreatedAt             time.Time `gorm:"column:created_at"`
+	UpdatedBy             *string   `gorm:"column:updated_by"`
+	UpdatedAt             time.Time `gorm:"column:updated_at"`
+}
+
+type SubconRow struct {
+	// [subcon-fix] enrichment finished_goods (fallback saat kolom sendiri NULL)
+	FGPartNumber     *string    `gorm:"column:fg_part_number"`
+	FGPartName       *string    `gorm:"column:fg_part_name"`
+	FGSafetyStockQty *float64   `gorm:"column:fg_safety_stock_qty"`
+	ID               int64      `gorm:"column:id"`
+	UniqCode         string     `gorm:"column:uniq_code"`
+	PartNumber       *string    `gorm:"column:part_number"`
+	PartName         *string    `gorm:"column:part_name"`
+	PONumber         *string    `gorm:"column:po_number"`
+	POPeriod         *string    `gorm:"column:po_period"`
+	SubconVendorID   *int64     `gorm:"column:subcon_vendor_id"`
+	SubconVendorName *string    `gorm:"column:subcon_vendor_name"`
+	StockAtVendorQty float64    `gorm:"column:stock_at_vendor_qty"`
+	TotalPOQty       *float64   `gorm:"column:total_po_qty"`
+	TotalReceivedQty *float64   `gorm:"column:total_received_qty"`
+	DeltaPO          *float64   `gorm:"column:delta_po"`
+	SafetyStockQty   *float64   `gorm:"column:safety_stock_qty"`
+	DateDelivery     *time.Time `gorm:"column:date_delivery"`
+	Status           string     `gorm:"column:status"`
+	ApprovalStatus   string     `gorm:"column:approval_status"`
+	ApprovedBy       *string    `gorm:"column:approved_by"`
+	ApprovedAt       *time.Time `gorm:"column:approved_at"`
+	SourceType       *string    `gorm:"column:source_type"`
+	SourceRef        *string    `gorm:"column:source_ref"`
+	CreatedBy        *string    `gorm:"column:created_by"`
+	CreatedAt        time.Time  `gorm:"column:created_at"`
+	UpdatedBy        *string    `gorm:"column:updated_by"`
+	UpdatedAt        time.Time  `gorm:"column:updated_at"`
+}
+
+type HistoryRow struct {
+	ID           int64     `gorm:"column:id"`
+	UniqCode     string    `gorm:"column:uniq_code"`
+	QtyChange    float64   `gorm:"column:qty_change"`
+	WeightChange *float64  `gorm:"column:weight_change"`
+	MovementType string    `gorm:"column:movement_type"`
+	SourceFlag   *string   `gorm:"column:source_flag"`
+	DNNumber     *string   `gorm:"column:dn_number"`
+	Notes        *string   `gorm:"column:notes"`
+	LoggedBy     *string   `gorm:"column:logged_by"`
+	LoggedAt     time.Time `gorm:"column:logged_at"`
+	LogStatus    string    `gorm:"column:log_status"` // confirmed | pending | in_progress | rejected
+}
+
+type IncomingRow struct {
+	ScanID       int64     `gorm:"column:scan_id"`
+	ItemUniqCode string    `gorm:"column:item_uniq_code"`
+	IncomingQty  float64   `gorm:"column:incoming_qty"`
+	Warehouse    *string   `gorm:"column:warehouse"`
+	ScanDate     time.Time `gorm:"column:scan_date"`
+	SupplierName *string   `gorm:"column:supplier_name"`
+	PONumber     *string   `gorm:"column:po_number"`
+	DNNumber     string    `gorm:"column:dn_number"`
+	// [subcon-dnlog] arah pergerakan DN Subcon (SUBCON-OUT / SUBCON-IN)
+	ScanRef  string  `gorm:"column:scan_ref"`
+	QCStatus string  `gorm:"column:qc_status"`
+	UOM      *string `gorm:"column:uom"`
+	DNType   string  `gorm:"column:dn_type"`
+}
+
+type RMStats struct {
+	TotalItems         int64 `gorm:"column:total_items"`
+	BuyRecommendations int64 `gorm:"column:buy_recommendations"`
+	LowStockItems      int64 `gorm:"column:low_stock_items"`
+}
+
+// SafetyStockRow is a minimal projection from safety_stock_parameters.
+type SafetyStockRow struct {
+	CalculationType string  `gorm:"column:calculation_type"`
+	Constanta       float64 `gorm:"column:constanta"`
+}
+
+// StockdaysRow is a minimal projection from stockdays_parameters.
+type StockdaysRow struct {
+	CalculationType string  `gorm:"column:calculation_type"`
+	Constanta       float64 `gorm:"column:constanta"`
+}
+
+// DemandSnapshotRow is a projection from inventory_demand_periode_summaries.
+type DemandSnapshotRow struct {
+	UniqCode                   string   `gorm:"column:uniq_code"`
+	ActivePeriode              string   `gorm:"column:active_periode"`
+	SnapshotDate               string   `gorm:"column:snapshot_date"`
+	WorkingDaysPeriodeUsed     string   `gorm:"column:working_days_periode_used"`
+	WorkingDaysUsed            int      `gorm:"column:working_days_used"`
+	SafetyStockCalcTypeActive  *string  `gorm:"column:safety_stock_calc_type_active"`
+	SafetyStockConstantaActive *float64 `gorm:"column:safety_stock_constanta_active"`
+	StockdaysCalcTypeActive    *string  `gorm:"column:stockdays_calc_type_active"`
+	StockdaysConstantaActive   *float64 `gorm:"column:stockdays_constanta_active"`
+	PRLSum                     float64  `gorm:"column:prl_sum"`
+	POCustomerSum              float64  `gorm:"column:po_customer_sum"`
+	TotalDemandSum             float64  `gorm:"column:total_demand_sum"`
+}
+
+// ---------------------------------------------------------------------------
+// Interface
+// ---------------------------------------------------------------------------
+
+type IRepository interface {
+	// Canonical Raw Material Master
+	ListRawMaterialMasters(ctx context.Context, search string, limit, offset int) ([]invModels.RawMaterialMaster, int64, error)
+	GetRawMaterialMaster(ctx context.Context, id int64) (*invModels.RawMaterialMaster, error)
+	CreateRawMaterialMaster(ctx context.Context, item *invModels.RawMaterialMaster) error
+	UpdateRawMaterialMaster(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.RawMaterialMaster, error)
+	DeleteRawMaterialMaster(ctx context.Context, id int64, deletedBy string) error
+	ListRawMaterialPlanning(ctx context.Context) ([]invModels.RawMaterialPlanningItem, error)
+
+	// Raw Material
+	ListRawMaterials(ctx context.Context, f ListFilter) ([]RawMaterialRow, int64, error)
+	GetRawMaterialStats(ctx context.Context) (*RMStats, error)
+	GetRawMaterialByID(ctx context.Context, id int64) (*invModels.RawMaterial, error)
+	// [rm-key] Cari RM lewat id numerik, uniq_code, atau uuid.
+	FindRawMaterialByKey(ctx context.Context, key string) (*invModels.RawMaterial, error)
+	CreateRawMaterial(ctx context.Context, rm *invModels.RawMaterial) error
+	BulkCreateRawMaterials(ctx context.Context, items []invModels.RawMaterial) error
+	// [initial-packing] Packing ID untuk stok awal (tanpa DN). Tidak mengubah stock_qty.
+	GenerateInitialPackings(ctx context.Context, uniqCode string, qty float64, createdBy string) (*initialpacking.Result, error)
+	EnsureInitialPackings(ctx context.Context, uniqCode string, createdBy string) (*initialpacking.Result, error)
+	BackfillInitialPackings(ctx context.Context, createdBy string) ([]initialpacking.Result, error)
+	UpdateRawMaterial(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.RawMaterial, error)
+	SoftDeleteRawMaterial(ctx context.Context, id int64, deletedBy string) error
+	GetMovementHistory(ctx context.Context, category, uniqCode string, f ListFilter) ([]HistoryRow, int64, error)
+
+	// Indirect Raw Material
+	ListIndirectMaterials(ctx context.Context, f ListFilter) ([]IndirectRow, int64, error)
+	GetIndirectStats(ctx context.Context) (*RMStats, error)
+	GetIndirectByID(ctx context.Context, id int64) (*invModels.IndirectRawMaterial, error)
+	CreateIndirectMaterial(ctx context.Context, irm *invModels.IndirectRawMaterial) error
+	BulkCreateIndirectMaterials(ctx context.Context, items []invModels.IndirectRawMaterial) error
+	UpdateIndirectMaterial(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.IndirectRawMaterial, error)
+	SoftDeleteIndirectMaterial(ctx context.Context, id int64, deletedBy string) error
+
+	// Subcon Inventory
+	ListSubconInventory(ctx context.Context, f SubconListFilter) ([]SubconRow, int64, error)
+	GetSubconByID(ctx context.Context, id int64) (*invModels.SubconInventory, error)
+	CreateSubconInventory(ctx context.Context, si *invModels.SubconInventory) error
+	UpdateSubconInventory(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.SubconInventory, error)
+	SoftDeleteSubconInventory(ctx context.Context, id int64, deletedBy string) error
+	ApproveSubconInventory(ctx context.Context, id int64, approvedBy, status string) (*invModels.SubconInventory, error)
+	// UpsertSubconFromSource inserts/updates an auto-generated subcon row keyed by (source_type, source_ref).
+	// It never overwrites approval_status/approved_by/approved_at on existing rows.
+	UpsertSubconFromSource(ctx context.Context, si *invModels.SubconInventory) error
+	// ListSubconPOSources reads subcon purchase-order lines (po_type = 'SUBCON') to auto-populate Stock In Vendor.
+	ListSubconPOSources(ctx context.Context) ([]SubconSourceRow, error)
+
+	// Incoming scans (cross-type tab view)
+	ListIncoming(ctx context.Context, f IncomingListFilter) ([]IncomingRow, int64, error)
+
+	// Stock deduction (atomic subtract, floors at 0, triggers recalculate)
+	DeductRawMaterialByUniqCode(ctx context.Context, uniqCode string, qty float64, updatedBy string) (entityID int64, err error)
+	DeductIndirectMaterialByUniqCode(ctx context.Context, uniqCode string, qty float64, updatedBy string) (entityID int64, err error)
+
+	// Movement log
+	CreateMovementLog(ctx context.Context, log *invModels.InventoryMovementLog) error
+
+	// Items lookup (used to auto-fill part fields on manual inventory create)
+	FindItemByUniqCode(ctx context.Context, uniqCode string) (*ItemLookupRow, error)
+
+	// Kanban summary helpers — each returns one piece of data used to compute KanbanSummary.
+	GetRawMaterialByUniqCode(ctx context.Context, uniqCode string) (*RawMaterialRow, error)
+	GetSafetyStockParam(ctx context.Context, uniqCode string) (*SafetyStockRow, error)
+	GetActiveWorkingDays(ctx context.Context) (int, error)
+	GetPRLQtyByUniqCode(ctx context.Context, uniqCode string) (float64, error)
+	GetActivePOQtyByUniqCode(ctx context.Context, uniqCode string) (float64, error)
+	// GetForecastDailyUsage returns the latest forecasted daily usage from forecast_results.
+	// Used as fallback daily_usage when no safety_stock_parameter is active for the item.
+	GetForecastDailyUsage(ctx context.Context, uniqCode string) (float64, error)
+	// GetKanbanPkgQty returns pcs_per_kanban from supplier_item for the given uniq_code.
+	// Returns 0 when no active supplier_item record exists (caller must apply default).
+	GetKanbanPkgQty(ctx context.Context, uniqCode string) (int, error)
+
+	// BRD-aligned kanban summary helpers.
+	GetSafetyStockParamByType(ctx context.Context, inventoryType, uniqCode string) (*SafetyStockRow, error)
+	GetStockdaysParam(ctx context.Context, inventoryType, uniqCode string) (*StockdaysRow, error)
+	GetLatestApprovedPRLPeriodByCode(ctx context.Context, uniqCode string) (string, error)
+	GetWorkingDaysByPeriod(ctx context.Context, forecastPeriod string) (int, error)
+	// GetPRLTotalFromCache reads from prl_item_period_summaries; returns (qty, found, err).
+	GetPRLTotalFromCache(ctx context.Context, forecastPeriod, uniqCode string) (float64, bool, error)
+	GetPRLTotalByPeriodAndCode(ctx context.Context, forecastPeriod, uniqCode string) (float64, error)
+
+	// Demand snapshot helpers (inventory_demand_periode_summaries).
+	// GetGlobalActivePeriode returns the active period from global_parameters.
+	GetGlobalActivePeriode(ctx context.Context) (string, error)
+	// GetWorkingDaysWithFallback returns (workingDays, periodeUsed). Falls back to the
+	// latest available active period when activePeriode has no working_days configured.
+	GetWorkingDaysWithFallback(ctx context.Context, activePeriode string) (int, string, error)
+	// GetDemandSnapshot reads the most recent snapshot for (activePeriode, uniqCode).
+	// Returns (row, found, err).
+	GetDemandSnapshot(ctx context.Context, activePeriode, uniqCode string) (*DemandSnapshotRow, bool, error)
+	// GetPOCustomerSumByPeriodeAndCode returns the live PO Customer sum for a single item.
+	// Used as fallback when no demand snapshot exists yet.
+	GetPOCustomerSumByPeriodeAndCode(ctx context.Context, activePeriode, uniqCode string) (float64, error)
+	// GetCyclePengiriman returns the delivery cycle (integer) from supplier_item.customer_cycle.
+	// Returns 1 when no record exists or parsing fails (safe default).
+	GetCyclePengiriman(ctx context.Context, uniqCode string) (int, error)
+
+	FindDNByItemUniqCode(ctx context.Context, uniqCode string) (*string, error)
+	// FindDNQRByItemUniqCode returns the QR image (base64 data URL) that was
+	// already generated and stored per item in DN management (delivery_note_items.qr).
+	// One uniq resolves to exactly one QR.
+	FindDNQRByItemUniqCode(ctx context.Context, uniqCode string) (qr string, err error)
+	UpdateRawMaterialQR(ctx context.Context, uniqCode, qr string) error
+
+	// ListPackingList returns every packing/kanban row that belongs to one
+	// inventory uniq code (raw material or indirect raw material). Rows come from
+	// the work order barcode (work_order_items.kanban_number) and are enriched
+	// with the delivery note that carries the same packing number.
+	ListPackingList(ctx context.Context, uniqCode string) ([]InvPackingRow, error)
+}
+
+type ItemLookupRow struct {
+	ID         int64   `gorm:"column:id"`
+	UniqCode   string  `gorm:"column:uniq_code"`
+	PartNumber *string `gorm:"column:part_number"`
+	PartName   *string `gorm:"column:part_name"`
+	UOM        *string `gorm:"column:uom"`
+}
+
+// ---------------------------------------------------------------------------
+// Implementation
+// ---------------------------------------------------------------------------
+
+type repo struct{ db *gorm.DB }
+
+func New(db *gorm.DB) IRepository { return &repo{db: db} }
+
+// ---------------------------------------------------------------------------
+// Raw Material
+// ---------------------------------------------------------------------------
+
+func (r *repo) ListRawMaterials(ctx context.Context, f ListFilter) ([]RawMaterialRow, int64, error) {
+	// Material code = material_grade pada material specification BOM dari uniq
+	// ini: raw_materials.uniq_code = items.uniq_code -> revisi terbaru yang
+	// punya spec -> item_material_specs.material_grade. LATERAL (maks. 1 baris)
+	// menggantikan join lama yang membandingkan items.id dengan
+	// item_revision_id, dan mencegah baris ganda.
+	q := r.db.WithContext(ctx).
+		Table("raw_materials rm").
+		// Cocokkan uniq tanpa peduli huruf besar/kecil dan spasi; kalau ada beberapa
+		// kandidat, yang persis sama didahulukan. Maks. 1 baris per raw material.
+		Joins(`LEFT JOIN LATERAL (
+			SELECT it.id, it.uniq_code, it.model
+			FROM items it
+			WHERE it.deleted_at IS NULL
+			  AND UPPER(BTRIM(it.uniq_code)) = UPPER(BTRIM(rm.uniq_code))
+			ORDER BY (it.uniq_code = rm.uniq_code) DESC, it.id
+			LIMIT 1
+		) i ON TRUE`).
+		Joins(`LEFT JOIN LATERAL (
+			SELECT s.material_grade
+			FROM item_revisions ir
+			JOIN item_material_specs s ON s.item_revision_id = ir.id
+			WHERE ir.item_id = i.id
+			ORDER BY ir.id DESC
+			LIMIT 1
+		) ims ON TRUE`).
+		Where("rm.deleted_at IS NULL")
+
+	if f.Search != "" {
+		s := "%" + f.Search + "%"
+		q = q.Where("(rm.uniq_code ILIKE ? OR rm.part_name ILIKE ? OR ims.material_grade ILIKE ?)", s, s, s)
+	}
+	if f.RMType != "" {
+		q = q.Where("rm.raw_material_type = ?", f.RMType)
+	}
+	if f.RMSource != "" {
+		q = q.Where("rm.rm_source = ?", f.RMSource)
+	}
+	if f.Status != "" {
+		q = q.Where("rm.status = ?", f.Status)
+	}
+	if f.BuyNotBuy != "" {
+		q = q.Where("rm.buy_not_buy = ?", f.BuyNotBuy)
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("ListRawMaterials count: %w", err)
+	}
+
+	var rows []RawMaterialRow
+	err := q.Select(`
+	rm.*,
+	i.model,
+	ims.material_grade,
+	COALESCE(ims.material_grade, '') AS material_code,
+	i.uniq_code AS item_uniq_code
+`).
+		Order(safeOrderDir("rm", f.OrderBy, f.OrderDirection, []string{"uniq_code", "stock_qty", "status", "stock_days", "created_at", "updated_at"})).
+		Limit(f.Limit).Offset(f.Offset).
+		Scan(&rows).Error
+	return rows, total, err
+}
+
+func (r *repo) GetRawMaterialStats(ctx context.Context) (*RMStats, error) {
+	var stats RMStats
+	err := r.db.WithContext(ctx).Table("raw_materials").
+		Select(`COUNT(*) AS total_items,
+			SUM(CASE WHEN buy_not_buy = 'buy' THEN 1 ELSE 0 END) AS buy_recommendations,
+			SUM(CASE WHEN status = 'low_on_stock' THEN 1 ELSE 0 END) AS low_stock_items`).
+		Where("deleted_at IS NULL").
+		Scan(&stats).Error
+	return &stats, err
+}
+
+func (r *repo) GetRawMaterialByID(ctx context.Context, id int64) (*invModels.RawMaterial, error) {
+	var rm invModels.RawMaterial
+	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&rm).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material tidak ditemukan")
+	}
+	return &rm, err
+}
+
+// [rm-key] parseNumericKey: cek string murni angka tanpa import strconv.
+func parseNumericKey(s string) (int64, bool) {
+	if s == "" || len(s) > 18 {
+		return 0, false
+	}
+	var n int64
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int64(c-'0')
+	}
+	return n, n > 0
+}
+
+// FindRawMaterialByKey mencari satu Raw Material lewat beberapa jenis kunci:
+// id numerik (dipakai halaman detail ERP), uniq_code, atau uuid.
+//
+// Halaman detail ERP mengirim id dari list; kalau baris itu sudah hilang atau
+// id-nya berasal dari sumber lain, kita fallback ke uniq_code supaya tidak
+// langsung 404 "raw material tidak ditemukan".
+func (r *repo) FindRawMaterialByKey(ctx context.Context, key string) (*invModels.RawMaterial, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material tidak ditemukan")
+	}
+
+	if id, ok := parseNumericKey(key); ok {
+		var byID invModels.RawMaterial
+		err := r.db.WithContext(ctx).
+			Where("id = ? AND deleted_at IS NULL", id).
+			First(&byID).Error
+		if err == nil {
+			return &byID, nil
+		}
+		if err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+	}
+
+	var rm invModels.RawMaterial
+	err := r.db.WithContext(ctx).
+		Where("deleted_at IS NULL AND UPPER(uniq_code) = UPPER(?)", key).
+		First(&rm).Error
+	if err == nil {
+		return &rm, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+
+	if len(key) >= 32 && strings.Count(key, "-") == 4 {
+		err = r.db.WithContext(ctx).
+			Where("deleted_at IS NULL AND uuid::text = ?", key).
+			First(&rm).Error
+		if err == nil {
+			return &rm, nil
+		}
+		if err != gorm.ErrRecordNotFound {
+			return nil, err
+		}
+	}
+
+	return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material tidak ditemukan: "+key)
+}
+
+func (r *repo) CreateRawMaterial(ctx context.Context, rm *invModels.RawMaterial) error {
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_qty":          gorm.Expr("raw_materials.stock_qty + EXCLUDED.stock_qty"),
+				"stock_weight_kg":    gorm.Expr("COALESCE(raw_materials.stock_weight_kg, 0) + COALESCE(EXCLUDED.stock_weight_kg, 0)"),
+				"warehouse_location": gorm.Expr("COALESCE(EXCLUDED.warehouse_location, raw_materials.warehouse_location)"),
+				"uom":                gorm.Expr("COALESCE(EXCLUDED.uom, raw_materials.uom)"),
+				"raw_material_type":  gorm.Expr("COALESCE(EXCLUDED.raw_material_type, raw_materials.raw_material_type)"),
+				"rm_source":          gorm.Expr("COALESCE(EXCLUDED.rm_source, raw_materials.rm_source)"),
+				"part_name":          gorm.Expr("COALESCE(EXCLUDED.part_name, raw_materials.part_name)"),
+				"part_number":        gorm.Expr("COALESCE(EXCLUDED.part_number, raw_materials.part_number)"),
+				"deleted_at":         nil,
+				"updated_at":         gorm.Expr("now()"),
+			}),
+		}).
+		Create(rm).Error
+}
+
+func (r *repo) BulkCreateRawMaterials(ctx context.Context, items []invModels.RawMaterial) error {
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_qty":          gorm.Expr("raw_materials.stock_qty + EXCLUDED.stock_qty"),
+				"stock_weight_kg":    gorm.Expr("COALESCE(raw_materials.stock_weight_kg, 0) + COALESCE(EXCLUDED.stock_weight_kg, 0)"),
+				"warehouse_location": gorm.Expr("COALESCE(EXCLUDED.warehouse_location, raw_materials.warehouse_location)"),
+				"uom":                gorm.Expr("COALESCE(EXCLUDED.uom, raw_materials.uom)"),
+				"raw_material_type":  gorm.Expr("COALESCE(EXCLUDED.raw_material_type, raw_materials.raw_material_type)"),
+				"rm_source":          gorm.Expr("COALESCE(EXCLUDED.rm_source, raw_materials.rm_source)"),
+				"part_name":          gorm.Expr("COALESCE(EXCLUDED.part_name, raw_materials.part_name)"),
+				"part_number":        gorm.Expr("COALESCE(EXCLUDED.part_number, raw_materials.part_number)"),
+				"deleted_at":         nil,
+				"updated_at":         gorm.Expr("now()"),
+			}),
+		}).
+		CreateInBatches(items, 100).Error
+}
+
+func (r *repo) GenerateInitialPackings(ctx context.Context, uniqCode string, qty float64, createdBy string) (*initialpacking.Result, error) {
+	return initialpacking.New(r.db).GenerateForQty(ctx, uniqCode, qty, createdBy)
+}
+
+func (r *repo) EnsureInitialPackings(ctx context.Context, uniqCode string, createdBy string) (*initialpacking.Result, error) {
+	return initialpacking.New(r.db).EnsureForStock(ctx, uniqCode, createdBy)
+}
+
+func (r *repo) BackfillInitialPackings(ctx context.Context, createdBy string) ([]initialpacking.Result, error) {
+	return initialpacking.New(r.db).Backfill(ctx, createdBy)
+}
+
+func (r *repo) UpdateRawMaterial(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.RawMaterial, error) {
+	tx := r.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+		}
+	}()
+
+	result := tx.Model(&invModels.RawMaterial{}).
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(updates)
+	if result.Error != nil {
+		tx.Rollback()
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		tx.Rollback()
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material tidak ditemukan")
+	}
+
+	if _, stockChanged := updates["stock_qty"]; stockChanged {
+		if err := recalculateRMStatus(tx, id); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+
+	return r.GetRawMaterialByID(ctx, id)
+}
+
+func (r *repo) SoftDeleteRawMaterial(ctx context.Context, id int64, deletedBy string) error {
+	now := time.Now()
+	result := r.db.WithContext(ctx).Table("raw_materials").
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(map[string]interface{}{
+			"deleted_at": &now,
+			"updated_by": &deletedBy,
+			"updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return apperror.New(http.StatusNotFound, apperror.CodeNotFound, "raw material tidak ditemukan")
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Indirect Raw Material
+// ---------------------------------------------------------------------------
+
+func (r *repo) ListIndirectMaterials(ctx context.Context, f ListFilter) ([]IndirectRow, int64, error) {
+	q := r.db.WithContext(ctx).Table("indirect_raw_materials irm").Where("irm.deleted_at IS NULL")
+
+	if f.Search != "" {
+		s := "%" + f.Search + "%"
+		q = q.Where("(irm.uniq_code ILIKE ? OR irm.part_name ILIKE ?)", s, s)
+	}
+	if f.Status != "" {
+		q = q.Where("irm.status = ?", f.Status)
+	}
+	if f.BuyNotBuy != "" {
+		q = q.Where("irm.buy_not_buy = ?", f.BuyNotBuy)
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("ListIndirectMaterials count: %w", err)
+	}
+
+	var rows []IndirectRow
+	err := q.Select("irm.*").
+		Order(safeOrderDir("irm", f.OrderBy, f.OrderDirection, []string{"uniq_code", "stock_qty", "status", "stock_days", "created_at", "updated_at"})).
+		Limit(f.Limit).Offset(f.Offset).
+		Scan(&rows).Error
+	return rows, total, err
+}
+
+func (r *repo) GetIndirectStats(ctx context.Context) (*RMStats, error) {
+	var stats RMStats
+	err := r.db.WithContext(ctx).Table("indirect_raw_materials").
+		Select(`COUNT(*) AS total_items,
+			SUM(CASE WHEN buy_not_buy = 'buy' THEN 1 ELSE 0 END) AS buy_recommendations,
+			SUM(CASE WHEN status = 'low_on_stock' THEN 1 ELSE 0 END) AS low_stock_items`).
+		Where("deleted_at IS NULL").
+		Scan(&stats).Error
+	return &stats, err
+}
+
+func (r *repo) GetIndirectByID(ctx context.Context, id int64) (*invModels.IndirectRawMaterial, error) {
+	var irm invModels.IndirectRawMaterial
+	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&irm).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "indirect raw material tidak ditemukan")
+	}
+	return &irm, err
+}
+
+func (r *repo) CreateIndirectMaterial(ctx context.Context, irm *invModels.IndirectRawMaterial) error {
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_qty":          gorm.Expr("indirect_raw_materials.stock_qty + EXCLUDED.stock_qty"),
+				"stock_weight_kg":    gorm.Expr("COALESCE(indirect_raw_materials.stock_weight_kg, 0) + COALESCE(EXCLUDED.stock_weight_kg, 0)"),
+				"warehouse_location": gorm.Expr("COALESCE(EXCLUDED.warehouse_location, indirect_raw_materials.warehouse_location)"),
+				"uom":                gorm.Expr("COALESCE(EXCLUDED.uom, indirect_raw_materials.uom)"),
+				"part_name":          gorm.Expr("COALESCE(EXCLUDED.part_name, indirect_raw_materials.part_name)"),
+				"part_number":        gorm.Expr("COALESCE(EXCLUDED.part_number, indirect_raw_materials.part_number)"),
+				"deleted_at":         nil,
+				"updated_at":         gorm.Expr("now()"),
+			}),
+		}).
+		Create(irm).Error
+}
+
+func (r *repo) BulkCreateIndirectMaterials(ctx context.Context, items []invModels.IndirectRawMaterial) error {
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_qty":          gorm.Expr("indirect_raw_materials.stock_qty + EXCLUDED.stock_qty"),
+				"stock_weight_kg":    gorm.Expr("COALESCE(indirect_raw_materials.stock_weight_kg, 0) + COALESCE(EXCLUDED.stock_weight_kg, 0)"),
+				"warehouse_location": gorm.Expr("COALESCE(EXCLUDED.warehouse_location, indirect_raw_materials.warehouse_location)"),
+				"uom":                gorm.Expr("COALESCE(EXCLUDED.uom, indirect_raw_materials.uom)"),
+				"part_name":          gorm.Expr("COALESCE(EXCLUDED.part_name, indirect_raw_materials.part_name)"),
+				"part_number":        gorm.Expr("COALESCE(EXCLUDED.part_number, indirect_raw_materials.part_number)"),
+				"deleted_at":         nil,
+				"updated_at":         gorm.Expr("now()"),
+			}),
+		}).
+		CreateInBatches(items, 100).Error
+}
+
+func (r *repo) UpdateIndirectMaterial(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.IndirectRawMaterial, error) {
+	tx := r.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+		}
+	}()
+
+	result := tx.Model(&invModels.IndirectRawMaterial{}).
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(updates)
+	if result.Error != nil {
+		tx.Rollback()
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		tx.Rollback()
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "indirect raw material tidak ditemukan")
+	}
+
+	if _, stockChanged := updates["stock_qty"]; stockChanged {
+		if err := recalculateIndirectStatus(tx, id); err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return nil, err
+	}
+
+	return r.GetIndirectByID(ctx, id)
+}
+
+func (r *repo) SoftDeleteIndirectMaterial(ctx context.Context, id int64, deletedBy string) error {
+	now := time.Now()
+	result := r.db.WithContext(ctx).Table("indirect_raw_materials").
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(map[string]interface{}{
+			"deleted_at": &now,
+			"updated_by": &deletedBy,
+			"updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return apperror.New(http.StatusNotFound, apperror.CodeNotFound, "indirect raw material tidak ditemukan")
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Subcon Inventory
+// ---------------------------------------------------------------------------
+
+func (r *repo) ListSubconInventory(ctx context.Context, f SubconListFilter) ([]SubconRow, int64, error) {
+	q := r.db.WithContext(ctx).Table("subcon_inventories si").
+		Joins("LEFT JOIN finished_goods fg ON fg.uniq_code = si.uniq_code AND fg.deleted_at IS NULL").
+		Where("si.deleted_at IS NULL")
+
+	if f.Search != "" {
+		s := "%" + f.Search + "%"
+		q = q.Where("(si.uniq_code ILIKE ? OR si.part_name ILIKE ? OR si.subcon_vendor_name ILIKE ?)", s, s, s)
+	}
+	if f.PONumber != "" {
+		q = q.Where("si.po_number = ?", f.PONumber)
+	}
+	if f.SupplierID > 0 {
+		q = q.Where("si.subcon_vendor_id = ?", f.SupplierID)
+	}
+	if f.Period != "" {
+		q = q.Where("si.po_period = ?", f.Period)
+	}
+	if f.Status != "" {
+		q = q.Where("si.status = ?", f.Status)
+	}
+
+	// [subcon-tabs] Pemisahan tab: scan DN Subcon OUT menaikkan stock_at_vendor_qty
+	// (Stock In Vendor), scan DN Subcon IN menaikkan total_received_qty
+	// (Stock Received from Vendor). Frontend mengirim ?source=received utk tab received.
+	switch f.Source {
+	case "received", "received_from_vendor":
+		q = q.Where("COALESCE(si.total_received_qty, 0) > 0")
+	default:
+		// [subcon-fix] Stock In Vendor = baris yang BELUM diterima kembali
+		// (total_received_qty = 0). Termasuk entri manual "Add Stock Data"
+		// (stock_at_vendor_qty bisa 0) dan scan DN Subcon OUT. Baris yang sudah
+		// di-scan DN Subcon IN (total_received_qty > 0) otomatis pindah ke tab
+		// Stock Received from Vendor dan hilang dari sini.
+		q = q.Where("COALESCE(si.total_received_qty, 0) = 0")
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("ListSubconInventory count: %w", err)
+	}
+
+	var rows []SubconRow
+	err := q.Select("si.*, fg.part_number AS fg_part_number, fg.part_name AS fg_part_name, fg.safety_stock_qty AS fg_safety_stock_qty").
+		Order(safeOrderDir("si", f.OrderBy, f.OrderDirection, []string{"uniq_code", "po_number", "status", "created_at", "updated_at"})).
+		Limit(f.Limit).Offset(f.Offset).
+		Scan(&rows).Error
+	return rows, total, err
+}
+
+func (r *repo) GetSubconByID(ctx context.Context, id int64) (*invModels.SubconInventory, error) {
+	var si invModels.SubconInventory
+	err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&si).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "subcon inventory tidak ditemukan")
+	}
+	if err != nil {
+		return &si, err
+	}
+	// [subcon-fix] Lengkapi part_number/part_name/safety_stock dari finished_goods
+	// bila kolom pada baris subcon masih NULL (mis. baris hasil scan DN).
+	if si.PartNumber == nil || si.PartName == nil || si.SafetyStockQty == nil {
+		var fg struct {
+			PartNumber     *string  `gorm:"column:part_number"`
+			PartName       *string  `gorm:"column:part_name"`
+			SafetyStockQty *float64 `gorm:"column:safety_stock_qty"`
+		}
+		if e := r.db.WithContext(ctx).Table("finished_goods").
+			Select("part_number, part_name, safety_stock_qty").
+			Where("uniq_code = ? AND deleted_at IS NULL", si.UniqCode).
+			Limit(1).Scan(&fg).Error; e == nil {
+			if si.PartNumber == nil {
+				si.PartNumber = fg.PartNumber
+			}
+			if si.PartName == nil {
+				si.PartName = fg.PartName
+			}
+			if si.SafetyStockQty == nil {
+				si.SafetyStockQty = fg.SafetyStockQty
+			}
+		}
+	}
+	return &si, nil
+}
+
+func (r *repo) CreateSubconInventory(ctx context.Context, si *invModels.SubconInventory) error {
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "uniq_code"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"stock_at_vendor_qty": gorm.Expr("subcon_inventories.stock_at_vendor_qty + EXCLUDED.stock_at_vendor_qty"),
+				"part_name":           gorm.Expr("COALESCE(EXCLUDED.part_name, subcon_inventories.part_name)"),
+				"part_number":         gorm.Expr("COALESCE(EXCLUDED.part_number, subcon_inventories.part_number)"),
+				"subcon_vendor_id":    gorm.Expr("COALESCE(EXCLUDED.subcon_vendor_id, subcon_inventories.subcon_vendor_id)"),
+				"subcon_vendor_name":  gorm.Expr("COALESCE(EXCLUDED.subcon_vendor_name, subcon_inventories.subcon_vendor_name)"),
+				"deleted_at":          nil,
+				"updated_at":          gorm.Expr("now()"),
+			}),
+		}).
+		Create(si).Error
+}
+
+func (r *repo) UpdateSubconInventory(ctx context.Context, id int64, updates map[string]interface{}) (*invModels.SubconInventory, error) {
+	result := r.db.WithContext(ctx).Model(&invModels.SubconInventory{}).
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(updates)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "subcon inventory tidak ditemukan")
+	}
+	return r.GetSubconByID(ctx, id)
+}
+
+func (r *repo) SoftDeleteSubconInventory(ctx context.Context, id int64, deletedBy string) error {
+	now := time.Now()
+	result := r.db.WithContext(ctx).Table("subcon_inventories").
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(map[string]interface{}{
+			"deleted_at": &now,
+			"updated_by": &deletedBy,
+			"updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return apperror.New(http.StatusNotFound, apperror.CodeNotFound, "subcon inventory tidak ditemukan")
+	}
+	return nil
+}
+
+// ApproveSubconInventory sets approval_status (approved | rejected) without touching stock.
+func (r *repo) ApproveSubconInventory(ctx context.Context, id int64, approvedBy, status string) (*invModels.SubconInventory, error) {
+	now := time.Now()
+	result := r.db.WithContext(ctx).Model(&invModels.SubconInventory{}).
+		Where("id = ? AND deleted_at IS NULL", id).
+		Updates(map[string]interface{}{
+			"approval_status": status,
+			"approved_by":     &approvedBy,
+			"approved_at":     &now,
+			"updated_by":      &approvedBy,
+			"updated_at":      now,
+		})
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, apperror.New(http.StatusNotFound, apperror.CodeNotFound, "subcon inventory tidak ditemukan")
+	}
+	return r.GetSubconByID(ctx, id)
+}
+
+// SubconSourceRow is a flattened subcon purchase-order line used to auto-populate Stock In Vendor.
+type SubconSourceRow struct {
+	PONumber     string     `gorm:"column:po_number"`
+	Period       string     `gorm:"column:period"`
+	SupplierID   *int64     `gorm:"column:supplier_id"`
+	SupplierName *string    `gorm:"column:supplier_name"`
+	ItemUniqCode string     `gorm:"column:item_uniq_code"`
+	PartName     *string    `gorm:"column:part_name"`
+	PartNumber   *string    `gorm:"column:part_number"`
+	UOM          *string    `gorm:"column:uom"`
+	OrderedQty   float64    `gorm:"column:ordered_qty"`
+	PODate       *time.Time `gorm:"column:po_date"`
+}
+
+// ListSubconPOSources reads all subcon PO lines (po_type = 'SUBCON') joined with supplier names.
+func (r *repo) ListSubconPOSources(ctx context.Context) ([]SubconSourceRow, error) {
+	var rows []SubconSourceRow
+	err := r.db.WithContext(ctx).
+		Table("purchase_orders po").
+		Joins("JOIN purchase_order_items poi ON poi.po_id = po.po_id").
+		Joins("LEFT JOIN suppliers s ON s.id = po.supplier_id").
+		Where("po.po_type = ?", "SUBCON").
+		Select(`po.po_number AS po_number, po.period AS period, po.supplier_id AS supplier_id,
+			s.supplier_name AS supplier_name, poi.item_uniq_code AS item_uniq_code,
+			poi.part_name AS part_name, poi.part_number AS part_number, poi.uom AS uom,
+			poi.ordered_qty AS ordered_qty, po.po_date AS po_date`).
+		Scan(&rows).Error
+	return rows, err
+}
+
+// UpsertSubconFromSource inserts a new auto-synced subcon row (approval_status = 'pending')
+// or refreshes source-derived fields on an existing one. Approval fields are never overwritten.
+func (r *repo) UpsertSubconFromSource(ctx context.Context, si *invModels.SubconInventory) error {
+	if si.SourceType == nil || si.SourceRef == nil {
+		return fmt.Errorf("UpsertSubconFromSource: source_type and source_ref are required")
+	}
+	var existing invModels.SubconInventory
+	err := r.db.WithContext(ctx).
+		Where("source_type = ? AND source_ref = ? AND deleted_at IS NULL", *si.SourceType, *si.SourceRef).
+		First(&existing).Error
+	if err == gorm.ErrRecordNotFound {
+		return r.db.WithContext(ctx).Create(si).Error
+	}
+	if err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Model(&invModels.SubconInventory{}).
+		Where("id = ?", existing.ID).
+		Updates(map[string]interface{}{
+			"part_number":        si.PartNumber,
+			"part_name":          si.PartName,
+			"po_number":          si.PONumber,
+			"po_period":          si.POPeriod,
+			"subcon_vendor_id":   si.SubconVendorID,
+			"subcon_vendor_name": si.SubconVendorName,
+			"total_po_qty":       si.TotalPOQty,
+			"date_delivery":      si.DateDelivery,
+			"updated_at":         time.Now(),
+		}).Error
+}
+
+// ---------------------------------------------------------------------------
+// Movement History
+// ---------------------------------------------------------------------------
+
+func (r *repo) GetMovementHistory(ctx context.Context, category, uniqCode string, f ListFilter) ([]HistoryRow, int64, error) {
+	q := r.db.WithContext(ctx).Table("inventory_movement_logs").
+		Where("movement_category = ? AND uniq_code = ?", category, uniqCode)
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("GetMovementHistory count: %w", err)
+	}
+
+	var rows []HistoryRow
+	err := q.Select(`
+		id, uniq_code, qty_change, weight_change, movement_type, source_flag,
+		COALESCE(NULLIF(TRIM(dn_number), ''), NULLIF(TRIM(reference_id), '')) AS dn_number,
+		notes, logged_by, logged_at,
+		CASE WHEN source_flag = 'incoming_scan' THEN 'incoming' ELSE 'confirmed' END AS log_status
+	`).
+		Order("logged_at DESC").
+		Limit(f.Limit).Offset(f.Offset).
+		Scan(&rows).Error
+	return rows, total, err
+}
+
+// ---------------------------------------------------------------------------
+// Incoming Scans (tab view)
+// ---------------------------------------------------------------------------
+
+func (r *repo) ListIncoming(ctx context.Context, f IncomingListFilter) ([]IncomingRow, int64, error) {
+	q := r.db.WithContext(ctx).
+		Table("incoming_receiving_scans irs").
+		Joins("JOIN delivery_note_items dni ON dni.id = irs.incoming_dn_item_id").
+		Joins("JOIN delivery_notes dn ON dn.id = dni.dn_id").
+		Joins("LEFT JOIN suppliers s ON s.id = dn.supplier_id").
+		Joins(`LEFT JOIN LATERAL (
+			SELECT id, status FROM qc_tasks
+			WHERE task_type = 'incoming_qc' AND incoming_dn_item_id = dni.id
+			ORDER BY id DESC LIMIT 1
+		) qt ON TRUE`)
+
+	if f.DNType != "" {
+		q = q.Where("UPPER(TRIM(dn.type)) IN ?", dnTypeVariants(f.DNType))
+	}
+	if f.PONumber != "" {
+		q = q.Where("dn.po_number = ?", f.PONumber)
+	}
+	if f.SupplierID > 0 {
+		q = q.Where("dn.supplier_id = ?", f.SupplierID)
+	}
+	// Incoming tab always excludes approved scans — those are already posted to inventory
+	q = q.Where("COALESCE(qt.status, 'pending') != 'approved'")
+	if f.Status != "" {
+		q = q.Where("COALESCE(qt.status, 'pending') = ?", f.Status)
+	}
+	if f.Search != "" {
+		s := "%" + f.Search + "%"
+		q = q.Where("(dni.item_uniq_code ILIKE ? OR dn.po_number ILIKE ? OR dn.dn_number ILIKE ?)", s, s, s)
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("ListIncoming count: %w", err)
+	}
+
+	var rows []IncomingRow
+	err := q.Select(`
+		irs.id                                    AS scan_id,
+		dni.item_uniq_code,
+		irs.qty                                   AS incoming_qty,
+		irs.warehouse_location                    AS warehouse,
+		irs.scanned_at                            AS scan_date,
+		s.supplier_name,
+		dn.po_number,
+		dn.dn_number,
+		COALESCE(irs.scan_ref, '')                AS scan_ref,
+		COALESCE(qt.status, 'pending')            AS qc_status,
+		dni.uom,
+		dn.type                                   AS dn_type
+	`).
+		Order("irs.scanned_at DESC").
+		Limit(f.Limit).Offset(f.Offset).
+		Scan(&rows).Error
+	return rows, total, err
+}
+
+// ---------------------------------------------------------------------------
+// Recalculate helpers (used on update)
+// ---------------------------------------------------------------------------
+
+func recalculateRMStatus(tx *gorm.DB, id int64) error {
+	var rm invModels.RawMaterial
+	if err := tx.First(&rm, id).Error; err != nil {
+		return err
+	}
+
+	safetyStock := 10.0
+	if rm.SafetyStockQty != nil && *rm.SafetyStockQty > 0 {
+		safetyStock = *rm.SafetyStockQty
+	}
+	dailyUsage := 1.0
+	if rm.DailyUsageQty != nil && *rm.DailyUsageQty > 0 {
+		dailyUsage = *rm.DailyUsageQty
+	}
+
+	stockDays := int(rm.StockQty / dailyUsage)
+	status := computeStatus(rm.StockQty, safetyStock)
+	buyNotBuy := "not_buy"
+	if strings.EqualFold(rm.RawMaterialType, "ssp") {
+		buyNotBuy = "n/a"
+	} else if rm.StockQty < safetyStock {
+		buyNotBuy = "buy"
+	}
+
+	return tx.Model(&rm).Updates(map[string]interface{}{
+		"status":      status,
+		"stock_days":  stockDays,
+		"buy_not_buy": buyNotBuy,
+		"updated_at":  time.Now(),
+	}).Error
+}
+
+func recalculateIndirectStatus(tx *gorm.DB, id int64) error {
+	var irm invModels.IndirectRawMaterial
+	if err := tx.First(&irm, id).Error; err != nil {
+		return err
+	}
+
+	safetyStock := 10.0
+	if irm.SafetyStockQty != nil && *irm.SafetyStockQty > 0 {
+		safetyStock = *irm.SafetyStockQty
+	}
+	dailyUsage := 1.0
+	if irm.DailyUsageQty != nil && *irm.DailyUsageQty > 0 {
+		dailyUsage = *irm.DailyUsageQty
+	}
+
+	stockDays := int(irm.StockQty / dailyUsage)
+	status := computeStatus(irm.StockQty, safetyStock)
+	buyNotBuy := "not_buy"
+	if irm.StockQty < safetyStock {
+		buyNotBuy = "buy"
+	}
+	statusPtr := status
+
+	return tx.Model(&irm).Updates(map[string]interface{}{
+		"status":      statusPtr,
+		"stock_days":  stockDays,
+		"buy_not_buy": buyNotBuy,
+		"updated_at":  time.Now(),
+	}).Error
+}
+
+func computeStatus(stock, safetyStock float64) string {
+	if stock < safetyStock {
+		return "low_on_stock"
+	}
+	if stock > safetyStock*2 {
+		return "overstock"
+	}
+	return "normal"
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+func safeOrderDir(tableAlias, col, dir string, allowed []string) string {
+	allowedMap := make(map[string]bool, len(allowed))
+	for _, a := range allowed {
+		allowedMap[a] = true
+	}
+	safeCol := tableAlias + ".created_at"
+	if allowedMap[col] {
+		safeCol = tableAlias + "." + col
+	}
+	safeDir := "DESC"
+	if strings.EqualFold(dir, "asc") {
+		safeDir = "ASC"
+	}
+	return safeCol + " " + safeDir
+}
+
+func dnTypeVariants(t string) []string {
+	switch strings.ToUpper(strings.TrimSpace(t)) {
+	case "RM", "RAW MATERIAL":
+		return []string{"RM", "RAW MATERIAL"}
+	case "IB", "INDIRECT", "INDIRECT RAW MATERIAL":
+		return []string{"IB", "INDIRECT", "INDIRECT RAW MATERIAL"}
+	case "SC", "SUBCON", "SUBCON MATERIAL", "SUB CON", "SUB-CON":
+		return []string{"SC", "SUBCON", "SUBCON MATERIAL", "SUB CON", "SUB-CON", "SUBCON RAW MATERIAL"}
+	default:
+		return []string{t}
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
+// ---------------------------------------------------------------------------
+// Stock Deduction
+// ---------------------------------------------------------------------------
+
+func (r *repo) DeductRawMaterialByUniqCode(ctx context.Context, uniqCode string, qty float64, updatedBy string) (int64, error) {
+	tx := r.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+		}
+	}()
+
+	type result struct {
+		ID int64 `gorm:"column:id"`
+	}
+	var row result
+	if err := tx.Raw(
+		`UPDATE raw_materials SET stock_qty = GREATEST(0, stock_qty - ?), updated_by = ?, updated_at = now()
+		 WHERE uniq_code = ? AND deleted_at IS NULL RETURNING id`,
+		qty, updatedBy, uniqCode,
+	).Scan(&row).Error; err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if row.ID == 0 {
+		tx.Rollback()
+		return 0, nil // tidak ditemukan in this table — caller tries next
+	}
+	if err := recalculateRMStatus(tx, row.ID); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	return row.ID, tx.Commit().Error
+}
+
+func (r *repo) DeductIndirectMaterialByUniqCode(ctx context.Context, uniqCode string, qty float64, updatedBy string) (int64, error) {
+	tx := r.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return 0, tx.Error
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+		}
+	}()
+
+	type result struct {
+		ID int64 `gorm:"column:id"`
+	}
+	var row result
+	if err := tx.Raw(
+		`UPDATE indirect_raw_materials SET stock_qty = GREATEST(0, stock_qty - ?), updated_by = ?, updated_at = now()
+		 WHERE uniq_code = ? AND deleted_at IS NULL RETURNING id`,
+		qty, updatedBy, uniqCode,
+	).Scan(&row).Error; err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	if row.ID == 0 {
+		tx.Rollback()
+		return 0, nil // tidak ditemukan
+	}
+	if err := recalculateIndirectStatus(tx, row.ID); err != nil {
+		tx.Rollback()
+		return 0, err
+	}
+	return row.ID, tx.Commit().Error
+}
+
+// Movement Log
+// ---------------------------------------------------------------------------
+
+func (r *repo) CreateMovementLog(ctx context.Context, log *invModels.InventoryMovementLog) error {
+	if log.LoggedAt.IsZero() {
+		log.LoggedAt = time.Now()
+	}
+	return r.db.WithContext(ctx).Create(log).Error
+}
+
+func (r *repo) FindItemByUniqCode(ctx context.Context, uniqCode string) (*ItemLookupRow, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return nil, nil
+	}
+	var row ItemLookupRow
+	err := r.db.WithContext(ctx).
+		Table("items").
+		Select("id, uniq_code, part_number, part_name, uom").
+		Where("uniq_code = ? AND deleted_at IS NULL", uniqCode).
+		Take(&row).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, apperror.InternalWrap("FindItemByUniqCode", err)
+	}
+	return &row, nil
+}
+
+// ---------------------------------------------------------------------------
+// Kanban Summary helpers
+// ---------------------------------------------------------------------------
+
+func (r *repo) GetRawMaterialByUniqCode(ctx context.Context, uniqCode string) (*RawMaterialRow, error) {
+	var row RawMaterialRow
+	// Only select the columns that will remain after derived fields are dropped:
+	// stock_qty is the only truly persistent field needed for kanban computation.
+	// raw_material_type is kept to detect SSP (buy/not-buy = n/a).
+	// daily_usage_qty is kept as PATH C manual fallback when no parameter or forecast exists.
+	err := r.db.WithContext(ctx).
+		Table("raw_materials").
+		Select("id, uniq_code, stock_qty, raw_material_type, daily_usage_qty").
+		Where("uniq_code = ? AND deleted_at IS NULL", uniqCode).
+		First(&row).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("GetRawMaterialByUniqCode", err)
+	}
+	return &row, nil
+}
+
+func (r *repo) GetSafetyStockParam(ctx context.Context, uniqCode string) (*SafetyStockRow, error) {
+	var row SafetyStockRow
+	err := r.db.WithContext(ctx).
+		Table("safety_stock_parameters").
+		Select("calculation_type, constanta").
+		Where("item_uniq_code = ?", uniqCode).
+		First(&row).Error
+	if err != nil {
+		return nil, err // caller treats not-found as "no param"
+	}
+	return &row, nil
+}
+
+func (r *repo) GetActiveWorkingDays(ctx context.Context) (int, error) {
+	var result struct {
+		WorkingDays int `gorm:"column:working_days"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("global_parameters").
+		Select("working_days").
+		Where("status = 'active'").
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.WorkingDays, nil
+}
+
+// GetPRLQtyByUniqCode returns the total PRL quantity from active PRL forecasts for the given item.
+func (r *repo) GetPRLQtyByUniqCode(ctx context.Context, uniqCode string) (float64, error) {
+	var result struct {
+		Total float64 `gorm:"column:total"`
+	}
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(fi.quantity), 0) AS total
+		FROM prl_forecast_items fi
+		JOIN prl_forecasts f ON f.id = fi.prl_id
+		WHERE fi.uniq_code = ?
+		  AND f.status = 'Active'
+	`, uniqCode).Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.Total, nil
+}
+
+// GetActivePOQtyByUniqCode returns the total open PO quantity for the given item.
+func (r *repo) GetActivePOQtyByUniqCode(ctx context.Context, uniqCode string) (float64, error) {
+	var result struct {
+		Total float64 `gorm:"column:total"`
+	}
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(poi.ordered_qty), 0) AS total
+		FROM purchase_order_items poi
+		JOIN purchase_orders po ON po.po_id = poi.po_id
+		WHERE poi.item_uniq_code = ?
+		  AND poi.status = 'open'
+		  AND po.status NOT IN ('cancelled', 'closed')
+	`, uniqCode).Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.Total, nil
+}
+
+// GetForecastDailyUsage returns the latest forecasted daily usage from forecast_results.
+// Used as fallback when no safety_stock_parameter is active for the item.
+func (r *repo) GetForecastDailyUsage(ctx context.Context, uniqCode string) (float64, error) {
+	var result struct {
+		ForecastQty float64 `gorm:"column:forecast_qty"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("forecast_results").
+		Select("forecast_qty").
+		Where("item_code = ?", uniqCode).
+		Order("created_at DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.ForecastQty, nil
+}
+
+// GetKanbanPkgQty returns pcs_per_kanban from supplier_item for the given uniq_code.
+// Returns 0 if no active record found — caller applies the default (50).
+func (r *repo) GetKanbanPkgQty(ctx context.Context, uniqCode string) (int, error) {
+	var result struct {
+		PcsPerKanban int `gorm:"column:pcs_per_kanban"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("supplier_item").
+		Select("pcs_per_kanban").
+		Where("uniq_code = ? AND status = 'active' AND deleted_at IS NULL", uniqCode).
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, err
+	}
+	return result.PcsPerKanban, nil
+}
+
+// ---------------------------------------------------------------------------
+// BRD-aligned kanban summary helpers
+// ---------------------------------------------------------------------------
+
+func (r *repo) GetSafetyStockParamByType(ctx context.Context, inventoryType, uniqCode string) (*SafetyStockRow, error) {
+	var row SafetyStockRow
+	err := r.db.WithContext(ctx).
+		Table("safety_stock_parameters").
+		Select("calculation_type, constanta").
+		Where("inventory_type = ? AND item_uniq_code = ?", inventoryType, uniqCode).
+		First(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+func (r *repo) GetStockdaysParam(ctx context.Context, inventoryType, uniqCode string) (*StockdaysRow, error) {
+	var row StockdaysRow
+	err := r.db.WithContext(ctx).
+		Table("stockdays_parameters").
+		Select("calculation_type, constanta").
+		Where("inventory_type = ? AND item_uniq_code = ?", inventoryType, uniqCode).
+		First(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
+}
+
+// GetLatestApprovedPRLPeriodByCode returns the most recently approved forecast_period for the item.
+func (r *repo) GetLatestApprovedPRLPeriodByCode(ctx context.Context, uniqCode string) (string, error) {
+	var result struct {
+		ForecastPeriod string `gorm:"column:forecast_period"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("prls").
+		Select("forecast_period").
+		Where("uniq_code = ? AND status = 'approved' AND deleted_at IS NULL", uniqCode).
+		Order("COALESCE(approved_at, updated_at) DESC").
+		Limit(1).
+		Scan(&result).Error
+	return result.ForecastPeriod, err
+}
+
+// GetWorkingDaysByPeriod returns working_days from global_parameters for the matching period.
+func (r *repo) GetWorkingDaysByPeriod(ctx context.Context, forecastPeriod string) (int, error) {
+	var result struct {
+		WorkingDays int `gorm:"column:working_days"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("global_parameters").
+		Select("working_days").
+		Where("parameter_group = 'working_days' AND period = ? AND status = 'active'", forecastPeriod).
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	return result.WorkingDays, err
+}
+
+// GetPRLTotalFromCache reads the pre-computed total from prl_item_period_summaries.
+// Returns (qty, true, nil) on cache hit; (0, false, nil) when no row exists.
+func (r *repo) GetPRLTotalFromCache(ctx context.Context, forecastPeriod, uniqCode string) (float64, bool, error) {
+	var result struct {
+		PRLTotalQty float64 `gorm:"column:prl_total_qty"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("prl_item_period_summaries").
+		Select("prl_total_qty").
+		Where("forecast_period = ? AND item_uniq_code = ?", forecastPeriod, uniqCode).
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, false, err
+	}
+	if result.PRLTotalQty == 0 {
+		// Distinguish "no row" from "row with 0 qty" by checking RowsAffected on a count query.
+		var cnt int64
+		r.db.WithContext(ctx).
+			Table("prl_item_period_summaries").
+			Where("forecast_period = ? AND item_uniq_code = ?", forecastPeriod, uniqCode).
+			Count(&cnt)
+		if cnt == 0 {
+			return 0, false, nil
+		}
+	}
+	return result.PRLTotalQty, true, nil
+}
+
+// GetPRLTotalByPeriodAndCode returns the sum of approved PRL quantities from the prls table.
+func (r *repo) GetPRLTotalByPeriodAndCode(ctx context.Context, forecastPeriod, uniqCode string) (float64, error) {
+	var result struct {
+		Total float64 `gorm:"column:total"`
+	}
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(quantity), 0) AS total
+		FROM prls
+		WHERE uniq_code      = ?
+		  AND forecast_period = ?
+		  AND status         = 'approved'
+		  AND deleted_at     IS NULL
+	`, uniqCode, forecastPeriod).Scan(&result).Error
+	return result.Total, err
+}
+
+// ---------------------------------------------------------------------------
+// Demand snapshot helpers
+// ---------------------------------------------------------------------------
+
+func (r *repo) GetGlobalActivePeriode(ctx context.Context) (string, error) {
+	var result struct {
+		Period string `gorm:"column:period"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("global_parameters").
+		Select("period").
+		Where("parameter_group = 'working_days' AND status = 'active'").
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	return result.Period, err
+}
+
+func (r *repo) GetWorkingDaysWithFallback(ctx context.Context, activePeriode string) (int, string, error) {
+	var result struct {
+		Period      string `gorm:"column:period"`
+		WorkingDays int    `gorm:"column:working_days"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("global_parameters").
+		Select("period, working_days").
+		Where("parameter_group = 'working_days' AND status = 'active' AND period = ? AND working_days > 0", activePeriode).
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, "", err
+	}
+	if result.WorkingDays > 0 {
+		return result.WorkingDays, result.Period, nil
+	}
+	// Fallback: latest available active period with working_days > 0.
+	err = r.db.WithContext(ctx).
+		Table("global_parameters").
+		Select("period, working_days").
+		Where("parameter_group = 'working_days' AND status = 'active' AND working_days > 0").
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 0, "", err
+	}
+	return result.WorkingDays, result.Period, nil
+}
+
+// GetDemandSnapshot returns the latest snapshot row for (activePeriode, uniqCode).
+func (r *repo) GetDemandSnapshot(ctx context.Context, activePeriode, uniqCode string) (*DemandSnapshotRow, bool, error) {
+	var row DemandSnapshotRow
+	err := r.db.WithContext(ctx).
+		Table("inventory_demand_periode_summaries").
+		Select("uniq_code, active_periode, snapshot_date::text AS snapshot_date, working_days_periode_used, working_days_used, safety_stock_calc_type_active, safety_stock_constanta_active, stockdays_calc_type_active, stockdays_constanta_active, prl_sum, po_customer_sum, total_demand_sum").
+		Where("active_periode = ? AND uniq_code = ?", activePeriode, uniqCode).
+		Order("snapshot_date DESC").
+		Limit(1).
+		Scan(&row).Error
+	if err != nil {
+		return nil, false, err
+	}
+	if row.UniqCode == "" {
+		return nil, false, nil
+	}
+	return &row, true, nil
+}
+
+// GetPOCustomerSumByPeriodeAndCode returns live PO Customer sum for one item from customer_order_document_items.
+func (r *repo) GetPOCustomerSumByPeriodeAndCode(ctx context.Context, activePeriode, uniqCode string) (float64, error) {
+	var result struct {
+		Total float64 `gorm:"column:total"`
+	}
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(SUM(i.quantity), 0) AS total
+		FROM customer_order_document_items i
+		JOIN customer_order_documents d ON d.id = i.document_id
+		WHERE i.item_uniq_code = ?
+		  AND d.period_schedule = ?
+		  AND d.document_type   = 'PO'
+		  AND d.status NOT IN ('cancelled', 'draft')
+		  AND d.deleted_at      IS NULL
+	`, uniqCode, activePeriode).Scan(&result).Error
+	return result.Total, err
+}
+
+// GetCyclePengiriman parses customer_cycle from supplier_item as an integer.
+// Returns 1 when no active record exists or the value cannot be parsed.
+func (r *repo) GetCyclePengiriman(ctx context.Context, uniqCode string) (int, error) {
+	var result struct {
+		CustomerCycle *string `gorm:"column:customer_cycle"`
+	}
+	err := r.db.WithContext(ctx).
+		Table("supplier_item").
+		Select("customer_cycle").
+		Where("uniq_code = ? AND status = 'active' AND deleted_at IS NULL", uniqCode).
+		Order("id DESC").
+		Limit(1).
+		Scan(&result).Error
+	if err != nil {
+		return 1, err
+	}
+	if result.CustomerCycle == nil || *result.CustomerCycle == "" {
+		return 1, nil
+	}
+	var cycle int
+	_, parseErr := fmt.Sscanf(*result.CustomerCycle, "%d", &cycle)
+	if parseErr != nil || cycle <= 0 {
+		return 1, nil
+	}
+	return cycle, nil
+}
+
+func (r *repo) FindDNByItemUniqCode(ctx context.Context, uniqCode string) (*string, error) {
+	var packingNumber string
+
+	err := r.db.WithContext(ctx).
+		Table("delivery_note_items").
+		Select("packing_number").
+		Where("item_uniq_code = ?", uniqCode).
+		Where(`"check" = ?`, "progress").
+		Limit(1).
+		Scan(&packingNumber).Error
+	if err != nil {
+		return nil, err
+	}
+
+	if packingNumber == "" {
+		return nil, nil
+	}
+
+	return &packingNumber, nil
+}
+
+// FindDNQRByItemUniqCode returns the QR image (base64 data URL) that DN
+// management already generated and stored for the item (delivery_note_items.qr).
+// The QR is specific per uniq. Progress rows are preferred, and among rows we
+// prefer one that actually has a stored QR, then the most recent, so a single
+// uniq always resolves to a single, deterministic QR.
+func (r *repo) FindDNQRByItemUniqCode(ctx context.Context, uniqCode string) (string, error) {
+	var qr string
+	err := r.db.WithContext(ctx).
+		Table("delivery_note_items AS dni").
+		Select("dni.qr").
+		Where("dni.item_uniq_code = ?", uniqCode).
+		Order(`CASE WHEN COALESCE(dni.qr, '') <> '' THEN 0 ELSE 1 END, CASE WHEN dni."check" = 'progress' THEN 0 ELSE 1 END, dni.id DESC`).
+		Limit(1).
+		Scan(&qr).Error
+	if err != nil {
+		return "", err
+	}
+
+	return qr, nil
+}
+
+func (r *repo) UpdateRawMaterialQR(ctx context.Context, uniqCode, qr string) error {
+	return r.db.WithContext(ctx).
+		Model(&models.RawMaterial{}).
+		Where("uniq_code = ?", uniqCode).
+		Update("qr", qr).Error
+}
+
+// ---------------------------------------------------------------------------
+// Packing List
+// ---------------------------------------------------------------------------
+
+// InvPackingRow is the raw scan target for the packing-list query.
+type InvPackingRow struct {
+	DNNumber      *string `gorm:"column:dn_number"`
+	PackingNumber string  `gorm:"column:packing_number"`
+	Quantity      float64 `gorm:"column:quantity"`
+	QtyCurrent    float64 `gorm:"column:qty_current"`
+	QtyMax        float64 `gorm:"column:qty_max"`
+	Status        *string `gorm:"column:status"`
+	WONumber      *string `gorm:"column:wo_number"`
+	Source        string  `gorm:"column:source"`
+}
+
+// ListPackingList resolves the packing/kanban list for one inventory uniq code.
+//
+// Source of truth:
+//   - work_order_items: 1 row = 1 kanban/packing generated + barcoded by the WO
+//   - delivery_note_items: matched on packing_number to expose the DN number
+//     and the latest opname qty for that packing
+//   - kanban_parameters.kanban_qty: qty maksimal per packing
+//
+// DN items whose packing number has no work order row are appended so packings
+// created outside the WO flow (supplier incoming DN) still show up.
+func (r *repo) ListPackingList(ctx context.Context, uniqCode string) ([]InvPackingRow, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return []InvPackingRow{}, nil
+	}
+
+	var rows []InvPackingRow
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT * FROM (
+			SELECT
+				dn.dn_number      AS dn_number,
+				woi.kanban_number AS packing_number,
+				COALESCE(woi.quantity, 0) AS quantity,
+				COALESCE(
+					dni.qty_opname,
+					NULLIF(woi.total_good_qty, 0),
+					dni.quantity,
+					0
+				) AS qty_current,
+				COALESCE(
+					NULLIF(kp.kanban_qty, 0),
+					NULLIF(dni.pcs_per_kanban, 0),
+					NULLIF(woi.quantity, 0),
+					0
+				) AS qty_max,
+				woi.status   AS status,
+				w.wo_number  AS wo_number,
+				'work_order' AS source,
+				woi.created_at AS sort_at
+			FROM work_order_items woi
+			JOIN work_orders w ON w.id = woi.wo_id
+			LEFT JOIN delivery_note_items dni ON dni.packing_number = woi.kanban_number
+			LEFT JOIN delivery_notes dn ON dn.id = dni.dn_id
+			LEFT JOIN LATERAL (
+				SELECT kanban_qty
+				FROM kanban_parameters
+				WHERE item_uniq_code = woi.item_uniq_code
+				ORDER BY id DESC
+				LIMIT 1
+			) kp ON TRUE
+			WHERE woi.item_uniq_code = ?
+
+			UNION ALL
+
+			SELECT
+				dn.dn_number       AS dn_number,
+				dni.packing_number AS packing_number,
+				COALESCE(dni.quantity, 0) AS quantity,
+				COALESCE(dni.qty_opname, dni.quantity, 0) AS qty_current,
+				COALESCE(
+					NULLIF(dni.pcs_per_kanban, 0),
+					NULLIF(kp.kanban_qty, 0),
+					NULLIF(dni.quantity, 0),
+					0
+				) AS qty_max,
+				NULLIF(dni.check, '') AS status,
+				NULL            AS wo_number,
+				'delivery_note' AS source,
+				dni.created_at AS sort_at
+			FROM delivery_note_items dni
+			JOIN delivery_notes dn ON dn.id = dni.dn_id
+			LEFT JOIN LATERAL (
+				SELECT kanban_qty
+				FROM kanban_parameters
+				WHERE item_uniq_code = dni.item_uniq_code
+				ORDER BY id DESC
+				LIMIT 1
+			) kp ON TRUE
+			WHERE dni.item_uniq_code = ?
+			  AND COALESCE(dni.packing_number, '') <> ''
+			  AND NOT EXISTS (
+				SELECT 1 FROM work_order_items woi2
+				WHERE woi2.kanban_number = dni.packing_number
+			  )
+		) packing
+		ORDER BY sort_at DESC, packing_number ASC
+	`, uniqCode, uniqCode).Scan(&rows).Error
+	if err != nil {
+		return nil, apperror.Internal("inventory list packing list: " + err.Error())
+	}
+	if rows == nil {
+		rows = []InvPackingRow{}
+	}
+	return rows, nil
+}

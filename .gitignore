@@ -3,9 +3,10 @@
 .env.docker
 .env.local
 .env.*.local
+.air.*
 
 # Keep the example safe for git
-!.env.example
+.env.example
 
 # Build output
 bin/
@@ -34,3 +35,12 @@ Thumbs.db
 tmp/
 temp/
 *.log
+
+/postman
+/sample
+
+tmp_make_prl_import.go
+tmp_prl_excel_test.sh
+tmp_prl_smoke.sh
+
+.gocache

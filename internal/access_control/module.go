@@ -1,4 +1,4 @@
-package departement
+package access_control
 
 import (
 	"github.com/ganasa18/go-template/config"

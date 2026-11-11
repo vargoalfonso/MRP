@@ -2,10 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
-	"strings"
-	"time"
 
 	"github.com/ganasa18/go-template/internal/access_control/models"
 	acmRepo "github.com/ganasa18/go-template/internal/access_control/repository"
@@ -14,7 +13,8 @@ import (
 	departmentRepo "github.com/ganasa18/go-template/internal/departement/repository"
 	employeeRepo "github.com/ganasa18/go-template/internal/employee/repository"
 	roleRepo "github.com/ganasa18/go-template/internal/role/repository"
-	"golang.org/x/crypto/bcrypt"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 type IACMService interface {
@@ -50,58 +50,94 @@ func (s *service) GetByID(ctx context.Context, id int64) (*models.AccessControlM
 }
 
 func (s *service) Create(ctx context.Context, req models.CreateACMRequest) (*models.AccessControlMatrix, error) {
-	// 🔥 1. ambil role (buat dapet name)
-	role, err := s.roleRepo.FindByID(ctx, *req.RoleID)
+
+	employeeID, err := strconv.ParseInt(req.EmployeeID, 10, 64)
 	if err != nil {
-		return nil, fmt.Errorf("role not found")
+		return nil, fmt.Errorf("employee_id harus angka")
 	}
 
-	if req.EmployeeID != nil {
-		_, err := s.employeeRepo.FindByID(ctx, *req.EmployeeID)
+	roleID, err := strconv.ParseInt(req.RoleID, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("role_id harus angka")
+	}
+
+	departmentID, err := strconv.ParseInt(req.DepartmentID, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("department_id harus angka")
+	}
+
+	// ==============================
+	// 🔥 1. VALIDASI ROLE
+	// ==============================
+	role, err := s.roleRepo.FindByID(ctx, roleID)
+	if err != nil {
+		return nil, fmt.Errorf("role tidak ditemukan")
+	}
+
+	// ==============================
+	// 🔥 2. VALIDASI OPTIONAL DATA
+	// ==============================
+	if req.EmployeeID != "" {
+		_, err := s.employeeRepo.FindByID(ctx, employeeID)
 		if err != nil {
-			return nil, fmt.Errorf("employee not found")
+			return nil, fmt.Errorf("employee tidak ditemukan")
 		}
 	}
 
-	if req.DepartmentID != nil {
-		_, err := s.departmentRepo.FindByID(ctx, *req.DepartmentID)
+	if req.DepartmentID != "" {
+		_, err := s.departmentRepo.FindByID(ctx, departmentID)
 		if err != nil {
-			return nil, fmt.Errorf("department not found")
+			return nil, fmt.Errorf("department tidak ditemukan")
 		}
 	}
 
-	// 🔥 2. generate user data
-	username := generateUsername(req.FullName)
-	email := username + "@gmail.com"
-	password := "password123"
+	// ==============================
+	// 🔥 3. UPDATE ROLE KE USER (NEW LOGIC)
+	// ==============================
+	if req.EmployeeID != "" {
 
-	// 🔐 hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, err
+		user, err := s.authRepo.FindUserByEmployeeID(ctx, employeeID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+
+				employeeID := strconv.FormatInt(employeeID, 10)
+
+				newUser := &authModels.User{
+					UUID:       uuid.New().String(),
+					Username:   employeeID,
+					Email:      fmt.Sprintf("%s@local.user", employeeID),
+					Roles:      "user",
+					EmployeeID: &employeeID,
+					Provider:   "local",
+					IsVerified: true,
+				}
+
+				if err := s.authRepo.Create(ctx, newUser); err != nil {
+					return nil, err
+				}
+
+				user = newUser
+
+			} else {
+				return nil, err
+			}
+		}
+
+		// ❌ BELUM VERIFIED
+		if !user.IsVerified {
+			return nil, fmt.Errorf("user belum aktivasi akun (belum set password)")
+		}
+
+		// ✅ UPDATE ROLE
+		err = s.authRepo.UpdateUserRole(ctx, user.ID, role.Name)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	// 🔥 3. create user
-	user := authModels.User{
-		Username:   username,
-		Email:      email,
-		Password:   string(hashedPassword),
-		Roles:      role.Name,
-		EmployeeID: nil,
-	}
-
-	// kalau employee_id ada → assign
-	if req.EmployeeID != nil {
-		empIDStr := strconv.FormatInt(*req.EmployeeID, 10)
-		user.EmployeeID = &empIDStr
-	}
-
-	err = s.authRepo.Create(ctx, &user)
-	if err != nil {
-		return nil, err
-	}
-
-	// 🔥 4. create ACM
+	// ==============================
+	// 🔥 4. CREATE ACM
+	// ==============================
 	data, err := s.repo.Create(ctx, req)
 	if err != nil {
 		return nil, err
@@ -110,87 +146,115 @@ func (s *service) Create(ctx context.Context, req models.CreateACMRequest) (*mod
 	return data, nil
 }
 
-func (s *service) Update(ctx context.Context, id int64, req models.UpdateACMRequest) (*models.AccessControlMatrix, error) {
+func (s *service) Update(
+	ctx context.Context,
+	id int64,
+	req models.UpdateACMRequest,
+) (*models.AccessControlMatrix, error) {
 
-	// 🔥 1. cek ACM exist
+	// ==============================
+	// 🔥 1. CEK ACM EXIST
+	// ==============================
 	existing, err := s.repo.FindByID(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("acm not found")
+		return nil, fmt.Errorf("acm tidak ditemukan")
 	}
 
-	// 🔥 2. validasi role
-	if req.RoleID != nil {
-		_, err := s.roleRepo.FindByID(ctx, *req.RoleID)
-		if err != nil {
-			return nil, fmt.Errorf("role not found")
-		}
-	}
+	var (
+		employeeID   int64
+		roleID       int64
+		departmentID int64
+		roleName     string
+	)
 
-	// 🔥 3. validasi employee
-	if req.EmployeeID != nil {
-		_, err := s.employeeRepo.FindByID(ctx, *req.EmployeeID)
+	// ==============================
+	// 🔥 2. PARSE REQUEST STRING -> INT
+	// ==============================
+	if req.EmployeeID != "" {
+		employeeID, err = strconv.ParseInt(req.EmployeeID, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("employee not found")
-		}
-	}
-
-	// 🔥 4. validasi department
-	if req.DepartmentID != nil {
-		_, err := s.departmentRepo.FindByID(ctx, *req.DepartmentID)
-		if err != nil {
-			return nil, fmt.Errorf("department not found")
+			return nil, fmt.Errorf("employee_id harus angka")
 		}
 	}
 
-	// 🔥 6. update USER (optional sync)
-	if req.FullName != "" || req.EmployeeID != nil || req.RoleID != nil {
-
-		// 🔥 ambil data lama (untuk cari user)
-		baseUsername := generateUsername(existing.FullName)
-		baseEmail := baseUsername + "@gmail.com"
-
-		user, err := s.authRepo.FindByEmail(ctx, baseEmail)
+	if req.RoleID != "" {
+		roleID, err = strconv.ParseInt(req.RoleID, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("associated user not found")
+			return nil, fmt.Errorf("role_id harus angka")
+		}
+	}
+
+	if req.DepartmentID != "" {
+		departmentID, err = strconv.ParseInt(req.DepartmentID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("department_id harus angka")
+		}
+	}
+
+	// ==============================
+	// 🔥 3. VALIDASI ROLE
+	// ==============================
+	if req.RoleID != "" {
+		role, err := s.roleRepo.FindByID(ctx, roleID)
+		if err != nil {
+			return nil, fmt.Errorf("role tidak ditemukan")
 		}
 
-		// 🔥 update username + email (kalau fullname berubah)
-		if req.FullName != "" {
-			newUsername := generateUsername(req.FullName)
+		roleName = role.Name
+	}
 
-			// ⚠️ handle duplicate username
-			existingUser, _ := s.authRepo.FindByEmail(ctx, baseEmail)
-			if existingUser != nil && existingUser.ID != user.ID {
-				newUsername = fmt.Sprintf("%s%d", newUsername, time.Now().Unix())
-			}
-
-			user.Username = newUsername
-			user.Email = newUsername + "@gmail.com"
+	// ==============================
+	// 🔥 4. VALIDASI EMPLOYEE
+	// ==============================
+	if req.EmployeeID != "" {
+		_, err := s.employeeRepo.FindByID(ctx, employeeID)
+		if err != nil {
+			return nil, fmt.Errorf("employee tidak ditemukan")
 		}
+	}
 
-		// 🔥 update employee_id
-		if req.EmployeeID != nil {
-			empIDStr := strconv.FormatInt(*req.EmployeeID, 10)
-			user.EmployeeID = &empIDStr
+	// ==============================
+	// 🔥 5. VALIDASI DEPARTMENT
+	// ==============================
+	if req.DepartmentID != "" {
+		_, err := s.departmentRepo.FindByID(ctx, departmentID)
+		if err != nil {
+			return nil, fmt.Errorf("department tidak ditemukan")
 		}
+	}
 
-		// 🔥 update role
-		if req.RoleID != nil {
-			role, err := s.roleRepo.FindByID(ctx, *req.RoleID)
-			if err != nil {
-				return nil, fmt.Errorf("role not found")
-			}
-			user.Roles = role.Name
-		}
+	// ==============================
+	// 🔥 6. SYNC USER
+	// ==============================
+	targetEmployeeID := existing.EmployeeID
 
-		// 🔥 save
-		err = s.authRepo.Update(ctx, user.ID, user)
+	if req.EmployeeID != "" {
+		targetEmployeeID = employeeID
+	}
+
+	if req.EmployeeID != "" {
+		targetEmployeeID = employeeID
+	}
+
+	user, err := s.authRepo.FindUserByEmployeeID(ctx, targetEmployeeID)
+	if err != nil {
+		return nil, fmt.Errorf("user tidak ditemukan untuk employee ini")
+	}
+
+	if !user.IsVerified {
+		return nil, fmt.Errorf("user belum aktivasi akun")
+	}
+
+	if req.RoleID != "" {
+		err = s.authRepo.UpdateUserRole(ctx, user.ID, roleName)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	// 🔥 5. update ACM
+	// ==============================
+	// 🔥 7. UPDATE ACM
+	// ==============================
 	data, err := s.repo.Update(ctx, id, req)
 	if err != nil {
 		return nil, err
@@ -201,38 +265,32 @@ func (s *service) Update(ctx context.Context, id int64, req models.UpdateACMRequ
 
 func (s *service) Delete(ctx context.Context, id int64) error {
 
-	// 🔥 1. cek ACM exist
+	// ==============================
+	// 🔥 1. CEK ACM EXIST
+	// ==============================
 	existing, err := s.repo.FindByID(ctx, id)
 	if err != nil {
-		return fmt.Errorf("acm not found")
+		return fmt.Errorf("acm tidak ditemukan")
 	}
 
-	// 🔥 2. generate email dari fullname
-	username := generateUsername(existing.FullName)
-	email := username + "@gmail.com"
-
-	// 🔥 3. cari user
-	user, err := s.authRepo.FindByEmail(ctx, email)
-	fmt.Printf("DEBUG: Looking for user with email %s, found: %v, error: %v\n", email, user, err)
+	// ==============================
+	// 🔥 2. AMBIL USER DARI EMPLOYEE
+	// ==============================
+	user, err := s.authRepo.FindUserByEmployeeID(ctx, existing.EmployeeID)
 	if err == nil && user != nil {
 
-		// 🔥 4. delete user
-		err = s.authRepo.Delete(ctx, user.Email)
-		if err != nil {
+		// 🔥 DOWNGRADE ROLE → "user"
+		if err := s.authRepo.UpdateUserRole(ctx, user.ID, "user"); err != nil {
 			return err
 		}
 	}
 
-	// 🔥 5. delete ACM
-	err = s.repo.Delete(ctx, id)
-	if err != nil {
+	// ==============================
+	// 🔥 3. DELETE ACM
+	// ==============================
+	if err := s.repo.Delete(ctx, id); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-func generateUsername(fullName string) string {
-	// hapus spasi + lowercase
-	return strings.ToLower(strings.ReplaceAll(fullName, " ", ""))
 }

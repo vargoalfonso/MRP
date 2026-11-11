@@ -1,0 +1,81 @@
+package models
+
+// CreateWorkOrderRequest is the body for POST /api/v1/working-order/work-orders.
+type CreateWorkOrderRequest struct {
+	// Optional: allow FE to reuse preview wo_id.
+	WOID        *string               `json:"wo_id"`
+	WOType      string                `json:"wo_type" validate:"required,oneof=New Assembly Rework Addendum"`
+	ReferenceWO *string               `json:"reference_wo"`
+	CreatedDate *string               `json:"created_date"` // YYYY-MM-DD (optional)
+	TargetDate  *string               `json:"target_date"`  // YYYY-MM-DD
+	Items       []CreateWorkOrderItem `json:"items" validate:"required,min=1,dive"`
+	Notes       *string               `json:"notes"`
+	// [wo-estimated-time] Estimasi waktu produksi dalam menit (dihitung di FE
+	// dari qty x cycle_time_min + setup/dandori saat UNIQ berubah).
+	EstimatedTimeMinutes *float64 `json:"estimated_time_minutes"`
+	CycleTimeMin         *float64 `json:"cycle_time_min"`
+	SetupTimeMin         *float64 `json:"setup_time_min"`
+	MachineCapacity      *float64 `json:"machine_capacity"`
+
+	// Optional service-to-service metadata. Robot Automation sends these fields
+	// when it creates a WO; browser-created WOs omit them and remain manual.
+	SourceSystem    *string `json:"source_system" validate:"omitempty,oneof=manual robot_automation"`
+	AutomationJobID *string `json:"automation_job_id"`
+	RobotName       *string `json:"robot_name"`
+}
+
+type CreateWorkOrderItem struct {
+	ItemUniqCode string  `json:"item_uniq_code" validate:"required"`
+	Quantity     float64 `json:"quantity" validate:"required,gt=0"`
+	UOM          *string `json:"uom"`
+	ProcessName  *string `json:"process_name"`
+	KanbanQty    int     `json:"kanban_qty"` // pcs per kanban/batch; if 0, auto from kanban_parameters
+}
+
+type CreateBulkWorkOrderRequest struct {
+	SourceDocumentID   string                    `json:"source_document_id" validate:"required"`
+	SourceDocumentType string                    `json:"source_document_type" validate:"required,oneof=SO PO DN PRL"`
+	WOType             string                    `json:"wo_type" validate:"required,oneof=New Assembly Rework Addendum"`
+	CreatedDate        *string                   `json:"created_date"`
+	TargetDate         *string                   `json:"target_date"`
+	Items              []CreateBulkWorkOrderItem `json:"items" validate:"required,min=1,dive"`
+	Notes              *string                   `json:"notes"`
+}
+
+type CreateBulkWorkOrderItem struct {
+	SourceLineID string  `json:"source_line_id" validate:"required"`
+	ItemUniqCode string  `json:"item_uniq_code" validate:"required"`
+	Quantity     float64 `json:"quantity" validate:"required,gt=0"`
+	UOM          *string `json:"uom"`
+	ProcessName  *string `json:"process_name"`
+	KanbanQty    int     `json:"kanban_qty"`
+	TargetDate   *string `json:"target_date"`
+}
+
+// WorkOrderApprovalRequest is the body for POST /api/v1/working-order/work-orders/:id/approval.
+type WorkOrderApprovalRequest struct {
+	Decision string  `json:"decision" validate:"required,oneof=approve reject"`
+	Notes    *string `json:"notes"`
+}
+
+// BulkWorkOrderApprovalRequest is the body for POST /api/v1/working-order/work-orders/bulk-approval.
+type BulkWorkOrderApprovalRequest struct {
+	Decision  string   `json:"decision" validate:"required,oneof=approve reject"`
+	WONumbers []string `json:"wo_numbers" validate:"required,min=1"`
+	Notes     *string  `json:"notes"`
+}
+
+// CreateRMProcessingWorkOrderRequest is the body for POST /api/v1/working-order/rm-processing/work-orders.
+type CreateRMProcessingWorkOrderRequest struct {
+	SourceMaterialUniq string  `json:"source_material_uniq" validate:"required"`
+	TargetMaterialUniq string  `json:"target_material_uniq" validate:"required"`
+	Model              *string `json:"model"`
+	GradeSize          *string `json:"grade_size"`
+	InputQty           float64 `json:"input_qty" validate:"required,gt=0"`
+	InputUOM           string  `json:"input_uom"`
+	OutputQty          float64 `json:"output_qty" validate:"required,gt=0"`
+	OutputUOM          string  `json:"output_uom" validate:"required"`
+	PreProcessing      bool    `json:"pre_processing"`
+	DateIssued         *string `json:"date_issued"`
+	Remarks            *string `json:"remarks"`
+}

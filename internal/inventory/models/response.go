@@ -1,0 +1,265 @@
+package models
+
+import "time"
+
+// ---------------------------------------------------------------------------
+// Shared
+// ---------------------------------------------------------------------------
+
+// KanbanSummary is returned by GET /api/v1/inventory/kanban-summary?uniq_code=X
+// Frontend calls this per-row asynchronously to show kanban progress and stock status per item.
+type KanbanSummary struct {
+	UniqCode string `json:"uniq_code"`
+
+	// Stock expressed in kanban units
+	StockQty    float64 `json:"stock_qty"`    // raw stock qty in UoM
+	TotalKanban int64   `json:"total_kanban"` // floor(stock_qty / kanban_pkg_qty)
+
+	// How many more kanbans must be ordered to reach safety stock
+	KanbansNeeded   int64   `json:"kanbans_needed"`    // ceil(deficit / kanban_pkg_qty), 0 if no deficit
+	StockToComplete float64 `json:"stock_to_complete"` // kanbans_needed × kanban_pkg_qty (pcs)
+	KanbanPkgQty    int     `json:"kanban_pkg_qty"`    // pcs per kanban/package
+
+	// Safety stock threshold (computed from parameter or stored value)
+	SafetyStockQty float64 `json:"safety_stock_qty"`
+
+	// Status & buy recommendation
+	Status    string `json:"status"`      // low_on_stock | normal | overstock
+	BuyNotBuy string `json:"buy_not_buy"` // buy | not_buy | n/a
+	StockDays *int   `json:"stock_days"`  // floor(stock_qty / effective_daily_usage)
+
+	// Calculation context — shows exactly which values were used so behaviour is transparent.
+	CalcContext KanbanCalcContext `json:"calc_context"`
+}
+
+// KanbanCalcContext carries the intermediate values used to produce the KanbanSummary.
+// Useful for debugging parameter changes without having to query multiple tables manually.
+type KanbanCalcContext struct {
+	// Active period from global_parameters (was ForecastPeriod in the old design).
+	ForecastPeriod       string  `json:"forecast_period"`        // active_periode used for demand lookup
+	WorkingDays          int     `json:"working_days"`           // resolved working_days (after fallback)
+	PRLTotal             float64 `json:"prl_total"`              // equals total_demand_sum (PRL + PO customer)
+	PRLFromCache         bool    `json:"prl_from_cache"`         // true = read from inventory_demand_periode_summaries
+	BaseDailyUsage       float64 `json:"base_daily_usage"`       // total_demand_sum / working_days
+	StockdaysCalcType    string  `json:"stockdays_calc_type"`    // normalised calculation_type from stockdays_parameters
+	StockdaysConstanta   float64 `json:"stockdays_constanta"`    // constanta from stockdays_parameters (0 = not set)
+	EffectiveDailyUsage  float64 `json:"effective_daily_usage"`  // derived from base_daily_usage × stockdays param
+	SafetyStockCalcType  string  `json:"safety_stock_calc_type"` // normalised calculation_type from safety_stock_parameters
+	SafetyStockConstanta float64 `json:"safety_stock_constanta"` // constanta from safety_stock_parameters (0 = not set)
+	StockDaysRaw         float64 `json:"stock_days_raw"`         // stock_qty / effective_daily_usage before floor()
+
+	// Demand breakdown (new — non-breaking additions).
+	ActivePeriode          string   `json:"active_periode"`            // global active period
+	SnapshotDate           string   `json:"snapshot_date,omitempty"`   // date of the demand snapshot used
+	WorkingDaysPeriodeUsed string   `json:"working_days_periode_used"` // period that provided working_days (after fallback)
+	PRLSum                 float64  `json:"prl_sum"`                   // PRL demand for active_periode
+	POCustomerSum          float64  `json:"po_customer_sum"`           // PO customer demand for active_periode
+	TotalDemandSum         float64  `json:"total_demand_sum"`          // PRLSum + POCustomerSum
+	CyclePengiriman        int      `json:"cycle_pengiriman"`          // from supplier_item.customer_cycle
+	Threshold              float64  `json:"threshold"`                 // safety_stock_qty × cycle_pengiriman
+	Warnings               []string `json:"warnings,omitempty"`        // non-empty when a calc_type is not yet implemented
+}
+
+type InventoryPagination struct {
+	Total      int64 `json:"total"`
+	Page       int   `json:"page"`
+	Limit      int   `json:"limit"`
+	TotalPages int   `json:"total_pages"`
+}
+
+type InventoryStats struct {
+	TotalItems         int64 `json:"total_items"`
+	BuyRecommendations int64 `json:"buy_recommendations"`
+	LowStockItems      int64 `json:"low_stock_items"`
+}
+
+// ---------------------------------------------------------------------------
+// Raw Material
+// ---------------------------------------------------------------------------
+
+type RawMaterialItem struct {
+	ID                    int64     `json:"id"`
+	RawMaterialMasterID   *int64    `json:"raw_material_master_id"`
+	UniqCode              string    `json:"uniq_code"`
+	PartNumber            *string   `json:"part_number"`
+	PartName              *string   `json:"part_name"`
+	RawMaterialType       string    `json:"raw_material_type"`
+	RMSource              string    `json:"rm_source"`
+	WarehouseLocation     *string   `json:"warehouse_location"`
+	UOM                   *string   `json:"uom"`
+	StockQty              float64   `json:"stock_qty"`
+	StockWeightKg         *float64  `json:"stock_weight_kg"`
+	KanbanCount           *int      `json:"kanban_count"`
+	KanbanStandardQty     *int      `json:"kanban_standard_qty"`
+	SafetyStockQty        *float64  `json:"safety_stock_qty"`
+	DailyUsageQty         *float64  `json:"daily_usage_qty"`
+	Status                string    `json:"status"`
+	StockDays             *int      `json:"stock_days"`
+	BuyNotBuy             string    `json:"buy_not_buy"`
+	StockToCompleteKanban *float64  `json:"stock_to_complete_kanban"`
+	CreatedBy             *string   `json:"created_by"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedBy             *string   `json:"updated_by"`
+	UpdatedAt             time.Time `json:"updated_at"`
+	QR                    *string   `json:"qr"`
+	Model                 *string   `json:"model"`
+	Grade                 *string   `json:"material_grade"`
+	MaterialCode          *string   `json:"material_code"`
+	// ItemUniqCode terisi kalau uniq ini ada di master item/BOM (items.uniq_code).
+	ItemUniqCode *string `json:"item_uniq_code"`
+}
+
+type RawMaterialListResponse struct {
+	Stats      InventoryStats      `json:"stats"`
+	Items      []RawMaterialItem   `json:"items"`
+	Pagination InventoryPagination `json:"pagination"`
+}
+
+// ---------------------------------------------------------------------------
+// Indirect Raw Material
+// ---------------------------------------------------------------------------
+
+type IndirectMaterialItem struct {
+	ID                    int64     `json:"id"`
+	UniqCode              string    `json:"uniq_code"`
+	PartNumber            *string   `json:"part_number"`
+	PartName              *string   `json:"part_name"`
+	WarehouseLocation     *string   `json:"warehouse_location"`
+	UOM                   *string   `json:"uom"`
+	StockQty              float64   `json:"stock_qty"`
+	StockWeightKg         *float64  `json:"stock_weight_kg"`
+	KanbanCount           *int      `json:"kanban_count"`
+	KanbanStandardQty     *int      `json:"kanban_standard_qty"`
+	SafetyStockQty        *float64  `json:"safety_stock_qty"`
+	DailyUsageQty         *float64  `json:"daily_usage_qty"`
+	Status                *string   `json:"status"`
+	StockDays             *int      `json:"stock_days"`
+	BuyNotBuy             string    `json:"buy_not_buy"`
+	StockToCompleteKanban *float64  `json:"stock_to_complete_kanban"`
+	CreatedBy             *string   `json:"created_by"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedBy             *string   `json:"updated_by"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+type IndirectMaterialListResponse struct {
+	Stats      InventoryStats         `json:"stats"`
+	Items      []IndirectMaterialItem `json:"items"`
+	Pagination InventoryPagination    `json:"pagination"`
+}
+
+// ---------------------------------------------------------------------------
+// Subcon Inventory
+// ---------------------------------------------------------------------------
+
+type SubconInventoryItem struct {
+	ID               int64      `json:"id"`
+	UniqCode         string     `json:"uniq_code"`
+	PartNumber       *string    `json:"part_number"`
+	PartName         *string    `json:"part_name"`
+	PONumber         *string    `json:"po_number"`
+	POPeriod         *string    `json:"po_period"`
+	SubconVendorID   *int64     `json:"subcon_vendor_id"`
+	SubconVendorName *string    `json:"subcon_vendor_name"`
+	StockAtVendorQty float64    `json:"stock_at_vendor_qty"`
+	TotalPOQty       *float64   `json:"total_po_qty"`
+	TotalReceivedQty *float64   `json:"total_received_qty"`
+	DeltaPO          *float64   `json:"delta_po"`
+	SafetyStockQty   *float64   `json:"safety_stock_qty"`
+	DateDelivery     *time.Time `json:"date_delivery"`
+	Status           string     `json:"status"`
+	ApprovalStatus   string     `json:"approval_status"`
+	ApprovedBy       *string    `json:"approved_by"`
+	ApprovedAt       *time.Time `json:"approved_at"`
+	SourceType       *string    `json:"source_type"`
+	SourceRef        *string    `json:"source_ref"`
+	CreatedBy        *string    `json:"created_by"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedBy        *string    `json:"updated_by"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+type SubconInventoryListResponse struct {
+	Items      []SubconInventoryItem `json:"items"`
+	Pagination InventoryPagination   `json:"pagination"`
+}
+
+// ---------------------------------------------------------------------------
+// Movement History Log
+// ---------------------------------------------------------------------------
+
+type HistoryLogItem struct {
+	ID            int64     `json:"id"`
+	UniqCode      string    `json:"uniq_code"`
+	KanbanPacking *string   `json:"kanban_packing"` // dn_number
+	QtyChange     float64   `json:"qty_change"`
+	WeightChange  *float64  `json:"weight_change"`
+	MovementType  string    `json:"movement_type"`
+	Reason        string    `json:"reason"`     // human-readable source_flag
+	LogStatus     string    `json:"log_status"` // confirmed | pending | in_progress | rejected
+	Notes         *string   `json:"notes"`
+	LoggedBy      *string   `json:"logged_by"`
+	LoggedAt      time.Time `json:"logged_at"`
+}
+
+type HistoryLogResponse struct {
+	Items      []HistoryLogItem    `json:"items"`
+	Pagination InventoryPagination `json:"pagination"`
+}
+
+// ---------------------------------------------------------------------------
+// Incoming Scans (tab view)
+// ---------------------------------------------------------------------------
+
+type IncomingItem struct {
+	ScanID       int64     `json:"scan_id"`
+	UniqCode     string    `json:"uniq_code"`
+	IncomingQty  float64   `json:"incoming_qty"`
+	Warehouse    *string   `json:"warehouse"`
+	ScanDate     time.Time `json:"scan_date"`
+	SupplierName *string   `json:"supplier_name"`
+	PONumber     *string   `json:"po_number"`
+	DNNumber     string    `json:"dn_number"`
+	// [subcon-dnlog] arah pergerakan DN Subcon (SUBCON-OUT / SUBCON-IN)
+	ScanRef         string  `json:"scan_ref"`
+	QCStatus        string  `json:"qc_status"`         // pending | in_progress | approved | rejected
+	QCStatusDisplay string  `json:"qc_status_display"` // Pending Approval | Received | Rejected
+	UOM             *string `json:"uom"`
+	DNType          string  `json:"dn_type"`
+}
+
+type IncomingListResponse struct {
+	Items      []IncomingItem      `json:"items"`
+	Pagination InventoryPagination `json:"pagination"`
+}
+
+// ---------------------------------------------------------------------------
+// Packing List (raw material & indirect raw material detail)
+// ---------------------------------------------------------------------------
+
+// InvPackingListItem is one packing/kanban row for an inventory item. Rows are
+// resolved from the work order barcode (work_order_items.kanban_number) and
+// enriched with the delivery note that carries the same packing number.
+type InvPackingListItem struct {
+	DNNumber      *string `json:"dn_number"`
+	PackingNumber string  `json:"packing_number"`
+	Quantity      float64 `json:"quantity"`    // qty planned on the packing
+	QtyCurrent    float64 `json:"qty_current"` // qty saat ini (scan / opname result)
+	QtyMax        float64 `json:"qty_max"`     // qty maksimal (kanban standard)
+	Progress      int     `json:"progress"`    // 0-100, qty_current / qty_max
+	Status        *string `json:"status"`
+	WONumber      *string `json:"wo_number"`
+	Source        string  `json:"source"` // work_order | delivery_note
+}
+
+// InvPackingListResponse is returned by:
+//
+//	GET /api/v1/inventory/raw-materials/packing-list?uniq_code=
+//	GET /api/v1/inventory/indirect-materials/packing-list?uniq_code=
+type InvPackingListResponse struct {
+	UniqCode        string               `json:"uniq_code"`
+	Items           []InvPackingListItem `json:"items"`
+	TotalPacking    int                  `json:"total_packing"`
+	TotalQtyCurrent float64              `json:"total_qty_current"`
+	TotalQtyMax     float64              `json:"total_qty_max"`
+}

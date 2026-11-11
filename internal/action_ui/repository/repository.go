@@ -1,0 +1,412 @@
+package repository
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/ganasa18/go-template/internal/action_ui/models"
+	invModels "github.com/ganasa18/go-template/internal/inventory/models"
+	procModels "github.com/ganasa18/go-template/internal/procurement/models"
+	qcModels "github.com/ganasa18/go-template/internal/qc/models"
+	"github.com/ganasa18/go-template/pkg/apperror"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+type IRepository interface {
+	// LookupByPackingNumber resolves packing_number → DN context for UI auto-fill.
+	// Called when QR is scanned, before the operator fills qty/weight.
+	LookupByPackingNumber(ctx context.Context, packingNumber, itemUniqCode string) (*models.IncomingScanDNItem, error)
+
+	// CreateIncomingScan processes the scan submission. Resolves dn_item internally
+	// by packing_number + item_uniq_code — caller does not need bigint IDs.
+	CreateIncomingScan(ctx context.Context, req models.IncomingScanRequest, scannedBy string) (*models.IncomingScanResponse, bool, error)
+}
+
+type repo struct {
+	db *gorm.DB
+}
+
+func New(db *gorm.DB) IRepository {
+	return &repo{db: db}
+}
+
+// LookupByPackingNumber finds a delivery_note_item by its packing_number column (unique per item)
+// and returns full DN context (po_number, supplier, dn_type, dn_number) for UI auto-fill.
+func (r *repo) LookupByPackingNumber(ctx context.Context, packingNumber, itemUniqCode string) (*models.IncomingScanDNItem, error) {
+	if strings.TrimSpace(packingNumber) == "" {
+		return nil, fmt.Errorf("packing_number is required")
+	}
+
+	var dnItem procModels.IncomingDNItem
+	if err := r.db.WithContext(ctx).
+		Where("packing_number = ?", packingNumber).
+		First(&dnItem).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, apperror.NotFound("packing_number tidak ditemukan")
+		}
+		return nil, fmt.Errorf("lookup packing_number: %w", err)
+	}
+
+	return r.buildIncomingScanDNItem(ctx, r.db.WithContext(ctx), dnItem)
+}
+
+func (r *repo) CreateIncomingScan(ctx context.Context, req models.IncomingScanRequest, scannedBy string) (*models.IncomingScanResponse, bool, error) {
+	scannedBy = normalizeActor(scannedBy)
+
+	if req.DeltaQty <= 0 {
+		return nil, false, fmt.Errorf("delta_qty must be > 0")
+	}
+
+	// Idempotency: if the client_event_id already exists, return the existing state.
+	var existingScan models.IncomingReceivingScan
+	if err := r.db.WithContext(ctx).
+		Where("idempotency_key = ?", req.ClientEventID).
+		Limit(1).
+		Find(&existingScan).Error; err != nil {
+		return nil, false, fmt.Errorf("check idempotency: %w", err)
+	}
+	if existingScan.ID != 0 {
+		// Reload DN item from existing scan FK
+		var dnItem procModels.IncomingDNItem
+		if err := r.db.WithContext(ctx).First(&dnItem, "id = ?", existingScan.IncomingDNItemID).Error; err != nil {
+			return nil, true, fmt.Errorf("load dn item: %w", err)
+		}
+		qcID, err := r.getOrCreateIncomingQCTask(ctx, dnItem.ID)
+		if err != nil {
+			return nil, true, err
+		}
+		dnItemResp, _ := r.buildIncomingScanDNItem(ctx, r.db.WithContext(ctx), dnItem)
+		return &models.IncomingScanResponse{QCTaskID: qcID, DNItem: *dnItemResp}, true, nil
+	}
+
+	// Resolve delivery_note_item by packing_number (unique per item)
+	var resolvedItem procModels.IncomingDNItem
+	if err := r.db.WithContext(ctx).
+		Where("packing_number = ?", req.PackingNumber).
+		First(&resolvedItem).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, false, apperror.NotFound(fmt.Sprintf("packing_number '%s' tidak ditemukan", req.PackingNumber))
+		}
+		return nil, false, fmt.Errorf("lookup dn item: %w", err)
+	}
+
+	var out *models.IncomingScanResponse
+	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var dnItem procModels.IncomingDNItem
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&dnItem, "id = ?", resolvedItem.ID).Error; err != nil {
+			return fmt.Errorf("lock dn item: %w", err)
+		}
+
+		var totalReturned float64
+		tx.Table("qc_logs").
+			Where("dn_item_id = ? AND UPPER(status) = ?", dnItem.ID, "REJECTED").
+			Select("COALESCE(SUM(qty_checked), 0)").Scan(&totalReturned)
+
+		// Removed strict package limit check to allow partial receive up to PO total using the same barcode.
+
+		var totalPoReceived float64
+		if err := tx.Table("delivery_note_items idi").
+			Joins("JOIN delivery_notes dn ON dn.id = idi.dn_id").
+			Where("dn.po_number = (SELECT po_number FROM delivery_notes WHERE id = ?) AND idi.item_uniq_code = ?", dnItem.IncomingDNID, dnItem.ItemUniqCode).
+			Select("COALESCE(SUM(idi.qty_received), 0)").
+			Scan(&totalPoReceived).Error; err != nil {
+			return fmt.Errorf("calculate total po received: %w", err)
+		}
+
+		var poReturned float64
+		tx.Table("qc_logs ql").
+			Joins("JOIN delivery_note_items idi ON idi.id = ql.dn_item_id").
+			Joins("JOIN delivery_notes dn ON dn.id = idi.dn_id").
+			Where("dn.po_number = (SELECT po_number FROM delivery_notes WHERE id = ?) AND idi.item_uniq_code = ? AND UPPER(ql.status) = ?", dnItem.IncomingDNID, dnItem.ItemUniqCode, "REJECTED").
+			Select("COALESCE(SUM(ql.qty_checked), 0)").Scan(&poReturned)
+
+		var poQty float64
+		tx.Table("purchase_order_items").
+			Joins("JOIN purchase_orders po ON po.po_id = purchase_order_items.po_id").
+			Where("po.po_number = (SELECT po_number FROM delivery_notes WHERE id = ?) AND purchase_order_items.item_uniq_code = ?", dnItem.IncomingDNID, dnItem.ItemUniqCode).
+			Select("COALESCE(SUM(purchase_order_items.ordered_qty), 0)").Scan(&poQty)
+		
+		if poQty <= 0 {
+			poQty = float64(dnItem.OrderQty)
+		}
+		if poQty <= 0 {
+			poQty = float64(dnItem.Quantity)
+		}
+		if poQty <= 0 {
+			var totalPoQty *int
+			tx.Table("delivery_notes").Where("id = ?", dnItem.IncomingDNID).Select("total_po_qty").Scan(&totalPoQty)
+			if totalPoQty != nil {
+				poQty = float64(*totalPoQty)
+			}
+		}
+
+		effectivePoReceived := totalPoReceived - poReturned
+		if float64(req.DeltaQty)+effectivePoReceived > poQty {
+			return apperror.UnprocessableEntity(fmt.Sprintf("Jumlah yang diterima (%.0f) akan melebihi TOTAL PO (%.0f) untuk item %s", float64(req.DeltaQty)+effectivePoReceived, poQty, dnItem.ItemUniqCode))
+		}
+
+		// Insert receiving scan (append-only)
+		idk := req.ClientEventID
+		scan := models.IncomingReceivingScan{
+			IncomingDNItemID:  dnItem.ID,
+			IdempotencyKey:    &idk,
+			ScanRef:           req.PackingNumber,
+			Qty:               float64(req.DeltaQty),
+			WeightKg:          req.DeltaWeightKg,
+			WarehouseLocation: req.WarehouseLocation,
+			ScannedAt:         time.Now(),
+			ScannedBy:         &scannedBy,
+		}
+		if err := tx.Create(&scan).Error; err != nil {
+			return fmt.Errorf("insert incoming_receiving_scans: %w", err)
+		}
+
+		// Update aggregate on DN item
+		updates := map[string]interface{}{
+			"qty_received": gorm.Expr("COALESCE(qty_received, 0) + ?", req.DeltaQty),
+			"received_at":  time.Now(),
+			"uom":          req.UOM,
+		}
+		if req.DeltaWeightKg != nil {
+			updates["weight_received"] = gorm.Expr("COALESCE(weight_received, 0) + ?", *req.DeltaWeightKg)
+		}
+		if err := tx.Model(&procModels.IncomingDNItem{}).
+			Where("id = ?", dnItem.ID).
+			Updates(updates).Error; err != nil {
+			return fmt.Errorf("update delivery_note_items: %w", err)
+		}
+
+		// Reload updated dn item
+		if err := tx.First(&dnItem, "id = ?", dnItem.ID).Error; err != nil {
+			return fmt.Errorf("reload dn item: %w", err)
+		}
+
+		qcID, err := r.getOrCreateIncomingQCTaskTx(ctx, tx, dnItem.ID)
+		if err != nil {
+			return err
+		}
+
+		// NOTE: history log intentionally NOT written at submit-to-QC time.
+		// The raw-material history log is created only when QC Incoming is approved
+		// (see qc/repository upsertRawMaterial, source_flag=qc_approve).
+		// Scan audit trail is still preserved in incoming_receiving_scans.
+
+		dnItemResp, err := r.buildIncomingScanDNItem(ctx, tx, dnItem)
+		if err != nil {
+			pn := req.PackingNumber
+			orderedQty := dnItem.OrderQty
+			if orderedQty <= 0 {
+				orderedQty = dnItem.Quantity
+			}
+			dnItemResp = &models.IncomingScanDNItem{
+				ID:             dnItem.ID,
+				ItemUniqCode:   dnItem.ItemUniqCode,
+				PackingNumber:  &pn,
+				QtyOrdered:     orderedQty,
+				QtyReceived:    dnItem.QtyReceived,
+				QtyRemaining:   orderedQty - dnItem.QtyReceived,
+				WeightKg:       dnItem.Weight,
+				WeightReceived: dnItem.WeightReceived,
+				QualityStatus:  dnItem.QualityStatus,
+				ReceivedAt:     dnItem.ReceivedAt,
+				UOM:            dnItem.Uom,
+			}
+		}
+
+		out = &models.IncomingScanResponse{
+			QCTaskID: qcID,
+			DNItem:   *dnItemResp,
+		}
+		return nil
+	}); err != nil {
+		return nil, false, err
+	}
+
+	return out, false, nil
+}
+
+func (r *repo) getOrCreateIncomingQCTask(ctx context.Context, dnItemID int64) (int64, error) {
+	return r.getOrCreateIncomingQCTaskTx(ctx, r.db.WithContext(ctx), dnItemID)
+}
+
+func (r *repo) getOrCreateIncomingQCTaskTx(ctx context.Context, tx *gorm.DB, dnItemID int64) (int64, error) {
+	var task qcModels.QCTask
+	// Only reuse an open (non-terminal) task — if the previous one was approved/rejected, create a new one.
+	if err := tx.Where("task_type = ? AND incoming_dn_item_id = ? AND status IN ?", "incoming_qc", dnItemID, []string{"pending", "in_progress"}).
+		Order("id DESC").Limit(1).Find(&task).Error; err != nil {
+		return 0, fmt.Errorf("load qc task: %w", err)
+	}
+	if task.ID != 0 {
+		return task.ID, nil
+	}
+
+	// Determine next round number — max existing round + 1
+	var maxRound int
+	tx.Table("qc_tasks").
+		Where("task_type = ? AND incoming_dn_item_id = ?", "incoming_qc", dnItemID).
+		Select("COALESCE(MAX(round), 0)").
+		Scan(&maxRound)
+
+	newTask := qcModels.QCTask{
+		TaskType:         "incoming_qc",
+		Status:           "pending",
+		IncomingDNItemID: &dnItemID,
+		Round:            maxRound + 1,
+		RoundResults:     qcModels.EmptyJSONArray(),
+	}
+	if err := tx.Create(&newTask).Error; err != nil {
+		return 0, fmt.Errorf("create qc task: %w", err)
+	}
+	if newTask.ID == 0 {
+		return 0, errors.New("failed to create qc task")
+	}
+	return newTask.ID, nil
+}
+
+// buildIncomingScanDNItem constructs IncomingScanDNItem with PO, supplier, and DN type context.
+func (r *repo) buildIncomingScanDNItem(ctx context.Context, tx *gorm.DB, dnItem procModels.IncomingDNItem) (*models.IncomingScanDNItem, error) {
+	var dn procModels.IncomingDN
+	if err := tx.WithContext(ctx).First(&dn, "id = ?", dnItem.IncomingDNID).Error; err != nil {
+		return nil, err
+	}
+
+	var poQty float64
+	tx.Table("purchase_order_items").
+		Joins("JOIN purchase_orders po ON po.po_id = purchase_order_items.po_id").
+		Where("po.po_number = ? AND purchase_order_items.item_uniq_code = ?", dn.PoNumber, dnItem.ItemUniqCode).
+		Select("COALESCE(SUM(purchase_order_items.ordered_qty), 0)").Scan(&poQty)
+
+	orderedQty := int(poQty)
+	if orderedQty <= 0 {
+		orderedQty = dnItem.OrderQty
+	}
+	if orderedQty <= 0 {
+		orderedQty = dnItem.Quantity
+	}
+	
+	if dn.TotalPoQty != nil {
+		if orderedQty <= 0 {
+			orderedQty = *dn.TotalPoQty
+		}
+	}
+
+	var totalPoReceived float64
+	tx.Table("delivery_note_items idi").
+		Joins("JOIN delivery_notes dn ON dn.id = idi.dn_id").
+		Where("dn.po_number = ? AND idi.item_uniq_code = ?", dn.PoNumber, dnItem.ItemUniqCode).
+		Select("COALESCE(SUM(idi.qty_received), 0)").
+		Scan(&totalPoReceived)
+
+	var poReturned float64
+	tx.Table("qc_logs ql").
+		Joins("JOIN delivery_note_items idi ON idi.id = ql.dn_item_id").
+		Joins("JOIN delivery_notes dn ON dn.id = idi.dn_id").
+		Where("dn.po_number = ? AND idi.item_uniq_code = ? AND UPPER(ql.status) = ?", dn.PoNumber, dnItem.ItemUniqCode, "REJECTED").
+		Select("COALESCE(SUM(ql.qty_checked), 0)").Scan(&poReturned)
+
+	effectivePoReceived := int(totalPoReceived - poReturned)
+
+	resp := &models.IncomingScanDNItem{
+		ID:             dnItem.ID,
+		ItemUniqCode:   dnItem.ItemUniqCode,
+		PackingNumber:  dnItem.PackingNumber,
+		QtyOrdered:     orderedQty,
+		QtyReceived:    effectivePoReceived,
+		QtyRemaining:   orderedQty - effectivePoReceived,
+		WeightKg:       dnItem.Weight,
+		WeightReceived: dnItem.WeightReceived,
+		QualityStatus:  dnItem.QualityStatus,
+		ReceivedAt:     dnItem.ReceivedAt,
+		UOM:            dnItem.Uom,
+	}
+
+	resp.PoNumber = &dn.PoNumber
+	resp.DnNumber = &dn.DnNumber
+	// PackingNumber already populated from dnItem.PackingNumber (the actual DB column on delivery_note_items)
+	dnTypeLabel := mapDnTypeLabel(dn.DnType)
+	resp.RawMaterialType = &dnTypeLabel
+
+	supplierID := dn.SupplierID
+	if supplierID == nil && dn.PoNumber != "" {
+		// Fallback: delivery_notes.supplier_id may be unset for older DNs — resolve via PO.
+		var po procModels.PurchaseOrder
+		if err := tx.WithContext(ctx).Select("supplier_id").Where("po_number = ?", dn.PoNumber).First(&po).Error; err == nil {
+			supplierID = po.SupplierID
+		}
+	}
+	if supplierID != nil {
+		var name string
+		tx.WithContext(ctx).Table("suppliers").Select("supplier_name").Where("id = ?", *supplierID).Scan(&name)
+		if name != "" {
+			resp.SupplierName = &name
+		}
+	}
+
+	return resp, nil
+}
+
+// mapDnTypeLabel converts DB type codes (RM, INDIRECT, SUBCON) to UI-friendly labels.
+func mapDnTypeLabel(dnType string) string {
+	switch strings.ToUpper(strings.TrimSpace(dnType)) {
+	case "RM":
+		return "raw_material"
+	case "IB":
+		return "indirect"
+	case "SC":
+		return "subcon"
+	default:
+		return dnType
+	}
+}
+
+func normalizeActor(actor string) string {
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		return "system"
+	}
+	return actor
+}
+
+// writeScanMovementLogTx inserts an inventory_movement_logs entry (source_flag=incoming_scan)
+// when a scan is submitted. This records the scan audit trail before QC approval.
+func (r *repo) writeScanMovementLogTx(tx *gorm.DB, dnItem procModels.IncomingDNItem, req models.IncomingScanRequest, scannedBy string) error {
+	var dn procModels.IncomingDN
+	if err := tx.First(&dn, "id = ?", dnItem.IncomingDNID).Error; err != nil {
+		// Non-fatal: if DN tidak ditemukan just skip the log
+		return nil
+	}
+	movCat := dnTypeToMovementCategory(dn.DnType)
+	if movCat == "" {
+		return nil
+	}
+	sf := "incoming_scan"
+	lb := scannedBy
+	return tx.Create(&invModels.InventoryMovementLog{
+		MovementCategory: movCat,
+		MovementType:     "incoming",
+		UniqCode:         dnItem.ItemUniqCode,
+		QtyChange:        float64(req.DeltaQty),
+		WeightChange:     req.DeltaWeightKg,
+		SourceFlag:       &sf,
+		DNNumber:         &dn.DnNumber,
+		LoggedBy:         &lb,
+		LoggedAt:         time.Now(),
+	}).Error
+}
+
+// dnTypeToMovementCategory maps delivery_notes.type to inventory_movement_logs.movement_category.
+func dnTypeToMovementCategory(dnType string) string {
+	switch strings.ToUpper(strings.TrimSpace(dnType)) {
+	case "RM", "RAW MATERIAL", "RAW_MATERIAL":
+		return "raw_material"
+	case "IB", "INDIRECT", "INDIRECT RAW MATERIAL", "INDIRECT_RAW_MATERIAL":
+		return "indirect_raw_material"
+	case "SC", "SUBCON":
+		return "subcon"
+	}
+	return ""
+}

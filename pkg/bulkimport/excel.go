@@ -1,0 +1,485 @@
+package bulkimport
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/xuri/excelize/v2"
+)
+
+// SheetDef describes a single sheet to include in the error Excel file.
+type SheetDef struct {
+	Name    string
+	Headers []string // column headers starting from col B (col A is reserved for error_field)
+}
+
+// GenerateErrorExcel builds an Excel workbook that contains only the failed rows.
+// The first column (A) is always "error_field" and is filled with the error
+// message for each row. Subsequent columns reproduce the original row data.
+//
+// errors must be pre-grouped: every RowError whose Sheet matches a SheetDef.Name
+// is written into that sheet.
+func GenerateErrorExcel(sheets []SheetDef, errors []RowError) (*excelize.File, error) {
+	f := excelize.NewFile()
+
+	// Track row counters per sheet (data starts at row 2, row 1 = header)
+	rowCounters := make(map[string]int)
+
+	// Create sheets and write headers
+	for i, sd := range sheets {
+		if i == 0 {
+			f.SetSheetName("Sheet1", sd.Name)
+		} else {
+			f.NewSheet(sd.Name)
+		}
+		rowCounters[sd.Name] = 2 // data starts at row 2
+
+		// Write header row
+		if err := f.SetCellValue(sd.Name, "A1", "error_field"); err != nil {
+			return nil, fmt.Errorf("write header A1 on %s: %w", sd.Name, err)
+		}
+		for colIdx, header := range sd.Headers {
+			cell, _ := excelize.CoordinatesToCellName(colIdx+2, 1) // B, C, D …
+			if err := f.SetCellValue(sd.Name, cell, header); err != nil {
+				return nil, fmt.Errorf("write header %s on %s: %w", cell, sd.Name, err)
+			}
+		}
+	}
+
+	// Write error rows
+	for _, e := range errors {
+		rowNum := rowCounters[e.Sheet]
+		if rowNum == 0 {
+			continue // sheet not declared — skip
+		}
+
+		// Col A: error message
+		cellA, _ := excelize.CoordinatesToCellName(1, rowNum)
+		if err := f.SetCellValue(e.Sheet, cellA, e.Message); err != nil {
+			return nil, fmt.Errorf("write error_field row %d on %s: %w", rowNum, e.Sheet, err)
+		}
+
+		// Cols B…: original data
+		for colIdx, val := range e.RawData {
+			if val == "" {
+				continue
+			}
+			cell, _ := excelize.CoordinatesToCellName(colIdx+2, rowNum)
+			if err := f.SetCellValue(e.Sheet, cell, val); err != nil {
+				return nil, fmt.Errorf("write data cell %s on %s: %w", cell, e.Sheet, err)
+			}
+		}
+
+		rowCounters[e.Sheet] = rowNum + 1
+	}
+
+	return f, nil
+}
+
+// SupplierRef is a lightweight supplier record used to populate the Suppliers
+// reference sheet in the BOM import template.
+type SupplierRef struct{ Code, Name string }
+
+// GenerateBomErrorExcel builds the BOM import error file using the official
+// template as a base (headers + sample rows intact) so users can see the
+// expected format while correcting their data. Failed rows are appended
+// after the last sample row.
+func GenerateBomErrorExcel(errors []RowError, md *BomTemplateMasterData) (*excelize.File, error) {
+	// md diteruskan agar file error tetap membawa sheet "Master Data" terbaru,
+	// justru di saat user paling butuh referensi kode yang valid.
+	f, err := BuildBomTemplate(md)
+	if err != nil {
+		return nil, fmt.Errorf("build base template: %w", err)
+	}
+
+	// Detect how many rows the template already wrote so we don't hardcode it.
+	existing, err := f.GetRows("Items")
+	if err != nil {
+		return nil, fmt.Errorf("read template rows: %w", err)
+	}
+	nextRow := len(existing) + 1
+
+	for _, e := range errors {
+		cellA, _ := excelize.CoordinatesToCellName(1, nextRow)
+		if err := f.SetCellValue("Items", cellA, e.Message); err != nil {
+			return nil, fmt.Errorf("write error_field row %d: %w", nextRow, err)
+		}
+		for colIdx, val := range e.RawData {
+			if val == "" {
+				continue
+			}
+			cell, _ := excelize.CoordinatesToCellName(colIdx+2, nextRow)
+			if err := f.SetCellValue("Items", cell, val); err != nil {
+				return nil, fmt.Errorf("write data cell %s row %d: %w", cell, nextRow, err)
+			}
+		}
+		nextRow++
+	}
+
+	return f, nil
+}
+
+const bomTemplateMaxRoutes = 7
+
+type bomSampleRoute struct {
+	opSeq, processCode, machineNum string
+	cycleTimeSec, setupTimeMin     string
+	machineStroke, toolingRef      string
+}
+
+type bomSampleRow struct {
+	bomGroup, rowType, uniqCode, parentUniq string
+	partName, partNumber, model, uom        string
+	level, qtyPerUniq                       string
+	status, description                     string
+	materialGrade, grade, form              string
+	widthMM, thicknessMM, lengthMM          string
+	diameterMM, weightKG                    string
+	supplierCode, customerCycle             string
+	typeMaterial                            string
+	routes                                  []bomSampleRoute
+}
+
+func (r bomSampleRow) toSlice(totalCols int) []string {
+	vals := []string{
+		"", // error_field (col A, always blank in template)
+		r.bomGroup, r.rowType, r.uniqCode, r.parentUniq,
+		r.partName, r.partNumber, r.model, r.uom,
+		r.level, r.qtyPerUniq,
+		r.status, r.description,
+		r.materialGrade, r.grade, r.form,
+		r.widthMM, r.thicknessMM, r.lengthMM,
+		r.diameterMM, r.weightKG,
+		r.supplierCode, r.customerCycle, r.typeMaterial,
+	}
+	for _, rt := range r.routes {
+		vals = append(vals,
+			rt.opSeq, rt.processCode, rt.machineNum,
+			rt.cycleTimeSec, rt.setupTimeMin,
+			rt.machineStroke, rt.toolingRef,
+		)
+	}
+	for len(vals) < totalCols {
+		vals = append(vals, "")
+	}
+	return vals
+}
+
+// BuildBomTemplate creates the BOM import template Excel.
+// Sheet 1 "Items" has headers + sample rows.
+// Sheet 2 "Suppliers" lists all active suppliers for reference (skipped when suppliers is nil).
+// Route fields are inlined as numbered columns: op_seq_1 … tooling_ref_7.
+func BuildBomTemplate(md *BomTemplateMasterData) (*excelize.File, error) {
+	f := excelize.NewFile()
+	f.SetSheetName("Sheet1", "Items")
+
+	// Build header row
+	headers := []string{
+		"error_field",
+		"bom_group", "row_type", "uniq_code", "parent_uniq_code",
+		"part_name", "part_number", "model", "uom", "level",
+		"qty_per_uniq",
+		"status", "description",
+		"material_grade", "grade", "form", "width_mm", "thickness_mm", "length_mm",
+		"diameter_mm", "weight_kg", "supplier_code", "customer_cycle", "kategori",
+	}
+	for n := 1; n <= bomTemplateMaxRoutes; n++ {
+		s := fmt.Sprintf("%d", n)
+		headers = append(headers,
+			"op_seq_"+s, "process_code_"+s, "machine_number_"+s,
+			"cycle_time_sec_"+s, "setup_time_min_"+s, "machine_stroke_"+s, "tooling_ref_"+s,
+		)
+	}
+	kategoriColIdx := -1
+	for colIdx, h := range headers {
+		cell, _ := excelize.CoordinatesToCellName(colIdx+1, 1)
+		if err := f.SetCellValue("Items", cell, h); err != nil {
+			return nil, err
+		}
+		if h == "kategori" {
+			kategoriColIdx = colIdx + 1
+		}
+	}
+
+	// Highlight kolom kategori supaya jelas terlihat di file yang di-download
+	// dan tambahkan dropdown validasi sesuai enum di backend
+	// (item_material_specs.type_material: raw | indirect | subcon, boleh kosong).
+	if kategoriColIdx > 0 {
+		kategoriCol, _ := excelize.ColumnNumberToName(kategoriColIdx)
+		_ = f.SetColWidth("Items", kategoriCol, kategoriCol, 14)
+
+		headerStyle, styleErr := f.NewStyle(&excelize.Style{
+			Font: &excelize.Font{Bold: true},
+			Fill: excelize.Fill{Type: "pattern", Pattern: 1, Color: []string{"FFF4CE"}},
+			Alignment: &excelize.Alignment{
+				Horizontal: "center",
+				Vertical:   "center",
+			},
+		})
+		if styleErr == nil {
+			headerCell, _ := excelize.CoordinatesToCellName(kategoriColIdx, 1)
+			_ = f.SetCellStyle("Items", headerCell, headerCell, headerStyle)
+		}
+
+		dv := excelize.NewDataValidation(true) // true = allow blank (nullable)
+		dv.Sqref = fmt.Sprintf("%s2:%s1048576", kategoriCol, kategoriCol)
+		if err := dv.SetDropList([]string{"raw", "indirect", "subcon"}); err != nil {
+			return nil, fmt.Errorf("set kategori droplist: %w", err)
+		}
+		dv.SetError(
+			excelize.DataValidationErrorStyleStop,
+			"Nilai kategori tidak valid",
+			"Gunakan salah satu: raw, indirect, subcon (atau kosongkan).",
+		)
+		if err := f.AddDataValidation("Items", dv); err != nil {
+			return nil, fmt.Errorf("add kategori data validation: %w", err)
+		}
+	}
+
+	// helper: write a row, skipping empty cells
+	writeRow := func(sheet string, rowNum int, vals []string) error {
+		for colIdx, v := range vals {
+			if v == "" {
+				continue
+			}
+			cell, _ := excelize.CoordinatesToCellName(colIdx+1, rowNum)
+			if err := f.SetCellValue(sheet, cell, v); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	const supplierCode = "SUP-2024-001"
+
+	samples := []bomSampleRow{
+		// ROOT — Engine Mount Assembly (4 routes, all fully filled)
+		{
+			bomGroup: "EMA-LV7-001", rowType: "ROOT",
+			uniqCode: "EMA-LV7-001",
+			partName: "Engine Mount Assembly", partNumber: "EMA-001-LV7", model: "LV7", uom: "PCS",
+			status: "Active", description: "Engine mount sub-assembly LV7 model",
+			materialGrade: "STKM550", grade: "Grade-A", form: "Plate",
+			widthMM: "200", thicknessMM: "5", lengthMM: "300", weightKG: "2.34",
+			supplierCode: supplierCode, customerCycle: "daily",
+			typeMaterial: "raw",
+			routes: []bomSampleRoute{
+				{opSeq: "10", processCode: "STAMP", machineNum: "PM-A1-001", cycleTimeSec: "45", setupTimeMin: "10", machineStroke: "220 spm", toolingRef: "Dies"},
+				{opSeq: "20", processCode: "WELD", machineNum: "M-WELD-01", cycleTimeSec: "60", setupTimeMin: "15", machineStroke: "200 spm", toolingRef: "JIG"},
+				{opSeq: "30", processCode: "ASSY", machineNum: "M-ASSY-01", cycleTimeSec: "30", setupTimeMin: "5", machineStroke: "180 spm", toolingRef: "CF"},
+				{opSeq: "40", processCode: "INSP", cycleTimeSec: "20", setupTimeMin: "5", toolingRef: "CF"},
+			},
+		},
+		// CHILD L1-A — Main Bracket (3 routes, all fully filled)
+		{
+			bomGroup: "EMA-LV7-001", rowType: "CHILD",
+			uniqCode: "MB-LV7-001-A", parentUniq: "EMA-LV7-001",
+			partName: "Main Bracket", partNumber: "MB-001-LV7", model: "LV7", uom: "PCS",
+			level: "1", qtyPerUniq: "1", status: "Active",
+			materialGrade: "STKM550", form: "Plate",
+			widthMM: "150", thicknessMM: "4", lengthMM: "250", weightKG: "1.5",
+			supplierCode: supplierCode, typeMaterial: "raw",
+			routes: []bomSampleRoute{
+				{opSeq: "10", processCode: "STAMP", machineNum: "M-STAMP-02", cycleTimeSec: "30", setupTimeMin: "10", machineStroke: "180 spm", toolingRef: "Dies"},
+				{opSeq: "20", processCode: "BEND", machineNum: "M-BEND-01", cycleTimeSec: "25", setupTimeMin: "8", machineStroke: "150 spm", toolingRef: "Dies"},
+				{opSeq: "30", processCode: "PIERCE", cycleTimeSec: "20", setupTimeMin: "5", toolingRef: "CF"},
+			},
+		},
+		// CHILD L2-A1 — Steel Sheet 4mm (2 routes, all fully filled)
+		{
+			bomGroup: "EMA-LV7-001", rowType: "CHILD",
+			uniqCode: "SH-LV7-001-A1", parentUniq: "MB-LV7-001-A",
+			partName: "Steel Sheet 4mm", partNumber: "SS-001-LV7", uom: "KG",
+			level: "2", qtyPerUniq: "1.5", status: "Active",
+			materialGrade: "SS400", form: "Plate",
+			widthMM: "150", thicknessMM: "4", typeMaterial: "raw",
+			routes: []bomSampleRoute{
+				{opSeq: "10", processCode: "STAMP", machineNum: "PM-A2-001", cycleTimeSec: "15", setupTimeMin: "5", machineStroke: "160 spm", toolingRef: "Dies"},
+				{opSeq: "20", processCode: "TRIM", cycleTimeSec: "10", setupTimeMin: "3", toolingRef: "CF"},
+			},
+		},
+		// CHILD L1-B — Rubber Insulator (no routes)
+		{
+			bomGroup: "EMA-LV7-001", rowType: "CHILD",
+			uniqCode: "RI-LV7-001-B", parentUniq: "EMA-LV7-001",
+			partName: "Rubber Insulator", partNumber: "RI-002-LV7", model: "LV7", uom: "PCS",
+			level: "1", qtyPerUniq: "2", status: "Active",
+			materialGrade: "SS400", form: "Plate",
+			widthMM: "150", thicknessMM: "4", weightKG: "1.5",
+			supplierCode: supplierCode, typeMaterial: "subcon",
+		},
+		// CHILD L1-C — Bolt M10 x 30 (no routes)
+		{
+			bomGroup: "EMA-LV7-001", rowType: "CHILD",
+			uniqCode: "BLT-LV7-001-C", parentUniq: "EMA-LV7-001",
+			partName: "Bolt M10 x 30", partNumber: "BLT-003-LV7", model: "LV7", uom: "PCS",
+			level: "1", qtyPerUniq: "4", status: "Active",
+			materialGrade: "SS400", form: "Plate",
+			widthMM: "150", thicknessMM: "4", weightKG: "1.5",
+			supplierCode: supplierCode, typeMaterial: "indirect",
+		},
+	}
+
+	// Ganti kode contoh yang hardcoded dengan kode master data nyata supaya
+	// sample row bisa langsung dipakai user tanpa gagal validasi saat import.
+	if md != nil {
+		samples = normalizeSamplesToMasterData(samples, md)
+	}
+
+	for i, s := range samples {
+		if err := writeRow("Items", i+2, s.toSlice(len(headers))); err != nil {
+			return nil, err
+		}
+	}
+
+	// Sheet 2 — Suppliers reference list
+	if md != nil {
+		if err := writeMasterDataSheet(f, md); err != nil {
+			return nil, err
+		}
+	}
+
+	return f, nil
+}
+
+// RefRow adalah baris referensi code/name generik untuk sheet Master Data.
+type RefRow struct{ Code, Name string }
+
+// BomTemplateMasterData menampung daftar referensi yang dirender di sheet "Master Data".
+type BomTemplateMasterData struct {
+	Processes []RefRow
+	Machines  []RefRow
+	Uoms      []RefRow
+	Suppliers []RefRow
+}
+
+// normalizeSamplesToMasterData memetakan kode contoh pada sheet "Items" ke kode
+// yang benar-benar ada di master data. Kode contoh yang sama selalu dipetakan ke
+// kode master yang sama agar relasi antar baris tetap konsisten. Jika salah satu
+// master data kosong, kode contoh untuk kategori itu dibiarkan apa adanya.
+func normalizeSamplesToMasterData(samples []bomSampleRow, md *BomTemplateMasterData) []bomSampleRow {
+	codesOf := func(refs []RefRow) []string {
+		out := make([]string, 0, len(refs))
+		for _, ref := range refs {
+			if c := strings.TrimSpace(ref.Code); c != "" {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+
+	processes := codesOf(md.Processes)
+	machines := codesOf(md.Machines)
+	uoms := codesOf(md.Uoms)
+	suppliers := codesOf(md.Suppliers)
+
+	// mapper mengembalikan fungsi substitusi yang stabil (kode asal yang sama
+	// menghasilkan kode master yang sama), berputar sepanjang pool yang tersedia.
+	mapper := func(pool []string) func(string) string {
+		seen := make(map[string]string)
+		next := 0
+		return func(original string) string {
+			if original == "" || len(pool) == 0 {
+				return original
+			}
+			if mapped, ok := seen[original]; ok {
+				return mapped
+			}
+			mapped := pool[next%len(pool)]
+			next++
+			seen[original] = mapped
+			return mapped
+		}
+	}
+
+	mapProcess := mapper(processes)
+	mapMachine := mapper(machines)
+	mapUom := mapper(uoms)
+
+	for i := range samples {
+		samples[i].uom = mapUom(samples[i].uom)
+		if len(suppliers) > 0 && samples[i].supplierCode != "" {
+			samples[i].supplierCode = suppliers[0]
+		}
+		for j := range samples[i].routes {
+			samples[i].routes[j].processCode = mapProcess(samples[i].routes[j].processCode)
+			samples[i].routes[j].machineNum = mapMachine(samples[i].routes[j].machineNum)
+		}
+	}
+
+	return samples
+}
+
+func writeMasterDataSheet(f *excelize.File, md *BomTemplateMasterData) error {
+	const sheet = "Master Data"
+	f.NewSheet(sheet)
+
+	set := func(col, r int, v string) error {
+		cell, _ := excelize.CoordinatesToCellName(col, r)
+		return f.SetCellValue(sheet, cell, v)
+	}
+
+	// writeBlock merender satu section sebagai kolom-grup vertikal mulai dari startCol.
+	// baris 1 = judul, baris 2 = header, baris 3+ = data.
+	writeBlock := func(startCol int, title string, header []string, data [][]string) error {
+		if err := set(startCol, 1, title); err != nil {
+			return err
+		}
+		for i, h := range header {
+			if err := set(startCol+i, 2, h); err != nil {
+				return err
+			}
+		}
+		for r, rr := range data {
+			for i, v := range rr {
+				if err := set(startCol+i, 3+r, v); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+
+	toRows := func(refs []RefRow) [][]string {
+		out := make([][]string, 0, len(refs))
+		for _, ref := range refs {
+			out = append(out, []string{ref.Code, ref.Name})
+		}
+		return out
+	}
+
+	type block struct {
+		title  string
+		header []string
+		data   [][]string
+	}
+	blocks := []block{
+		{"PROCESS (isi process_code_n)", []string{"process_code", "process_name"}, toRows(md.Processes)},
+		{"MACHINE (isi machine_number_n)", []string{"machine_number", "machine_name"}, toRows(md.Machines)},
+		{"UOM (isi kolom uom)", []string{"code", "name"}, toRows(md.Uoms)},
+		{"SUPPLIER (isi supplier_code)", []string{"supplier_code", "supplier_name"}, toRows(md.Suppliers)},
+		{"NILAI ENUM (pilihan valid)", []string{"kolom", "nilai valid"}, [][]string{
+			{"row_type", "ROOT | CHILD"},
+			{"status", "Active | Inactive"},
+			{"level", "1 - 6 (1 = child, 2 = grand child, dst.)"},
+			{"form", "Plate | Coil | Pipe | Rod | Wire | Other"},
+			{"kategori", "raw | indirect | subcon"},
+			{"tooling_ref_n", "Dies | JIG | CF | Other"},
+		}},
+	}
+
+	// Tiap block = 2 kolom data + 1 kolom spacer = lebar 3 kolom, disusun ke samping.
+	startCol := 1
+	for _, b := range blocks {
+		if err := writeBlock(startCol, b.title, b.header, b.data); err != nil {
+			return err
+		}
+		c1, _ := excelize.ColumnNumberToName(startCol)
+		c2, _ := excelize.ColumnNumberToName(startCol + 1)
+		_ = f.SetColWidth(sheet, c1, c1, 24)
+		_ = f.SetColWidth(sheet, c2, c2, 36)
+		startCol += 3 // 2 kolom data + 1 kolom kosong sebagai pemisah
+	}
+
+	return nil
+}

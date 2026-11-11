@@ -1,0 +1,1502 @@
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"strings"
+	"time"
+
+	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
+	invService "github.com/ganasa18/go-template/internal/inventory/service"
+	"github.com/ganasa18/go-template/internal/stock_opname/adjuster"
+	stockModels "github.com/ganasa18/go-template/internal/stock_opname/models"
+	"github.com/ganasa18/go-template/internal/stock_opname/repository"
+	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/approval"
+	"github.com/ganasa18/go-template/pkg/inventoryconst"
+	"gorm.io/gorm"
+)
+
+type IService interface {
+	GetStats(ctx context.Context, inventoryType string) (*stockModels.StockOpnameStats, error)
+	ListUniqOptions(ctx context.Context, q stockModels.FormOptionsQuery) ([]stockModels.UniqOption, error)
+	CheckCounts(ctx context.Context, req stockModels.CheckCountRequest) ([]stockModels.CheckCountResult, error)
+	ListWarehouseItems(ctx context.Context, q stockModels.WarehouseItemsQuery) ([]stockModels.WarehouseItem, error)
+	ResolvePackingOption(ctx context.Context, packing string) (*stockModels.PackingOption, error)
+	GetHistoryLogs(ctx context.Context, q stockModels.HistoryLogsQuery) (*stockModels.HistoryLogListResponse, error)
+	GetAuditLogs(ctx context.Context, sessionID int64, page, limit int) (*stockModels.AuditLogListResponse, error)
+	ListSessions(ctx context.Context, f repository.SessionFilter) (*stockModels.StockOpnameSessionListResponse, error)
+	CreateSession(ctx context.Context, req stockModels.CreateSessionRequest, actor string) (*stockModels.StockOpnameSessionItem, error)
+	GetSessionByID(ctx context.Context, id int64) (*stockModels.StockOpnameSessionDetail, error)
+	UpdateSession(ctx context.Context, id int64, req stockModels.UpdateSessionRequest, actor string) (*stockModels.StockOpnameSessionItem, error)
+	DeleteSession(ctx context.Context, id int64, actor string) error
+	AddEntry(ctx context.Context, sessionID int64, req stockModels.CreateEntryRequest, actor string) (*stockModels.StockOpnameEntryItem, error)
+	BulkAddEntries(ctx context.Context, sessionID int64, req stockModels.BulkCreateEntryRequest, actor string) (*stockModels.BulkCreateEntryResponse, error)
+	UpdateEntry(ctx context.Context, sessionID, entryID int64, req stockModels.UpdateEntryRequest, actor string) (*stockModels.StockOpnameEntryItem, error)
+	DeleteEntry(ctx context.Context, sessionID, entryID int64, actor string) error
+	SubmitSession(ctx context.Context, id int64, actor string) (*stockModels.StockOpnameSessionItem, error)
+	ApproveSession(ctx context.Context, id int64, req stockModels.ApproveRequest, actor string, userRoles []string) (*stockModels.StockOpnameSessionItem, error)
+	ApproveEntry(ctx context.Context, sessionID, entryID int64, req stockModels.ApproveRequest, actor string, userRoles []string) (*stockModels.StockOpnameEntryItem, error)
+}
+
+type service struct {
+	repo      repository.IRepository
+	db        *gorm.DB
+	invSvc    invService.IService
+	adjusters map[string]adjuster.InventoryAdjuster
+}
+
+func New(repo repository.IRepository, db *gorm.DB, invSvc invService.IService) IService {
+	return &service{repo: repo, db: db, invSvc: invSvc, adjusters: map[string]adjuster.InventoryAdjuster{
+		stockModels.InventoryTypeFG:     adjuster.NewFGAdjuster(),
+		stockModels.InventoryTypeRM:     adjuster.NewRMAdjuster(),
+		stockModels.InventoryTypeIDR:    adjuster.NewIndirectAdjuster(),
+		stockModels.InventoryTypeWIP:    adjuster.NewWIPAdjuster(),
+		stockModels.InventoryTypeSubcon: adjuster.NewSubconAdjuster(),
+	}}
+}
+
+func (s *service) GetStats(ctx context.Context, inventoryType string) (*stockModels.StockOpnameStats, error) {
+	inventoryType = normalizeInventoryType(inventoryType)
+	if err := validateInventoryType(inventoryType); err != nil {
+		return nil, err
+	}
+	return s.repo.GetStats(ctx, inventoryType)
+}
+
+func (s *service) ListUniqOptions(ctx context.Context, q stockModels.FormOptionsQuery) ([]stockModels.UniqOption, error) {
+	adj, err := s.getAdjuster(normalizeInventoryType(q.Type))
+	if err != nil {
+		return nil, err
+	}
+	var rows []adjuster.UniqSnapshotResult
+	inventoryType := normalizeInventoryType(q.Type)
+	if inventoryType == stockModels.InventoryTypeFG ||
+		(inventoryType == stockModels.InventoryTypeWIP && normalizeMethod(q.Method) == stockModels.MethodBulk) {
+		// Finished Goods and Bulk WIP use the active BOM/master item list so
+		// every UNIQ defined in the BOM is available in the Stock Opname form.
+		rows, err = adjuster.SearchWIPBOMUniqs(ctx, s.db, strings.TrimSpace(q.Q), q.Limit)
+	} else {
+		rows, err = adj.SearchUniqs(ctx, s.db, strings.TrimSpace(q.Q), q.Limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	items := make([]stockModels.UniqOption, 0, len(rows))
+	for i := range rows {
+		items = append(items, stockModels.UniqOption{UniqCode: rows[i].UniqCode, PartNumber: rows[i].PartNumber, PartName: rows[i].PartName, UOM: rows[i].UOM, SystemQty: rows[i].SystemQty, WeightKg: rows[i].WeightKg, RawMaterialType: rows[i].RawMaterialType})
+	}
+	return items, nil
+}
+
+// ListWarehouseItems lists every inventory row stored in a warehouse for the
+// "count by warehouse" table. The remaining system stock is never returned.
+func (s *service) ListWarehouseItems(ctx context.Context, q stockModels.WarehouseItemsQuery) ([]stockModels.WarehouseItem, error) {
+	inventoryType := normalizeInventoryType(q.Type)
+	if err := validateInventoryType(inventoryType); err != nil {
+		return nil, err
+	}
+	warehouse := strings.TrimSpace(q.Warehouse)
+	if warehouse == "" {
+		return nil, apperror.BadRequest("warehouse wajib diisi")
+	}
+	rows, err := adjuster.ListWarehouseItems(ctx, s.db, inventoryType, warehouse, q.Q, q.Limit)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]stockModels.WarehouseItem, 0, len(rows))
+	for i := range rows {
+		items = append(items, stockModels.WarehouseItem{UniqCode: rows[i].UniqCode, PartNumber: rows[i].PartNumber, PartName: rows[i].PartName, UOM: rows[i].UOM, WarehouseLocation: rows[i].WarehouseLocation, KanbanQty: rows[i].KanbanQty, WeightKg: rows[i].WeightKg, RawMaterialType: rows[i].RawMaterialType})
+	}
+	return items, nil
+}
+
+// maxCheckCountItems caps one check-count call (bulk uploads send one batch).
+const maxCheckCountItems = 1000
+
+// CheckCounts compares each counted qty with the CURRENT system stock, using
+// the same ResolveUniq path that Create/AddEntry use for the snapshot, and
+// returns only less/over/match/unknown. The system quantity is never exposed.
+func (s *service) CheckCounts(ctx context.Context, req stockModels.CheckCountRequest) ([]stockModels.CheckCountResult, error) {
+	inventoryType := normalizeInventoryType(req.Type)
+	if err := validateInventoryType(inventoryType); err != nil {
+		return nil, err
+	}
+	if len(req.Items) > maxCheckCountItems {
+		return nil, apperror.BadRequest(fmt.Sprintf("maksimal %d item per request", maxCheckCountItems))
+	}
+	adj, err := s.getAdjuster(inventoryType)
+	if err != nil {
+		return nil, err
+	}
+	// Bulk WIP posts new WIP rows against a 0 baseline, so there is no real
+	// system stock to compare with.
+	noBaseline := inventoryType == stockModels.InventoryTypeWIP && normalizeMethod(req.Method) == stockModels.MethodBulk
+
+	results := make([]stockModels.CheckCountResult, 0, len(req.Items))
+	for _, item := range req.Items {
+		uniqCode := strings.TrimSpace(item.UniqCode)
+		status := stockModels.CountStatusUnknown
+		if uniqCode != "" && !noBaseline {
+			// Lookup errors (e.g. uniq not found) just mean "no hint".
+			if snapshot, rerr := adj.ResolveUniq(ctx, s.db, uniqCode); rerr == nil && snapshot != nil {
+				status = compareCountedQty(snapshot.SystemQty, item.CountedQty)
+			}
+		}
+		results = append(results, stockModels.CheckCountResult{Key: item.Key, UniqCode: uniqCode, Status: status})
+	}
+	return results, nil
+}
+
+// compareCountedQty tolerates numeric(15,4) rounding noise.
+func compareCountedQty(systemQty, countedQty float64) string {
+	const eps = 0.00005
+	diff := countedQty - systemQty
+	switch {
+	case diff < -eps:
+		return stockModels.CountStatusLess
+	case diff > eps:
+		return stockModels.CountStatusOver
+	default:
+		return stockModels.CountStatusMatch
+	}
+}
+
+func (s *service) GetHistoryLogs(ctx context.Context, q stockModels.HistoryLogsQuery) (*stockModels.HistoryLogListResponse, error) {
+	inventoryType := normalizeInventoryType(q.Type)
+	if err := validateInventoryType(inventoryType); err != nil {
+		return nil, err
+	}
+	rows, total, err := s.repo.ListHistoryLogs(ctx, inventoryType, strings.TrimSpace(q.UniqCode), q.From, q.To, q.Limit, q.Offset)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]stockModels.HistoryLogItem, 0, len(rows))
+	for i := range rows {
+		item := stockModels.HistoryLogItem(rows[i])
+		item.Reason = humanizeHistoryReason(item.Reason)
+		items = append(items, item)
+	}
+	return &stockModels.HistoryLogListResponse{Items: items, Pagination: paginate(total, q.Page, q.Limit)}, nil
+}
+
+func (s *service) GetAuditLogs(ctx context.Context, sessionID int64, page, limit int) (*stockModels.AuditLogListResponse, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, total, err := s.repo.ListAuditLogs(ctx, sessionID, limit, (page-1)*limit)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]stockModels.AuditLogItem, 0, len(rows))
+	for i := range rows {
+		items = append(items, toAuditLogItem(&rows[i]))
+	}
+	return &stockModels.AuditLogListResponse{Items: items, Pagination: paginate(total, page, limit)}, nil
+}
+
+func (s *service) ListSessions(ctx context.Context, f repository.SessionFilter) (*stockModels.StockOpnameSessionListResponse, error) {
+	if f.Type != "" {
+		f.Type = normalizeInventoryType(f.Type)
+		if err := validateInventoryType(f.Type); err != nil {
+			return nil, err
+		}
+	}
+	rows, total, err := s.repo.ListSessions(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]stockModels.StockOpnameSessionItem, 0, len(rows))
+	for i := range rows {
+		items = append(items, toSessionListItem(&rows[i]))
+	}
+	return &stockModels.StockOpnameSessionListResponse{Items: items, Pagination: paginate(total, f.Page, f.Limit)}, nil
+}
+
+func (s *service) CreateSession(ctx context.Context, req stockModels.CreateSessionRequest, actor string) (*stockModels.StockOpnameSessionItem, error) {
+	req.InventoryType = normalizeInventoryType(req.InventoryType)
+	req.Method = normalizeMethod(req.Method)
+	if err := validateCreateSessionRequest(req); err != nil {
+		return nil, err
+	}
+	session := &stockModels.StockOpnameSession{InventoryType: req.InventoryType, Method: req.Method, PeriodMonth: req.PeriodMonth, PeriodYear: req.PeriodYear, WarehouseLocation: req.WarehouseLocation, ScheduleDate: parseDate(req.ScheduleDate), CountedDate: parseDate(req.CountedDate), Remarks: trimPtr(req.Remarks), Approver: trimPtr(req.Approver), Status: stockModels.SessionStatusDraft, CreatedBy: strPtr(actor), UpdatedBy: strPtr(actor)}
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		number, err := s.repo.GenerateSessionNumber(ctx, tx, req.InventoryType, req.PeriodMonth, req.PeriodYear)
+		if err != nil {
+			return err
+		}
+		session.SessionNumber = number
+		if err := s.repo.CreateSession(ctx, tx, session); err != nil {
+			return err
+		}
+		if err := s.ensureApprovalInstance(ctx, tx, session.ID, actor); err != nil {
+			return err
+		}
+		if err := s.appendAuditLog(ctx, tx, session.ID, nil, session.InventoryType, stockModels.AuditActionCreate, stockModels.AuditEntitySession, actor, session.Remarks, map[string]interface{}{"session_number": session.SessionNumber, "method": session.Method, "period_month": session.PeriodMonth, "period_year": session.PeriodYear}); err != nil {
+			return err
+		}
+		if len(req.Items) == 0 {
+			return nil
+		}
+		adj, err := s.getAdjuster(session.InventoryType)
+		if err != nil {
+			return err
+		}
+
+		// A session can contain multiple stock opname rows. This is required for
+		// manual multi-entry input and Excel uploads, where each uniq must be
+		// stored as its own stock_opname_entries row under the same session.
+		created := 0
+		for i := range req.Items {
+			entry, err := s.buildEntry(ctx, tx, session, adj, req.Items[i], actor)
+			if err != nil {
+				return apperror.UnprocessableEntity(fmt.Sprintf("items[%d]: %s", i, err.Error()))
+			}
+			if err := s.repo.CreateEntry(ctx, tx, entry); err != nil {
+				return err
+			}
+			if err := s.appendAuditLog(ctx, tx, session.ID, &entry.ID, session.InventoryType, stockModels.AuditActionAddEntry, stockModels.AuditEntityEntry, actor, entry.Remarks, map[string]interface{}{"uniq_code": entry.UniqCode, "counted_qty": entry.CountedQty, "source": "create_session"}); err != nil {
+				return err
+			}
+
+			// Excel upload uses method=bulk. Only this path posts the counted
+			// quantity to the corresponding inventory immediately. Manual
+			// stock-opname stays pending and keeps the normal approval flow.
+			if session.Method == stockModels.MethodBulk {
+				adjEntry := *entry
+				delta, packingApplied, err := s.applyPackingCount(ctx, tx, entry)
+				if err != nil {
+					return err
+				}
+				if packingApplied {
+					adjEntry.CountedQty = entry.SystemQtySnapshot + delta
+				}
+				result, err := s.applyStockOpnameAdjustment(ctx, tx, session, adj, &adjEntry, actor)
+				if err != nil {
+					return err
+				}
+				if err := s.appendInventoryLog(ctx, tx, session.InventoryType, entry, actor, session.SessionNumber, result); err != nil {
+					return err
+				}
+				now := time.Now()
+				entry.Status = stockModels.EntryStatusApproved
+				entry.RejectReason = nil
+				entry.ApprovedBy = strPtr(actor)
+				entry.ApprovedAt = &now
+				entry.UpdatedBy = strPtr(actor)
+				entry.UpdatedAt = now
+				if err := s.repo.UpdateEntry(ctx, tx, entry); err != nil {
+					return err
+				}
+			}
+			created++
+		}
+		if err := s.repo.RecalculateSessionTotals(ctx, tx, session.ID); err != nil {
+			return err
+		}
+		if err := s.refreshSessionTotals(ctx, tx, session); err != nil {
+			return err
+		}
+		now := time.Now()
+		if session.Method == stockModels.MethodBulk {
+			session.Status = stockModels.SessionStatusApproved
+			session.SubmittedBy = strPtr(actor)
+			session.SubmittedAt = &now
+			session.ApprovedBy = strPtr(actor)
+			session.ApprovedAt = &now
+			if err := s.completeBulkUploadApproval(ctx, tx, session.ID, actor, now); err != nil {
+				return err
+			}
+		} else {
+			session.Status = stockModels.SessionStatusInProgress
+		}
+		session.UpdatedBy = strPtr(actor)
+		session.UpdatedAt = now
+		if err := s.repo.UpdateSession(ctx, tx, session); err != nil {
+			return err
+		}
+		return s.appendAuditLog(ctx, tx, session.ID, nil, session.InventoryType, stockModels.AuditActionBulkAddEntries, stockModels.AuditEntitySession, actor, session.Remarks, map[string]interface{}{"created": created, "source": "create_session", "inventory_posted": session.Method == stockModels.MethodBulk})
+	})
+	if err != nil {
+		return nil, err
+	}
+	item := toSessionItem(session)
+	return &item, nil
+}
+
+func (s *service) GetSessionByID(ctx context.Context, id int64) (*stockModels.StockOpnameSessionDetail, error) {
+	row, err := s.repo.GetSessionWithEntries(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]stockModels.StockOpnameEntryItem, 0, len(row.Entries))
+	for i := range row.Entries {
+		entries = append(entries, toEntryItem(&row.Entries[i]))
+	}
+	approvalInfo, err := s.buildApprovalSummary(ctx, row.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &stockModels.StockOpnameSessionDetail{Session: toSessionItem(row), Entries: entries, Approval: approvalInfo}, nil
+}
+
+func (s *service) UpdateSession(ctx context.Context, id int64, req stockModels.UpdateSessionRequest, actor string) (*stockModels.StockOpnameSessionItem, error) {
+	var updated *stockModels.StockOpnameSession
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		session, err := s.repo.GetSessionByIDTx(ctx, tx, id, true)
+		if err != nil {
+			return err
+		}
+		if !isEditableSessionStatus(session.Status) {
+			return apperror.Conflict("session can only be updated while draft or in_progress")
+		}
+		if req.Method != nil {
+			m := normalizeMethod(*req.Method)
+			if err := validateMethod(m); err != nil {
+				return err
+			}
+			session.Method = m
+		}
+		if req.PeriodMonth != nil {
+			if *req.PeriodMonth < 1 || *req.PeriodMonth > 12 {
+				return apperror.UnprocessableEntity("period_month must be between 1 and 12")
+			}
+			session.PeriodMonth = *req.PeriodMonth
+		}
+		if req.PeriodYear != nil {
+			session.PeriodYear = *req.PeriodYear
+		}
+		if req.WarehouseLocation != nil {
+			session.WarehouseLocation = req.WarehouseLocation
+		}
+		if req.ScheduleDate != nil {
+			session.ScheduleDate = parseDate(req.ScheduleDate)
+		}
+		if req.CountedDate != nil {
+			session.CountedDate = parseDate(req.CountedDate)
+		}
+		if req.Remarks != nil {
+			session.Remarks = trimPtr(req.Remarks)
+		}
+		if req.Approver != nil {
+			session.Approver = trimPtr(req.Approver)
+		}
+		session.UpdatedBy = strPtr(actor)
+		session.UpdatedAt = time.Now()
+		updated = session
+		if err := s.repo.UpdateSession(ctx, tx, session); err != nil {
+			return err
+		}
+		return s.appendAuditLog(ctx, tx, session.ID, nil, session.InventoryType, stockModels.AuditActionUpdate, stockModels.AuditEntitySession, actor, session.Remarks, map[string]interface{}{"status": session.Status, "method": session.Method})
+	})
+	if err != nil {
+		return nil, err
+	}
+	item := toSessionItem(updated)
+	return &item, nil
+}
+
+func (s *service) DeleteSession(ctx context.Context, id int64, actor string) error {
+	row, err := s.repo.GetSessionByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !isEditableSessionStatus(row.Status) {
+		return apperror.Conflict("session can only be deleted while draft or in_progress")
+	}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.repo.SoftDeleteSession(ctx, tx, id, actor); err != nil {
+			return err
+		}
+		return s.appendAuditLog(ctx, tx, row.ID, nil, row.InventoryType, stockModels.AuditActionDelete, stockModels.AuditEntitySession, actor, row.Remarks, map[string]interface{}{"session_number": row.SessionNumber, "status": row.Status})
+	})
+	return err
+}
+
+func (s *service) AddEntry(ctx context.Context, sessionID int64, req stockModels.CreateEntryRequest, actor string) (*stockModels.StockOpnameEntryItem, error) {
+	entry, err := s.addEntryTx(ctx, sessionID, req, actor)
+	if err != nil {
+		return nil, err
+	}
+	item := toEntryItem(entry)
+	return &item, nil
+}
+
+func (s *service) BulkAddEntries(ctx context.Context, sessionID int64, req stockModels.BulkCreateEntryRequest, actor string) (*stockModels.BulkCreateEntryResponse, error) {
+	if len(req.Items) == 0 {
+		return nil, apperror.BadRequest("items cannot be empty")
+	}
+	resp := &stockModels.BulkCreateEntryResponse{Errors: []stockModels.BulkCreateEntryError{}}
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		session, err := s.repo.GetSessionByIDTx(ctx, tx, sessionID, true)
+		if err != nil {
+			return err
+		}
+		if !isEditableSessionStatus(session.Status) {
+			return apperror.Conflict("entries can only be added while draft or in_progress")
+		}
+		adj, err := s.getAdjuster(session.InventoryType)
+		if err != nil {
+			return err
+		}
+		for i := range req.Items {
+			entry, buildErr := s.buildEntry(ctx, tx, session, adj, req.Items[i], actor)
+			if buildErr != nil {
+				resp.Errors = append(resp.Errors, stockModels.BulkCreateEntryError{Row: i + 1, UniqCode: req.Items[i].UniqCode, Message: buildErr.Error()})
+				continue
+			}
+			if err := s.repo.CreateEntry(ctx, tx, entry); err != nil {
+				resp.Errors = append(resp.Errors, stockModels.BulkCreateEntryError{Row: i + 1, UniqCode: req.Items[i].UniqCode, Message: err.Error()})
+				continue
+			}
+			resp.Created++
+		}
+		if resp.Created > 0 {
+			if err := s.repo.RecalculateSessionTotals(ctx, tx, session.ID); err != nil {
+				return err
+			}
+			if err := s.refreshSessionTotals(ctx, tx, session); err != nil {
+				return err
+			}
+			session.Status = stockModels.SessionStatusInProgress
+			session.UpdatedBy = strPtr(actor)
+			session.UpdatedAt = time.Now()
+			if err := s.repo.UpdateSession(ctx, tx, session); err != nil {
+				return err
+			}
+			return s.appendAuditLog(ctx, tx, session.ID, nil, session.InventoryType, stockModels.AuditActionBulkAddEntries, stockModels.AuditEntitySession, actor, nil, map[string]interface{}{"created": resp.Created, "errors": len(resp.Errors)})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (s *service) UpdateEntry(ctx context.Context, sessionID, entryID int64, req stockModels.UpdateEntryRequest, actor string) (*stockModels.StockOpnameEntryItem, error) {
+	var updated *stockModels.StockOpnameEntry
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		session, err := s.repo.GetSessionByIDTx(ctx, tx, sessionID, true)
+		if err != nil {
+			return err
+		}
+		if !isEditableSessionStatus(session.Status) {
+			return apperror.Conflict("entries can only be updated while draft or in_progress")
+		}
+		entry, err := s.repo.GetEntryByIDTx(ctx, tx, entryID, true)
+		if err != nil {
+			return err
+		}
+		if entry.SessionID != sessionID {
+			return apperror.NotFound("stock opname entry tidak ditemukan for session")
+		}
+		adj, err := s.getAdjuster(session.InventoryType)
+		if err != nil {
+			return err
+		}
+		if req.UniqCode != nil {
+			snapshot, err := adj.ResolveUniq(ctx, tx, strings.TrimSpace(*req.UniqCode))
+			if err != nil {
+				return err
+			}
+			entry.UniqCode = strings.TrimSpace(*req.UniqCode)
+			entry.EntityID = snapshot.EntityID
+			entry.PartNumber = snapshot.PartNumber
+			entry.PartName = snapshot.PartName
+			entry.UOM = snapshot.UOM
+			entry.SystemQtySnapshot = snapshot.SystemQty
+		}
+		if req.CountedQty != nil {
+			entry.CountedQty = *req.CountedQty
+		}
+		if req.WeightKg != nil {
+			entry.WeightKg = req.WeightKg
+		}
+		if req.CyclePengiriman != nil {
+			entry.CyclePengiriman = trimPtr(req.CyclePengiriman)
+		}
+		if req.UserCounter != nil {
+			entry.UserCounter = trimPtr(req.UserCounter)
+		}
+		if req.Remarks != nil {
+			entry.Remarks = trimPtr(req.Remarks)
+		}
+		entry.VariancePct = calcVariancePct(entry.SystemQtySnapshot, entry.CountedQty)
+		entry.UpdatedBy = strPtr(actor)
+		entry.UpdatedAt = time.Now()
+		updated = entry
+		if err := s.repo.UpdateEntry(ctx, tx, entry); err != nil {
+			return err
+		}
+		if err := s.repo.RecalculateSessionTotals(ctx, tx, session.ID); err != nil {
+			return err
+		}
+		if err := s.refreshSessionTotals(ctx, tx, session); err != nil {
+			return err
+		}
+		return s.appendAuditLog(ctx, tx, session.ID, &entry.ID, session.InventoryType, stockModels.AuditActionUpdateEntry, stockModels.AuditEntityEntry, actor, entry.Remarks, map[string]interface{}{"uniq_code": entry.UniqCode, "counted_qty": entry.CountedQty})
+	})
+	if err != nil {
+		return nil, err
+	}
+	item := toEntryItem(updated)
+	return &item, nil
+}
+
+func (s *service) DeleteEntry(ctx context.Context, sessionID, entryID int64, actor string) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		session, err := s.repo.GetSessionByIDTx(ctx, tx, sessionID, true)
+		if err != nil {
+			return err
+		}
+		if !isEditableSessionStatus(session.Status) {
+			return apperror.Conflict("entries can only be deleted while draft or in_progress")
+		}
+		entry, err := s.repo.GetEntryByIDTx(ctx, tx, entryID, true)
+		if err != nil {
+			return err
+		}
+		if entry.SessionID != sessionID {
+			return apperror.NotFound("stock opname entry tidak ditemukan for session")
+		}
+		if err := s.repo.DeleteEntry(ctx, tx, entryID); err != nil {
+			return err
+		}
+		if err := s.repo.RecalculateSessionTotals(ctx, tx, sessionID); err != nil {
+			return err
+		}
+		if err := s.refreshSessionTotals(ctx, tx, session); err != nil {
+			return err
+		}
+		session.UpdatedBy = strPtr(actor)
+		session.UpdatedAt = time.Now()
+		if err := s.repo.UpdateSession(ctx, tx, session); err != nil {
+			return err
+		}
+		return s.appendAuditLog(ctx, tx, session.ID, &entry.ID, session.InventoryType, stockModels.AuditActionDeleteEntry, stockModels.AuditEntityEntry, actor, entry.Remarks, map[string]interface{}{"uniq_code": entry.UniqCode})
+	})
+}
+
+func (s *service) SubmitSession(ctx context.Context, id int64, actor string) (*stockModels.StockOpnameSessionItem, error) {
+	var updated *stockModels.StockOpnameSession
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		session, err := s.repo.GetSessionByIDTx(ctx, tx, id, true)
+		if err != nil {
+			return err
+		}
+		if session.Status != stockModels.SessionStatusDraft && session.Status != stockModels.SessionStatusInProgress {
+			return apperror.Conflict("session can only be submitted from draft or in_progress")
+		}
+		entries, err := s.repo.ListEntriesBySessionTx(ctx, tx, session.ID)
+		if err != nil {
+			return err
+		}
+		if len(entries) <= 0 {
+			return apperror.Conflict("session must have at least one entry before submit")
+		}
+		session.TotalEntries = len(entries)
+		now := time.Now()
+		session.Status = stockModels.SessionStatusPendingApproval
+		session.SubmittedBy = strPtr(actor)
+		session.SubmittedAt = &now
+		session.UpdatedBy = strPtr(actor)
+		session.UpdatedAt = now
+		updated = session
+		if err := s.repo.UpdateSession(ctx, tx, session); err != nil {
+			return err
+		}
+		if err := s.ensureApprovalInstance(ctx, tx, session.ID, actor); err != nil {
+			return err
+		}
+		return s.appendAuditLog(ctx, tx, session.ID, nil, session.InventoryType, stockModels.AuditActionSubmit, stockModels.AuditEntitySession, actor, session.Remarks, map[string]interface{}{"status": session.Status, "total_entries": session.TotalEntries})
+	})
+	if err != nil {
+		return nil, err
+	}
+	item := toSessionItem(updated)
+	return &item, nil
+}
+
+func (s *service) ApproveSession(ctx context.Context, id int64, req stockModels.ApproveRequest, actor string, userRoles []string) (*stockModels.StockOpnameSessionItem, error) {
+	var updated *stockModels.StockOpnameSession
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		session, err := s.repo.GetSessionByIDTx(ctx, tx, id, true)
+		if err != nil {
+			return err
+		}
+		if session.Status == stockModels.SessionStatusApproved || session.Status == stockModels.SessionStatusRejected || session.Status == stockModels.SessionStatusPartiallyApproved {
+			return apperror.Conflict("session already finished")
+		}
+		action := normalizeAction(req.Action)
+		if err := validateAction(action); err != nil {
+			return err
+		}
+		// Self-heal: sessions still in draft/in_progress (or created before the
+		// approval instance was provisioned) may not have an approval instance yet.
+		// Ensure one exists before loading the approval context so approving
+		// directly from the list/detail table works instead of returning
+		// "approval instance for stock opname session tidak ditemukan".
+		if err := s.ensureApprovalInstance(ctx, tx, session.ID, actor); err != nil {
+			return err
+		}
+		instance, workflow, err := s.getApprovalContext(ctx, tx, session.ID)
+		if err != nil {
+			return err
+		}
+		if err := ensureApprovalActor(instance, workflow, userRoles); err != nil {
+			return err
+		}
+		entries, err := s.repo.ListEntriesBySessionTx(ctx, tx, session.ID)
+		if err != nil {
+			return err
+		}
+		if len(entries) <= 0 {
+			return apperror.Conflict("session has no entry to approve")
+		}
+		session.TotalEntries = len(entries)
+		now := time.Now()
+		if action == stockModels.ApprovalActionReject {
+			if err := s.rejectPendingEntries(ctx, tx, entries, actor, now, trimPtr(req.Remarks)); err != nil {
+				return err
+			}
+			instance.ApprovalProgress.Levels[instance.CurrentLevel-1].Status = stockModels.EntryStatusRejected
+			instance.ApprovalProgress.Levels[instance.CurrentLevel-1].ApprovedBy = actor
+			instance.ApprovalProgress.Levels[instance.CurrentLevel-1].ApprovedAt = now.Format(time.RFC3339)
+			instance.ApprovalProgress.Levels[instance.CurrentLevel-1].Note = strings.TrimSpace(ptrString(req.Remarks))
+			instance.Status = stockModels.SessionStatusRejected
+			if err := s.updateApprovalInstance(ctx, tx, instance, now); err != nil {
+				return err
+			}
+			status, err := s.repo.DeriveSessionStatus(ctx, tx, session.ID)
+			if err != nil {
+				return err
+			}
+			session.Status = status
+			session.ApprovalRemarks = trimPtr(req.Remarks)
+		} else if instance.CurrentLevel < instance.MaxLevel {
+			level := &instance.ApprovalProgress.Levels[instance.CurrentLevel-1]
+			level.Status = stockModels.EntryStatusApproved
+			level.ApprovedBy = actor
+			level.ApprovedAt = now.Format(time.RFC3339)
+			level.Note = strings.TrimSpace(ptrString(req.Remarks))
+			instance.CurrentLevel++
+			instance.Status = stockModels.EntryStatusPending
+			if err := s.updateApprovalInstance(ctx, tx, instance, now); err != nil {
+				return err
+			}
+			session.Status = stockModels.SessionStatusPendingApproval
+			session.ApprovalRemarks = trimPtr(req.Remarks)
+		} else {
+			adj, err := s.getAdjuster(session.InventoryType)
+			if err != nil {
+				return err
+			}
+			for i := range entries {
+				if entries[i].Status != stockModels.EntryStatusPending {
+					continue
+				}
+				// [so-packing] Kalau entry berasal dari scan packing, update dulu qty
+				// packing-nya, lalu geser total stok uniq sebesar delta-nya saja
+				// (bukan overwrite total dengan hitungan 1 packing).
+				adjEntry := entries[i]
+				delta, packingApplied, err := s.applyPackingCount(ctx, tx, &entries[i])
+				if err != nil {
+					return err
+				}
+				if packingApplied {
+					adjEntry.CountedQty = entries[i].SystemQtySnapshot + delta
+				}
+				result, err := s.applyStockOpnameAdjustment(ctx, tx, session, adj, &adjEntry, actor)
+				if err != nil {
+					return err
+				}
+				if err := s.appendInventoryLog(ctx, tx, session.InventoryType, &entries[i], actor, session.SessionNumber, result); err != nil {
+					return err
+				}
+				entries[i].Status = stockModels.EntryStatusApproved
+				entries[i].RejectReason = nil
+				entries[i].ApprovedBy = strPtr(actor)
+				entries[i].ApprovedAt = &now
+				entries[i].UpdatedBy = strPtr(actor)
+				entries[i].UpdatedAt = now
+				if err := s.repo.UpdateEntry(ctx, tx, &entries[i]); err != nil {
+					return err
+				}
+			}
+			status, err := s.repo.DeriveSessionStatus(ctx, tx, session.ID)
+			if err != nil {
+				return err
+			}
+			session.Status = status
+			session.ApprovedBy = strPtr(actor)
+			session.ApprovedAt = &now
+			session.ApprovalRemarks = trimPtr(req.Remarks)
+			level := &instance.ApprovalProgress.Levels[instance.CurrentLevel-1]
+			level.Status = stockModels.EntryStatusApproved
+			level.ApprovedBy = actor
+			level.ApprovedAt = now.Format(time.RFC3339)
+			level.Note = strings.TrimSpace(ptrString(req.Remarks))
+			instance.Status = stockModels.SessionStatusApproved
+			if err := s.updateApprovalInstance(ctx, tx, instance, now); err != nil {
+				return err
+			}
+		}
+		session.UpdatedBy = strPtr(actor)
+		session.UpdatedAt = now
+		updated = session
+		if err := s.repo.UpdateSession(ctx, tx, session); err != nil {
+			return err
+		}
+		auditAction := stockModels.AuditActionApproveSession
+		if action == stockModels.ApprovalActionReject {
+			auditAction = stockModels.AuditActionRejectSession
+		}
+		return s.appendAuditLog(ctx, tx, session.ID, nil, session.InventoryType, auditAction, stockModels.AuditEntitySession, actor, trimPtr(req.Remarks), map[string]interface{}{"status": session.Status, "action": action})
+	})
+	if err != nil {
+		return nil, err
+	}
+	item := toSessionItem(updated)
+	return &item, nil
+}
+
+func (s *service) ApproveEntry(ctx context.Context, sessionID, entryID int64, req stockModels.ApproveRequest, actor string, userRoles []string) (*stockModels.StockOpnameEntryItem, error) {
+	var updated *stockModels.StockOpnameEntry
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		session, err := s.repo.GetSessionByIDTx(ctx, tx, sessionID, true)
+		if err != nil {
+			return err
+		}
+		if session.Status == stockModels.SessionStatusApproved || session.Status == stockModels.SessionStatusRejected || session.Status == stockModels.SessionStatusPartiallyApproved {
+			return apperror.Conflict("session already finished")
+		}
+		entry, err := s.repo.GetEntryByIDTx(ctx, tx, entryID, true)
+		if err != nil {
+			return err
+		}
+		if entry.SessionID != sessionID {
+			return apperror.NotFound("stock opname entry tidak ditemukan for session")
+		}
+		if entry.Status != stockModels.EntryStatusPending {
+			return apperror.Conflict("entry already processed")
+		}
+		action := normalizeAction(req.Action)
+		if err := validateAction(action); err != nil {
+			return err
+		}
+		// Self-heal: sessions still in draft/in_progress (or created before the
+		// approval instance was provisioned) may not have an approval instance yet.
+		// Ensure one exists before loading the approval context so approving
+		// directly from the list/detail table works instead of returning
+		// "approval instance for stock opname session tidak ditemukan".
+		if err := s.ensureApprovalInstance(ctx, tx, session.ID, actor); err != nil {
+			return err
+		}
+		instance, workflow, err := s.getApprovalContext(ctx, tx, session.ID)
+		if err != nil {
+			return err
+		}
+		if err := ensureApprovalActor(instance, workflow, userRoles); err != nil {
+			return err
+		}
+		if instance.CurrentLevel < instance.MaxLevel {
+			return apperror.Conflict("entry-level approval is only allowed at final approval level")
+		}
+		adj, err := s.getAdjuster(session.InventoryType)
+		if err != nil {
+			return err
+		}
+		now := time.Now()
+		if action == stockModels.ApprovalActionApprove {
+			// [so-packing] adjustment berbasis packing (lihat applyPackingCount).
+			adjEntry := *entry
+			delta, packingApplied, err := s.applyPackingCount(ctx, tx, entry)
+			if err != nil {
+				return err
+			}
+			if packingApplied {
+				adjEntry.CountedQty = entry.SystemQtySnapshot + delta
+			}
+			result, err := s.applyStockOpnameAdjustment(ctx, tx, session, adj, &adjEntry, actor)
+			if err != nil {
+				return err
+			}
+			if err := s.appendInventoryLog(ctx, tx, session.InventoryType, entry, actor, session.SessionNumber, result); err != nil {
+				return err
+			}
+			entry.Status = stockModels.EntryStatusApproved
+			entry.RejectReason = nil
+		} else {
+			entry.Status = stockModels.EntryStatusRejected
+			entry.RejectReason = trimPtr(req.Remarks)
+		}
+		entry.ApprovedBy = strPtr(actor)
+		entry.ApprovedAt = &now
+		entry.UpdatedBy = strPtr(actor)
+		entry.UpdatedAt = now
+		updated = entry
+		if err := s.repo.UpdateEntry(ctx, tx, entry); err != nil {
+			return err
+		}
+		status, err := s.repo.DeriveSessionStatus(ctx, tx, session.ID)
+		if err != nil {
+			return err
+		}
+		session.Status = status
+		if status != stockModels.SessionStatusPendingApproval {
+			session.ApprovedBy = strPtr(actor)
+			session.ApprovedAt = &now
+			level := &instance.ApprovalProgress.Levels[instance.CurrentLevel-1]
+			level.Status = map[bool]string{true: stockModels.EntryStatusRejected, false: stockModels.EntryStatusApproved}[action == stockModels.ApprovalActionReject]
+			level.ApprovedBy = actor
+			level.ApprovedAt = now.Format(time.RFC3339)
+			level.Note = strings.TrimSpace(ptrString(req.Remarks))
+			if status == stockModels.SessionStatusRejected {
+				instance.Status = stockModels.SessionStatusRejected
+			} else {
+				instance.Status = stockModels.SessionStatusApproved
+			}
+			if err := s.updateApprovalInstance(ctx, tx, instance, now); err != nil {
+				return err
+			}
+		}
+		session.ApprovalRemarks = trimPtr(req.Remarks)
+		session.UpdatedBy = strPtr(actor)
+		session.UpdatedAt = now
+		if err := s.repo.UpdateSession(ctx, tx, session); err != nil {
+			return err
+		}
+		auditAction := stockModels.AuditActionApproveEntry
+		if action == stockModels.ApprovalActionReject {
+			auditAction = stockModels.AuditActionRejectEntry
+		}
+		return s.appendAuditLog(ctx, tx, session.ID, &entry.ID, session.InventoryType, auditAction, stockModels.AuditEntityEntry, actor, trimPtr(req.Remarks), map[string]interface{}{"entry_status": entry.Status, "session_status": session.Status, "uniq_code": entry.UniqCode})
+	})
+	if err != nil {
+		return nil, err
+	}
+	item := toEntryItem(updated)
+	return &item, nil
+}
+
+func (s *service) buildApprovalSummary(ctx context.Context, sessionID int64) (*stockModels.StockOpnameApprovalDTO, error) {
+	var instance awmodels.ApprovalInstance
+	if err := s.db.WithContext(ctx).Where("action_name = ? AND reference_table = ? AND reference_id = ?", "stock_opname", "stock_opname_sessions", sessionID).Order("id DESC").First(&instance).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
+		return nil, apperror.InternalWrap("find stock opname approval instance failed", err)
+	}
+	var workflow awmodels.ApprovalWorkflow
+	if err := s.db.WithContext(ctx).Where("id = ?", instance.ApprovalWorkflowID).First(&workflow).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return &stockModels.StockOpnameApprovalDTO{InstanceID: instance.ID, WorkflowID: instance.ApprovalWorkflowID, CurrentLevel: instance.CurrentLevel, MaxLevel: instance.MaxLevel, Status: instance.Status, SubmittedBy: instance.SubmittedBy, ApprovalProgress: instance.ApprovalProgress}, nil
+		}
+		return nil, apperror.InternalWrap("find stock opname approval workflow failed", err)
+	}
+	return &stockModels.StockOpnameApprovalDTO{InstanceID: instance.ID, WorkflowID: workflow.ID, WorkflowAction: workflow.ActionName, CurrentLevel: instance.CurrentLevel, MaxLevel: instance.MaxLevel, Status: instance.Status, SubmittedBy: instance.SubmittedBy, ApprovalProgress: instance.ApprovalProgress, Level1Role: workflow.Level1Role, Level2Role: workflow.Level2Role, Level3Role: workflow.Level3Role, Level4Role: workflow.Level4Role}, nil
+}
+
+func (s *service) getApprovalContext(ctx context.Context, tx *gorm.DB, sessionID int64) (*awmodels.ApprovalInstance, *awmodels.ApprovalWorkflow, error) {
+	var instance awmodels.ApprovalInstance
+	if err := tx.WithContext(ctx).Where("action_name = ? AND reference_table = ? AND reference_id = ?", "stock_opname", "stock_opname_sessions", sessionID).Order("id DESC").First(&instance).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil, apperror.BadRequest("approval instance for stock opname session tidak ditemukan")
+		}
+		return nil, nil, apperror.InternalWrap("find stock opname approval instance failed", err)
+	}
+	var workflow awmodels.ApprovalWorkflow
+	if err := tx.WithContext(ctx).Where("id = ? AND status = ?", instance.ApprovalWorkflowID, "active").First(&workflow).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil, apperror.BadRequest("active approval workflow for stock opname tidak ditemukan")
+		}
+		return nil, nil, apperror.InternalWrap("find stock opname approval workflow failed", err)
+	}
+	return &instance, &workflow, nil
+}
+
+func (s *service) updateApprovalInstance(ctx context.Context, tx *gorm.DB, instance *awmodels.ApprovalInstance, now time.Time) error {
+	instance.UpdatedAt = now
+	return tx.WithContext(ctx).Model(&awmodels.ApprovalInstance{}).Where("id = ?", instance.ID).Updates(map[string]interface{}{"approval_progress": instance.ApprovalProgress, "status": instance.Status, "current_level": instance.CurrentLevel, "updated_at": now}).Error
+}
+
+// completeBulkUploadApproval closes the approval record together with the
+// inventory update performed by the Stock Opname Excel-upload path.
+func (s *service) completeBulkUploadApproval(ctx context.Context, tx *gorm.DB, sessionID int64, actor string, now time.Time) error {
+	var instance awmodels.ApprovalInstance
+	if err := tx.WithContext(ctx).
+		Where("action_name = ? AND reference_table = ? AND reference_id = ?", "stock_opname", "stock_opname_sessions", sessionID).
+		Order("id DESC").
+		First(&instance).Error; err != nil {
+		return apperror.InternalWrap("find bulk stock opname approval instance failed", err)
+	}
+	for i := range instance.ApprovalProgress.Levels {
+		level := &instance.ApprovalProgress.Levels[i]
+		level.Status = stockModels.EntryStatusApproved
+		level.ApprovedBy = actor
+		level.ApprovedAt = now.Format(time.RFC3339)
+	}
+	instance.CurrentLevel = instance.MaxLevel
+	instance.Status = stockModels.SessionStatusApproved
+	return s.updateApprovalInstance(ctx, tx, &instance, now)
+}
+
+func (s *service) ensureApprovalInstance(ctx context.Context, tx *gorm.DB, sessionID int64, actor string) error {
+	var existing awmodels.ApprovalInstance
+	err := tx.WithContext(ctx).
+		Where("action_name = ? AND reference_table = ? AND reference_id = ?", "stock_opname", "stock_opname_sessions", sessionID).
+		Order("id DESC").
+		First(&existing).Error
+	if err == nil {
+		return nil
+	}
+	if err != nil && err != gorm.ErrRecordNotFound {
+		return apperror.InternalWrap("find stock opname approval instance failed", err)
+	}
+	_, err = approval.CreateInstance(ctx, tx, approval.CreateInstanceParams{
+		ActionName:     "stock_opname",
+		ReferenceTable: "stock_opname_sessions",
+		ReferenceID:    sessionID,
+		SubmittedBy:    actor,
+		MinLevels:      1,
+	})
+	return err
+}
+
+func (s *service) rejectPendingEntries(ctx context.Context, tx *gorm.DB, entries []stockModels.StockOpnameEntry, actor string, now time.Time, remarks *string) error {
+	for i := range entries {
+		if entries[i].Status != stockModels.EntryStatusPending {
+			continue
+		}
+		entries[i].Status = stockModels.EntryStatusRejected
+		entries[i].RejectReason = remarks
+		entries[i].ApprovedBy = strPtr(actor)
+		entries[i].ApprovedAt = &now
+		entries[i].UpdatedBy = strPtr(actor)
+		entries[i].UpdatedAt = now
+		if err := s.repo.UpdateEntry(ctx, tx, &entries[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureApprovalActor(instance *awmodels.ApprovalInstance, workflow *awmodels.ApprovalWorkflow, userRoles []string) error {
+	if instance.Status == stockModels.SessionStatusApproved || instance.Status == stockModels.SessionStatusRejected {
+		return apperror.Conflict("approval already finished")
+	}
+	if instance.CurrentLevel < 1 || instance.CurrentLevel > len(instance.ApprovalProgress.Levels) {
+		return apperror.BadRequest("invalid approval current level")
+	}
+	requiredRole := approval.LevelRole(workflow, int16(instance.CurrentLevel))
+	if requiredRole == "" {
+		requiredRole = instance.ApprovalProgress.Levels[instance.CurrentLevel-1].Role
+	}
+	if requiredRole == "" {
+		return apperror.BadRequest("required approval role is not configured")
+	}
+	if !approval.HasRole(userRoles, requiredRole) {
+		return apperror.Forbidden(fmt.Sprintf("stock opname is waiting approval from role '%s'", requiredRole))
+	}
+	return nil
+}
+
+func ptrString(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
+func (s *service) addEntryTx(ctx context.Context, sessionID int64, req stockModels.CreateEntryRequest, actor string) (*stockModels.StockOpnameEntry, error) {
+	var created *stockModels.StockOpnameEntry
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		session, err := s.repo.GetSessionByIDTx(ctx, tx, sessionID, true)
+		if err != nil {
+			return err
+		}
+		if !isEditableSessionStatus(session.Status) {
+			return apperror.Conflict("entries can only be added while draft or in_progress")
+		}
+		adj, err := s.getAdjuster(session.InventoryType)
+		if err != nil {
+			return err
+		}
+		entry, err := s.buildEntry(ctx, tx, session, adj, req, actor)
+		if err != nil {
+			return err
+		}
+		created = entry
+		if err := s.repo.CreateEntry(ctx, tx, entry); err != nil {
+			return err
+		}
+		if err := s.repo.RecalculateSessionTotals(ctx, tx, session.ID); err != nil {
+			return err
+		}
+		if err := s.refreshSessionTotals(ctx, tx, session); err != nil {
+			return err
+		}
+		session.Status = stockModels.SessionStatusInProgress
+		session.UpdatedBy = strPtr(actor)
+		session.UpdatedAt = time.Now()
+		if err := s.repo.UpdateSession(ctx, tx, session); err != nil {
+			return err
+		}
+		return s.appendAuditLog(ctx, tx, session.ID, &entry.ID, session.InventoryType, stockModels.AuditActionAddEntry, stockModels.AuditEntityEntry, actor, entry.Remarks, map[string]interface{}{"uniq_code": entry.UniqCode, "counted_qty": entry.CountedQty})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return created, nil
+}
+
+func (s *service) applyStockOpnameAdjustment(ctx context.Context, tx *gorm.DB, session *stockModels.StockOpnameSession, adj adjuster.InventoryAdjuster, entry *stockModels.StockOpnameEntry, actor string) (*adjuster.AdjustmentResult, error) {
+	if session.InventoryType == stockModels.InventoryTypeWIP && session.Method == stockModels.MethodBulk {
+		return adjuster.ApplyWIPBOMAdjustment(ctx, tx, entry, session.SessionNumber, actor)
+	}
+	return adj.ApplyAdjustment(ctx, tx, entry, session.SessionNumber, actor)
+}
+
+func (s *service) buildEntry(ctx context.Context, tx *gorm.DB, session *stockModels.StockOpnameSession, adj adjuster.InventoryAdjuster, req stockModels.CreateEntryRequest, actor string) (*stockModels.StockOpnameEntry, error) {
+	// [so-packing] Action UI men-scan packing list / DN dulu; dari situ backend
+	// me-resolve uniq, DN pemiliknya, dan qty maksimal packing tersebut.
+	uniqCode := strings.TrimSpace(req.UniqCode)
+	packingNumber := strings.TrimSpace(req.PackingNumber)
+	var packing *stockModels.PackingOption
+	if packingNumber != "" {
+		p, err := s.resolvePackingTx(ctx, tx, packingNumber)
+		if err != nil {
+			return nil, err
+		}
+		packing = p
+		if uniqCode != "" && !strings.EqualFold(uniqCode, p.UniqCode) {
+			return nil, apperror.BadRequest("uniq_code tidak cocok dengan packing number yang discan")
+		}
+		uniqCode = p.UniqCode
+		if req.CountedQty > p.MaxQty {
+			return nil, apperror.BadRequest(fmt.Sprintf("counted qty melebihi batas. Maksimal %.2f untuk packing %s", p.MaxQty, p.PackingNumber))
+		}
+	}
+	if uniqCode == "" {
+		return nil, apperror.BadRequest("uniq_code atau packing_number wajib diisi")
+	}
+	var snapshot *adjuster.UniqSnapshot
+	var err error
+	if session.InventoryType == stockModels.InventoryTypeWIP && session.Method == stockModels.MethodBulk {
+		// Bulk Excel WIP rows use active BOM items as their reference because
+		// wip_items is intentionally empty in this workflow.
+		snapshot, err = adjuster.ResolveWIPBOMUniq(ctx, tx, uniqCode)
+	} else {
+		snapshot, err = adj.ResolveUniq(ctx, tx, uniqCode)
+	}
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	entry := &stockModels.StockOpnameEntry{SessionID: session.ID, UniqCode: uniqCode, EntityID: snapshot.EntityID, PartNumber: snapshot.PartNumber, PartName: snapshot.PartName, UOM: snapshot.UOM, SystemQtySnapshot: snapshot.SystemQty, CountedQty: req.CountedQty, VariancePct: calcVariancePct(snapshot.SystemQty, req.CountedQty), WeightKg: req.WeightKg, CyclePengiriman: trimPtr(req.CyclePengiriman), UserCounter: trimPtr(req.UserCounter), Remarks: trimPtr(req.Remarks), Status: stockModels.EntryStatusPending, CreatedBy: strPtr(actor), UpdatedBy: strPtr(actor), CreatedAt: now, UpdatedAt: now}
+	if packing != nil {
+		entry.PackingNumber = &packing.PackingNumber
+		entry.MaxQty = &packing.MaxQty
+		if strings.TrimSpace(packing.DNNumber) != "" {
+			entry.DNNumber = &packing.DNNumber
+		}
+	}
+	return entry, nil
+}
+
+func (s *service) appendInventoryLog(ctx context.Context, tx *gorm.DB, inventoryType string, entry *stockModels.StockOpnameEntry, actor, sessionNumber string, result *adjuster.AdjustmentResult) error {
+	notes := fmt.Sprintf("stock opname %s", sessionNumber)
+	if result == nil {
+		return nil
+	}
+	if result.EntityID != nil {
+		entry.EntityID = result.EntityID
+	}
+	switch inventoryType {
+	case stockModels.InventoryTypeRM:
+		if err := s.invSvc.AppendMovementLog(ctx, tx, invService.MovementLogInput{Category: string(inventoryconst.CategoryRawMaterial), MovementType: string(inventoryconst.MovementStockOpname), UniqCode: entry.UniqCode, EntityID: entry.EntityID, QtyChange: result.QtyChange, WeightChange: result.WeightChange, SourceFlag: string(inventoryconst.SourceStockOpname), ReferenceID: &sessionNumber, Notes: &notes, LoggedBy: actor}); err != nil {
+			return apperror.Internal("append RM stock opname movement log: " + err.Error())
+		}
+	case stockModels.InventoryTypeIDR:
+		if err := s.invSvc.AppendMovementLog(ctx, tx, invService.MovementLogInput{Category: string(inventoryconst.CategoryIndirectMaterial), MovementType: string(inventoryconst.MovementStockOpname), UniqCode: entry.UniqCode, EntityID: entry.EntityID, QtyChange: result.QtyChange, WeightChange: result.WeightChange, SourceFlag: string(inventoryconst.SourceStockOpname), ReferenceID: &sessionNumber, Notes: &notes, LoggedBy: actor}); err != nil {
+			return apperror.Internal("append indirect stock opname movement log: " + err.Error())
+		}
+	case stockModels.InventoryTypeSubcon:
+		if err := s.invSvc.AppendMovementLog(ctx, tx, invService.MovementLogInput{Category: string(inventoryconst.CategorySubcon), MovementType: string(inventoryconst.MovementStockOpname), UniqCode: entry.UniqCode, EntityID: entry.EntityID, QtyChange: result.QtyChange, WeightChange: result.WeightChange, SourceFlag: string(inventoryconst.SourceStockOpname), ReferenceID: &sessionNumber, Notes: &notes, LoggedBy: actor}); err != nil {
+			return apperror.Internal("append subcon stock opname movement log: " + err.Error())
+		}
+	}
+	return nil
+}
+
+func (s *service) appendAuditLog(ctx context.Context, tx *gorm.DB, sessionID int64, entryID *int64, inventoryType, action, entityType, actor string, remarks *string, metadata map[string]interface{}) error {
+	log := &stockModels.StockOpnameAuditLog{SessionID: sessionID, EntryID: entryID, InventoryType: inventoryType, Action: action, EntityType: entityType, Actor: actor, Remarks: remarks, Metadata: repository.ToJSONMap(metadata)}
+	return s.repo.CreateAuditLog(ctx, tx, log)
+}
+
+func (s *service) refreshSessionTotals(ctx context.Context, tx *gorm.DB, session *stockModels.StockOpnameSession) error {
+	refreshed, err := s.repo.GetSessionByIDTx(ctx, tx, session.ID, false)
+	if err != nil {
+		return err
+	}
+	session.TotalEntries = refreshed.TotalEntries
+	session.TotalVarianceQty = refreshed.TotalVarianceQty
+	return nil
+}
+
+func (s *service) getAdjuster(inventoryType string) (adjuster.InventoryAdjuster, error) {
+	adj, ok := s.adjusters[inventoryType]
+	if !ok {
+		return nil, apperror.UnprocessableEntity("inventory_type must be one of: FG, RM, IDR, WIP, SUBCON")
+	}
+	return adj, nil
+}
+
+func toSessionItem(row *stockModels.StockOpnameSession) stockModels.StockOpnameSessionItem {
+	statusLabel, impactLabel := deriveStatusLabels(row.Status)
+	periodLabel := fmt.Sprintf("%02d/%d", row.PeriodMonth, row.PeriodYear)
+	return stockModels.StockOpnameSessionItem{ID: row.ID, UUID: row.UUID.String(), SessionNumber: row.SessionNumber, InventoryType: row.InventoryType, Method: row.Method, PeriodMonth: row.PeriodMonth, PeriodYear: row.PeriodYear, PeriodLabel: periodLabel, WarehouseLocation: row.WarehouseLocation, ScheduleDate: row.ScheduleDate, CountedDate: row.CountedDate, Remarks: row.Remarks, TotalEntries: row.TotalEntries, TotalVarianceQty: row.TotalVarianceQty, Status: row.Status, StatusLabel: statusLabel, ImpactLabel: impactLabel, SubmittedBy: row.SubmittedBy, SubmittedAt: row.SubmittedAt, Approver: row.Approver, ApprovedBy: row.ApprovedBy, ApprovedAt: row.ApprovedAt, ApprovalRemarks: row.ApprovalRemarks, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+}
+
+func toSessionListItem(row *repository.SessionListRow) stockModels.StockOpnameSessionItem {
+	statusLabel, impactLabel := deriveStatusLabels(row.Status)
+	periodLabel := fmt.Sprintf("%02d/%d", row.PeriodMonth, row.PeriodYear)
+	return stockModels.StockOpnameSessionItem{ID: row.ID, UUID: row.UUID.String(), SessionNumber: row.SessionNumber, InventoryType: row.InventoryType, Method: row.Method, PeriodMonth: row.PeriodMonth, PeriodYear: row.PeriodYear, PeriodLabel: periodLabel, WarehouseLocation: row.WarehouseLocation, ScheduleDate: row.ScheduleDate, CountedDate: row.CountedDate, Remarks: row.Remarks, UOM: row.UOM, TotalEntries: row.TotalEntries, TotalVarianceQty: row.TotalVarianceQty, SystemQtyTotal: row.SystemQtyTotal, PhysicalQtyTotal: row.PhysicalQtyTotal, VarianceQtyTotal: row.VarianceQtyTotal, VariancePctTotal: row.VariancePctTotal, CostImpact: row.CostImpact, Status: row.Status, StatusLabel: statusLabel, ImpactLabel: impactLabel, SubmittedBy: row.SubmittedBy, SubmittedAt: row.SubmittedAt, Approver: row.Approver, ApprovedBy: row.ApprovedBy, ApprovedAt: row.ApprovedAt, ApprovalRemarks: row.ApprovalRemarks, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+}
+
+func toEntryItem(row *stockModels.StockOpnameEntry) stockModels.StockOpnameEntryItem {
+	return stockModels.StockOpnameEntryItem{ID: row.ID, UUID: row.UUID.String(), SessionID: row.SessionID, UniqCode: row.UniqCode, EntityID: row.EntityID, PartNumber: row.PartNumber, PartName: row.PartName, UOM: row.UOM, SystemQtySnapshot: row.SystemQtySnapshot, CountedQty: row.CountedQty, VarianceQty: row.CountedQty - row.SystemQtySnapshot, VariancePct: row.VariancePct, WeightKg: row.WeightKg, CyclePengiriman: row.CyclePengiriman, UserCounter: row.UserCounter, Remarks: row.Remarks, PackingNumber: row.PackingNumber, DNNumber: row.DNNumber, MaxQty: row.MaxQty, Status: row.Status, ApprovedBy: row.ApprovedBy, ApprovedAt: row.ApprovedAt, RejectReason: row.RejectReason, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+}
+
+func toAuditLogItem(row *stockModels.StockOpnameAuditLog) stockModels.AuditLogItem {
+	var metadata interface{}
+	if len(row.Metadata) > 0 {
+		_ = json.Unmarshal(row.Metadata, &metadata)
+	}
+	return stockModels.AuditLogItem{ID: row.ID, UUID: row.UUID.String(), SessionID: row.SessionID, EntryID: row.EntryID, InventoryType: row.InventoryType, Action: row.Action, EntityType: row.EntityType, Actor: row.Actor, Remarks: row.Remarks, Metadata: metadata, CreatedAt: row.CreatedAt}
+}
+
+func deriveStatusLabels(status string) (string, string) {
+	switch status {
+	case stockModels.SessionStatusApproved:
+		return "Completed", "Approved"
+	case stockModels.SessionStatusRejected:
+		return "Completed", "Rejected"
+	case stockModels.SessionStatusPartiallyApproved:
+		return "Completed", "Partially Approved"
+	case stockModels.SessionStatusPendingApproval:
+		return "Pending Verification", "Waiting for Approval"
+	case stockModels.SessionStatusInProgress:
+		return "In Progress", "Counting In Progress"
+	default:
+		return "Draft", "Not Submitted"
+	}
+}
+
+func humanizeHistoryReason(reason *string) *string {
+	if reason == nil {
+		return nil
+	}
+	v := strings.TrimSpace(*reason)
+	if v == "" {
+		return nil
+	}
+	switch v {
+	case "stock_opname":
+		v = "Stock Opname"
+	case "incoming":
+		v = "Incoming"
+	case "outgoing":
+		v = "Outgoing"
+	case "adjustment":
+		v = "Adjustment"
+	}
+	return &v
+}
+
+func paginate(total int64, page, limit int) stockModels.Pagination {
+	totalPages := 1
+	if limit > 0 {
+		totalPages = int(math.Ceil(float64(total) / float64(limit)))
+		if totalPages == 0 {
+			totalPages = 1
+		}
+	}
+	if page < 1 {
+		page = 1
+	}
+	return stockModels.Pagination{Total: total, Page: page, Limit: limit, TotalPages: totalPages}
+}
+
+func normalizeInventoryType(v string) string { return strings.ToUpper(strings.TrimSpace(v)) }
+func normalizeMethod(v string) string        { return strings.ToLower(strings.TrimSpace(v)) }
+func normalizeAction(v string) string        { return strings.ToLower(strings.TrimSpace(v)) }
+func strPtr(v string) *string                { return &v }
+
+func trimPtr(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*v)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func parseDate(v *string) *time.Time {
+	if v == nil || strings.TrimSpace(*v) == "" {
+		return nil
+	}
+	t, err := time.Parse("2006-01-02", strings.TrimSpace(*v))
+	if err != nil {
+		return nil
+	}
+	return &t
+}
+
+func calcVariancePct(systemQty, countedQty float64) *float64 {
+	if systemQty == 0 {
+		return nil
+	}
+	v := ((countedQty - systemQty) / systemQty) * 100
+	return &v
+}
+
+func isEditableSessionStatus(status string) bool {
+	return status == stockModels.SessionStatusDraft || status == stockModels.SessionStatusInProgress
+}
+
+func validateInventoryType(v string) error {
+	if _, ok := stockModels.ValidInventoryTypes[v]; !ok {
+		return apperror.UnprocessableEntity("inventory_type must be one of: FG, RM, IDR, WIP, SUBCON")
+	}
+	return nil
+}
+
+func validateMethod(v string) error {
+	if v != stockModels.MethodManual && v != stockModels.MethodBulk {
+		return apperror.UnprocessableEntity("method must be one of: manual, bulk")
+	}
+	return nil
+}
+
+func validateAction(v string) error {
+	if v != stockModels.ApprovalActionApprove && v != stockModels.ApprovalActionReject {
+		return apperror.UnprocessableEntity("action must be one of: approve, reject")
+	}
+	return nil
+}
+
+func validateCreateSessionRequest(req stockModels.CreateSessionRequest) error {
+	if err := validateInventoryType(req.InventoryType); err != nil {
+		return err
+	}
+	if err := validateMethod(req.Method); err != nil {
+		return err
+	}
+	if req.PeriodMonth < 1 || req.PeriodMonth > 12 {
+		return apperror.UnprocessableEntity("period_month must be between 1 and 12")
+	}
+	if req.PeriodYear < 2000 {
+		return apperror.UnprocessableEntity("period_year is invalid")
+	}
+	for i := range req.Items {
+		if strings.TrimSpace(req.Items[i].UniqCode) == "" {
+			return apperror.UnprocessableEntity(fmt.Sprintf("items[%d].uniq_code is required", i))
+		}
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// [so-packing] Stock opname berbasis packing list / DN number
+// ---------------------------------------------------------------------------
+
+// packingScanRow adalah baris delivery_note_items + dn_number pemiliknya.
+type packingScanRow struct {
+	PackingNumber string  `gorm:"column:packing_number"`
+	DNNumber      string  `gorm:"column:dn_number"`
+	UniqCode      string  `gorm:"column:item_uniq_code"`
+	Quantity      float64 `gorm:"column:quantity"`
+}
+
+// resolvePackingTx menerjemahkan nomor packing list yang discan menjadi
+// konteks delivery note (uniq, dn_number, qty maksimal) lalu memperkaya
+// dengan snapshot inventory dari uniq pemiliknya.
+func (s *service) resolvePackingTx(ctx context.Context, tx *gorm.DB, packingNumber string) (*stockModels.PackingOption, error) {
+	packingNumber = strings.TrimSpace(packingNumber)
+	if packingNumber == "" {
+		return nil, apperror.BadRequest("packing_number wajib diisi")
+	}
+	var row packingScanRow
+	if err := tx.WithContext(ctx).
+		Table("delivery_note_items dni").
+		Select("dni.packing_number, dni.item_uniq_code, dni.quantity, dn.dn_number").
+		Joins("JOIN delivery_notes dn ON dn.id = dni.dn_id").
+		Where("dni.packing_number = ?", packingNumber).
+		Order("dn.id DESC").
+		Limit(1).
+		Scan(&row).Error; err != nil {
+		return nil, apperror.Internal("resolve packing number: " + err.Error())
+	}
+	if strings.TrimSpace(row.UniqCode) == "" {
+		// [so-fg-packing] Finished Goods di-scan dari kanban/packing list Work
+		// Order (work_order_items.kanban_number), bukan dari delivery note. Kalau
+		// packing tidak ada di delivery_note_items, resolve dari work_order_items
+		// supaya scan packing FG (yang belum punya DN) tetap ketemu. dn_number
+		// diisi dari DN yang cocok bila sudah ada, kalau belum dibiarkan kosong.
+		var woRow packingScanRow
+		if err := tx.WithContext(ctx).
+			Table("work_order_items woi").
+			Select("woi.kanban_number AS packing_number, woi.item_uniq_code AS item_uniq_code, COALESCE(NULLIF(kp.kanban_qty, 0), NULLIF(woi.quantity, 0), 0) AS quantity, COALESCE(dn.dn_number, '') AS dn_number").
+			Joins("LEFT JOIN delivery_note_items dni ON dni.packing_number = woi.kanban_number").
+			Joins("LEFT JOIN delivery_notes dn ON dn.id = dni.dn_id").
+			Joins("LEFT JOIN LATERAL (SELECT kanban_qty FROM kanban_parameters WHERE item_uniq_code = woi.item_uniq_code ORDER BY id DESC LIMIT 1) kp ON TRUE").
+			Where("woi.kanban_number = ?", packingNumber).
+			Order("woi.id DESC").
+			Limit(1).
+			Scan(&woRow).Error; err != nil {
+			return nil, apperror.Internal("resolve packing number (work order): " + err.Error())
+		}
+		row = woRow
+	}
+	if strings.TrimSpace(row.UniqCode) == "" {
+		return nil, apperror.NotFound("packing number tidak ditemukan di delivery note maupun work order")
+	}
+
+	opt := &stockModels.PackingOption{PackingNumber: row.PackingNumber, DNNumber: row.DNNumber, UniqCode: row.UniqCode, MaxQty: row.Quantity}
+	if strings.TrimSpace(opt.PackingNumber) == "" {
+		opt.PackingNumber = packingNumber
+	}
+
+	// Deteksi modul inventory pemilik uniq ini supaya Action UI tahu tipe
+	// stock opname yang harus dipakai untuk sesi barunya.
+	for _, invType := range []string{stockModels.InventoryTypeRM, stockModels.InventoryTypeFG, stockModels.InventoryTypeIDR, stockModels.InventoryTypeWIP, stockModels.InventoryTypeSubcon} {
+		adj, err := s.getAdjuster(invType)
+		if err != nil {
+			continue
+		}
+		snapshot, err := adj.ResolveUniq(ctx, tx, opt.UniqCode)
+		if err != nil || snapshot == nil {
+			continue
+		}
+		opt.InventoryType = invType
+		opt.PartNumber = snapshot.PartNumber
+		opt.PartName = snapshot.PartName
+		opt.UOM = snapshot.UOM
+		opt.SystemQty = snapshot.SystemQty
+		opt.WeightKg = snapshot.WeightKg
+		opt.RawMaterialType = snapshot.RawMaterialType
+		break
+	}
+	if opt.InventoryType == "" {
+		return nil, apperror.NotFound("uniq dari packing number ini tidak ada di inventory mana pun")
+	}
+	return opt, nil
+}
+
+func (s *service) ResolvePackingOption(ctx context.Context, packing string) (*stockModels.PackingOption, error) {
+	return s.resolvePackingTx(ctx, s.db.WithContext(ctx), packing)
+}
+
+// applyPackingCount menulis hasil hitung fisik ke baris packing di
+// delivery_note_items dan mengembalikan delta-nya, supaya pemanggil bisa
+// menggeser total stok uniq sebesar delta itu saja.
+func (s *service) applyPackingCount(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry) (float64, bool, error) {
+	if entry == nil || entry.PackingNumber == nil {
+		return 0, false, nil
+	}
+	packingNumber := strings.TrimSpace(*entry.PackingNumber)
+	if packingNumber == "" {
+		return 0, false, nil
+	}
+	var row struct {
+		ID        int64    `gorm:"column:id"`
+		Quantity  float64  `gorm:"column:quantity"`
+		QtyOpname *float64 `gorm:"column:qty_opname"`
+	}
+	if err := tx.WithContext(ctx).
+		Table("delivery_note_items").
+		Select("id, quantity, qty_opname").
+		Where("packing_number = ?", packingNumber).
+		Order("id DESC").
+		Limit(1).
+		Scan(&row).Error; err != nil {
+		return 0, false, apperror.Internal("load packing row: " + err.Error())
+	}
+	if row.ID == 0 {
+		// [so-fg-packing] Packing FG berasal dari work_order_items (kanban WO),
+		// belum tentu punya baris delivery_note_items. Terapkan hitung opname di
+		// work_order_items supaya alur approve FG delta-based sama seperti tipe
+		// inventory lain.
+		return s.applyPackingCountWO(ctx, tx, entry, packingNumber)
+	}
+	if entry.MaxQty != nil && entry.CountedQty > *entry.MaxQty {
+		return 0, false, apperror.BadRequest(fmt.Sprintf("counted qty melebihi batas. Maksimal %.2f untuk packing %s", *entry.MaxQty, packingNumber))
+	}
+	// [so-packing] Nilai berjalan packing = qty_opname kalau sudah pernah
+	// diopname, kalau belum pakai quantity (rencana DN). Kolom quantity
+	// sendiri TIDAK PERNAH diubah supaya "Qty maksimal" tetap stabil.
+	previous := row.Quantity
+	if row.QtyOpname != nil {
+		previous = *row.QtyOpname
+	}
+	delta := entry.CountedQty - previous
+	opnameAt := time.Now()
+	if err := tx.WithContext(ctx).
+		Table("delivery_note_items").
+		Where("id = ?", row.ID).
+		Updates(map[string]interface{}{"qty_opname": entry.CountedQty, "qty_opname_at": opnameAt, "updated_at": opnameAt}).Error; err != nil {
+		return 0, false, apperror.Internal("update packing qty opname: " + err.Error())
+	}
+	return delta, true, nil
+}
+
+// applyPackingCountWO menerapkan hasil hitung fisik untuk packing yang berasal
+// dari kanban/packing list Work Order (work_order_items). Nilai berjalan =
+// qty_opname kalau sudah pernah diopname, kalau belum pakai total_good_qty
+// (angka produksi WO). total_good_qty TIDAK diubah supaya data produksi utuh;
+// hasil opname disimpan terpisah di qty_opname. Mengembalikan delta supaya
+// total stok FG digeser sebesar delta itu saja (bukan overwrite total).
+func (s *service) applyPackingCountWO(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry, packingNumber string) (float64, bool, error) {
+	var row struct {
+		ID           int64    `gorm:"column:id"`
+		TotalGoodQty float64  `gorm:"column:total_good_qty"`
+		QtyOpname    *float64 `gorm:"column:qty_opname"`
+	}
+	if err := tx.WithContext(ctx).
+		Table("work_order_items").
+		Select("id, total_good_qty, qty_opname").
+		Where("kanban_number = ?", packingNumber).
+		Order("id DESC").
+		Limit(1).
+		Scan(&row).Error; err != nil {
+		return 0, false, apperror.Internal("load WO packing row: " + err.Error())
+	}
+	if row.ID == 0 {
+		return 0, false, apperror.NotFound("packing number tidak ditemukan saat approve")
+	}
+	if entry.MaxQty != nil && entry.CountedQty > *entry.MaxQty {
+		return 0, false, apperror.BadRequest(fmt.Sprintf("counted qty melebihi batas. Maksimal %.2f untuk packing %s", *entry.MaxQty, packingNumber))
+	}
+	previous := row.TotalGoodQty
+	if row.QtyOpname != nil {
+		previous = *row.QtyOpname
+	}
+	delta := entry.CountedQty - previous
+	opnameAt := time.Now()
+	if err := tx.WithContext(ctx).
+		Table("work_order_items").
+		Where("id = ?", row.ID).
+		Updates(map[string]interface{}{"qty_opname": entry.CountedQty, "qty_opname_at": opnameAt, "updated_at": opnameAt}).Error; err != nil {
+		return 0, false, apperror.Internal("update WO packing qty opname: " + err.Error())
+	}
+	return delta, true, nil
+}

@@ -1,0 +1,99 @@
+package work_order
+
+import (
+	"github.com/ganasa18/go-template/config"
+	authMiddleware "github.com/ganasa18/go-template/internal/auth/middleware"
+	authService "github.com/ganasa18/go-template/internal/auth/service"
+	baseHandler "github.com/ganasa18/go-template/internal/base/handler"
+	appmodule "github.com/ganasa18/go-template/internal/module"
+	roleMiddleware "github.com/ganasa18/go-template/internal/role/middleware"
+	roleService "github.com/ganasa18/go-template/internal/role/service"
+	woHandler "github.com/ganasa18/go-template/internal/work_order/handler"
+	woService "github.com/ganasa18/go-template/internal/work_order/service"
+	"github.com/gin-gonic/gin"
+)
+
+var _ appmodule.HTTPModule = (*HTTPModule)(nil)
+
+type HTTPModule struct {
+	cfg           *config.Config
+	base          *baseHandler.BaseHTTPHandler
+	handler       *woHandler.HTTPHandler
+	authenticator authService.Authenticator
+	roleService   roleService.IRoleService
+	service       woService.IService
+}
+
+func NewHTTPModule(
+	cfg *config.Config,
+	base *baseHandler.BaseHTTPHandler,
+	handler *woHandler.HTTPHandler,
+	authenticator authService.Authenticator,
+	roleSvc roleService.IRoleService,
+	svc woService.IService,
+) appmodule.HTTPModule {
+	return &HTTPModule{
+		cfg:           cfg,
+		base:          base,
+		handler:       handler,
+		authenticator: authenticator,
+		roleService:   roleSvc,
+		service:       svc,
+	}
+}
+
+// RegisterRoutes registers Work Order endpoints.
+// Base: /api/v1/working-order
+func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
+	auth := authMiddleware.JWTMiddleware(m.authenticator)
+	perm := func(resource, action string) gin.HandlerFunc {
+		return roleMiddleware.RequirePermission(m.roleService, resource, action)
+	}
+
+	g := r.Group("/api/v1/working-order")
+	g.Use(auth)
+
+	wo := g.Group("/work-orders")
+	// Static endpoints must be registered before wildcard (/:id/...)
+	wo.GET("/form-options/uniq", perm("work_order", "view"), m.base.RunAction(m.handler.UniqFormOptions))
+	wo.GET("/form-options/processes", perm("work_order", "view"), m.base.RunAction(m.handler.ProcessFormOptions))
+	wo.GET("/summary", perm("work_order", "view"), m.base.RunAction(m.handler.GetWorkOrderSummary))
+	wo.GET("", perm("work_order", "view"), m.base.RunAction(m.handler.ListWorkOrders))
+	wo.POST("/preview", perm("work_order", "create"), m.base.RunAction(m.handler.PreviewWorkOrder))
+	wo.POST("", perm("work_order", "create"), m.base.RunAction(m.handler.CreateWorkOrder))
+	wo.POST("/bulk-approval", perm("work_order", "approve"), m.base.RunAction(m.handler.BulkApproval))
+	wo.GET("/import/template", perm("work_order", "view"), m.handler.DownloadImportTemplateRaw)
+	wo.POST("/import", perm("work_order", "create"), m.base.RunAction(m.handler.ImportWorkOrderExcel))
+	wo.GET("/import/errors/:token", perm("work_order", "view"), m.handler.DownloadImportErrorsRaw)
+	wo.GET("/import/history", perm("work_order", "view"), m.base.RunAction(m.handler.GetImportHistory))
+	wo.GET("/import/history/:id/errors", perm("work_order", "view"), m.handler.DownloadImportHistoryErrorRaw)
+	wo.GET("/:id", perm("work_order", "view"), m.base.RunAction(m.handler.GetWorkOrderDetail))
+	wo.POST("/:id/approval", perm("work_order", "approve"), m.base.RunAction(m.handler.Approval))
+	wo.GET("/:id/qr", perm("work_order", "view"), m.base.RunAction(m.handler.GetWorkOrderQR))
+
+	// Robot Automation creates standard WOs through the normal create endpoint.
+	// This surface only lists those tasks and accepts the user's approval decision.
+	robotTasks := g.Group("/robot-tasks")
+	robotTasks.GET("", perm("work_order", "view"), m.base.RunAction(m.handler.ListRobotTasks))
+	robotTasks.POST("/:id/approval", perm("work_order", "approve"), m.base.RunAction(m.handler.ApprovalRobotTask))
+
+	rm := g.Group("/rm-processing/work-orders")
+	rm.GET("/summary", perm("work_order", "view"), m.base.RunAction(m.handler.GetRMProcessingWorkOrderSummary))
+	rm.GET("", perm("work_order", "view"), m.base.RunAction(m.handler.ListRMProcessingWorkOrders))
+	rm.POST("", perm("work_order", "create"), m.base.RunAction(m.handler.CreateRMProcessingWorkOrder))
+	rm.GET("/:id", perm("work_order", "view"), m.base.RunAction(m.handler.GetRMProcessingWorkOrderDetail))
+	rm.POST("/:id/approval", perm("work_order", "approve"), m.base.RunAction(m.handler.ApprovalRMProcessing))
+
+	bulk := g.Group("/bulk")
+	bulk.GET("/form-options/documents", perm("work_order", "view"), m.base.RunAction(m.handler.ListBulkSourceDocuments))
+	bulk.GET("/form-options/document-items", perm("work_order", "view"), m.base.RunAction(m.handler.ListBulkSourceDocumentItems))
+	bulk.GET("/work-orders/summary", perm("work_order", "view"), m.base.RunAction(m.handler.GetBulkWorkOrderSummary))
+	bulk.GET("/work-orders", perm("work_order", "view"), m.base.RunAction(m.handler.ListBulkWorkOrders))
+	bulk.POST("/work-orders", perm("work_order", "create"), m.base.RunAction(m.handler.CreateBulkWorkOrder))
+	bulk.POST("/work-orders/bulk-approval", perm("work_order", "approve"), m.base.RunAction(m.handler.BulkApprovalBulkWorkOrder))
+	bulk.GET("/work-orders/:id", perm("work_order", "view"), m.base.RunAction(m.handler.GetBulkWorkOrderDetail))
+	bulk.POST("/work-orders/:id/approval", perm("work_order", "approve"), m.base.RunAction(m.handler.ApprovalBulkWorkOrder))
+
+	items := g.Group("/work-order-items")
+	items.GET("/:id/qr", perm("work_order", "view"), m.base.RunAction(m.handler.GetWorkOrderItemQR))
+}

@@ -1,0 +1,96 @@
+package adjuster
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	invModels "github.com/ganasa18/go-template/internal/inventory/models"
+	stockModels "github.com/ganasa18/go-template/internal/stock_opname/models"
+	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+type RMAdjuster struct{}
+
+func NewRMAdjuster() InventoryAdjuster { return &RMAdjuster{} }
+
+func (a *RMAdjuster) ResolveUniq(ctx context.Context, tx *gorm.DB, uniqCode string) (*UniqSnapshot, error) {
+	var row invModels.RawMaterial
+	err := tx.WithContext(ctx).Where("uniq_code = ? AND deleted_at IS NULL", uniqCode).Take(&row).Error
+	if err == gorm.ErrRecordNotFound {
+		return newUniqSnapshot(ctx, tx, uniqCode)
+	}
+	if err != nil {
+		return nil, apperror.Internal("resolve RM uniq: " + err.Error())
+	}
+	return &UniqSnapshot{EntityID: &row.ID, PartNumber: row.PartNumber, PartName: row.PartName, UOM: row.UOM, SystemQty: row.StockQty, WeightKg: row.StockWeightKg, RawMaterialType: row.RawMaterialType}, nil
+}
+
+func (a *RMAdjuster) SearchUniqs(ctx context.Context, tx *gorm.DB, q string, limit int) ([]UniqSnapshotResult, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	var rows []invModels.RawMaterial
+	query := tx.WithContext(ctx).Where("deleted_at IS NULL")
+	if q != "" {
+		query = query.Where("uniq_code ILIKE ? OR part_number ILIKE ? OR part_name ILIKE ?", "%"+q+"%", "%"+q+"%", "%"+q+"%")
+	}
+	if err := query.Order("updated_at DESC").Limit(limit).Find(&rows).Error; err != nil {
+		return nil, apperror.Internal("search RM uniq options: " + err.Error())
+	}
+	items := make([]UniqSnapshotResult, 0, len(rows))
+	for i := range rows {
+		items = append(items, UniqSnapshotResult{UniqCode: rows[i].UniqCode, UniqSnapshot: UniqSnapshot{EntityID: &rows[i].ID, PartNumber: rows[i].PartNumber, PartName: rows[i].PartName, UOM: rows[i].UOM, SystemQty: rows[i].StockQty, WeightKg: rows[i].StockWeightKg, RawMaterialType: rows[i].RawMaterialType}})
+	}
+	return items, nil
+}
+
+func (a *RMAdjuster) ApplyAdjustment(ctx context.Context, tx *gorm.DB, entry *stockModels.StockOpnameEntry, sessionNumber, actor string) (*AdjustmentResult, error) {
+	var row invModels.RawMaterial
+	if err := lockInventoryRow(ctx, tx, &row, entry, ""); err != nil {
+		if err != gorm.ErrRecordNotFound {
+			return nil, apperror.Internal("lock RM row: " + err.Error())
+		}
+		// Belum ada -> pulihkan yang soft-deleted atau buat data baru.
+		found, ferr := liveOrRevive(ctx, tx, &row, entry.UniqCode, "stock_qty", actor)
+		if ferr != nil {
+			return nil, ferr
+		}
+		if !found {
+			now := time.Now()
+			itemID := (*int64)(nil)
+			if item, ierr := findBOMItem(ctx, tx, entry.UniqCode); ierr == nil && item != nil {
+				itemID = &item.ID
+			}
+			row = invModels.RawMaterial{
+				UUID: uuid.New(), UniqCode: strings.TrimSpace(entry.UniqCode),
+				PartNumber: entry.PartNumber, PartName: entry.PartName, UOM: entry.UOM,
+				ItemID: itemID, RawMaterialType: "others", Status: "normal",
+				CreatedBy: &actor, UpdatedBy: &actor, CreatedAt: now, UpdatedAt: now,
+			}
+			if cerr := tx.WithContext(ctx).Create(&row).Error; cerr != nil {
+				return nil, apperror.Internal("create RM stock opname: " + cerr.Error())
+			}
+		}
+	}
+
+	qtyChange := entry.CountedQty - row.StockQty
+	now := time.Now()
+	updates := map[string]interface{}{
+		"stock_qty":   entry.CountedQty,
+		"status":      inventoryStatus(entry.CountedQty, row.SafetyStockQty),
+		"stock_days":  inventoryStockDays(entry.CountedQty, row.DailyUsageQty),
+		"buy_not_buy": inventoryBuyNotBuyRM(entry.CountedQty, row.SafetyStockQty, row.RawMaterialType),
+		"updated_by":  actor,
+		"updated_at":  now,
+	}
+	if entry.WeightKg != nil {
+		updates["stock_weight_kg"] = *entry.WeightKg
+	}
+	if err := tx.WithContext(ctx).Model(&row).Updates(updates).Error; err != nil {
+		return nil, apperror.Internal("update RM stock opname: " + err.Error())
+	}
+	return &AdjustmentResult{QtyChange: qtyChange, WeightChange: entry.WeightKg, EntityID: &row.ID}, nil
+}

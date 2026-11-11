@@ -1,0 +1,1258 @@
+package service
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"strconv"
+	"strings"
+	"time"
+
+	workflowModels "github.com/ganasa18/go-template/internal/approval_workflow/models"
+	approvalRepo "github.com/ganasa18/go-template/internal/approval_workflow/repository"
+	"github.com/ganasa18/go-template/internal/delivery_note/models"
+	deliveryNoteRepo "github.com/ganasa18/go-template/internal/delivery_note/repository"
+	"github.com/google/uuid"
+	"github.com/skip2/go-qrcode"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+type IDeliveryNoteService interface {
+	Create(ctx context.Context, req models.CreateDNRequest) (*models.DeliveryNote, error)
+	GetAll(ctx context.Context, page, limit int) ([]models.DeliveryNote, models.Pagination, error)
+	GetByID(ctx context.Context, id int64) (*models.DeliveryNote, error)
+	Scan(ctx context.Context, req models.QRPayload) (string, error)
+	PreviewDN(ctx context.Context, req models.PreviewDNRequest) (*models.PreviewDNResponse, error)
+	PreviewItem(ctx context.Context, req models.PreviewDNItem) (*models.PreviewDNItemRespons, error)
+	ScanDelivery(ctx context.Context, req models.ScanDeliveryRequest) error
+	ScanDeliveryIn(ctx context.Context, req models.ScanDeliveryInRequest) (*models.ScanDeliveryInResult, error)
+	SubmitDelivery(ctx context.Context, req models.SubmitDeliveryRequest) error
+	GetHistory(ctx context.Context, dnID int64) ([]DNHistoryLog, error)
+	GetByUniq(ctx context.Context, uniq string) ([]map[string]interface{}, error)
+}
+
+// implementation
+type deliveryNoteService struct {
+	repo         deliveryNoteRepo.IDeliveryNoteRepository
+	db           *gorm.DB
+	approvalRepo approvalRepo.IApprovalWorkflowRepository
+}
+
+func New(repo deliveryNoteRepo.IDeliveryNoteRepository, db *gorm.DB, approvalRepo approvalRepo.IApprovalWorkflowRepository) IDeliveryNoteService {
+	return &deliveryNoteService{
+		repo:         repo,
+		db:           db,
+		approvalRepo: approvalRepo,
+	}
+}
+
+func resolveSupplierItemUniqCode(poItem models.PurchaseOrderItem) string {
+	if childUniqCode := strings.TrimSpace(poItem.ChildUniqCode); childUniqCode != "" {
+		return childUniqCode
+	}
+	return strings.TrimSpace(poItem.ItemUniqCode)
+}
+
+// =========================
+// CRUD
+// =========================
+
+func (s *deliveryNoteService) Create(ctx context.Context, req models.CreateDNRequest) (*models.DeliveryNote, error) {
+	var dn models.DeliveryNote
+
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+
+		// ==============================
+		// 🔥 GENERATE DN NUMBER
+		// ==============================
+		year := time.Now().Year()
+		prefix := fmt.Sprintf("DN-%s-%d", req.Type, year)
+
+		last, _ := s.repo.FindLastDNNumber(ctx, tx, prefix)
+
+		if last == "" {
+			dn.DNNumber = fmt.Sprintf("%s-0001", prefix)
+		} else {
+			dn.DNNumber = generateDNNumber(last, prefix)
+		}
+
+		// ==============================
+		// 🔥 GET PO
+		// ==============================
+		po, err := s.repo.GetPOByPONumber(ctx, req.PONumber)
+		if err != nil {
+			return fmt.Errorf("PO tidak ditemukan")
+		}
+
+		// ==============================
+		// 🔥 GET PO ITEMS
+		// ==============================
+		poItems, err := s.repo.GetPOItemsByPOID(ctx, po.PoID)
+		if err != nil {
+			return err
+		}
+
+		poMap := make(map[string]models.PurchaseOrderItem)
+		for _, item := range poItems {
+			poMap[item.ItemUniqCode] = item
+		}
+
+		// ==============================
+		// 🔥 SUMMARY
+		// ==============================
+		totalQty, _ := s.repo.GetTotalQtyByPOID(ctx, po.PoID)
+		summary, _ := s.repo.GetDNSummaryByPO(ctx, po.PoNumber)
+
+		if summary == nil {
+			summary = &deliveryNoteRepo.DNCountSummary{
+				Total:    1,
+				Incoming: 0,
+			}
+		}
+		// ==============================
+		// 🔥 CREATE HEADER
+		// ==============================
+		dn = models.DeliveryNote{
+			DNNumber:        dn.DNNumber,
+			PONumber:        po.PoNumber,
+			Period:          req.Period,
+			Type:            req.Type,
+			WONumber:        req.WONumber,
+			DeliveryTo:      req.DeliveryTo,
+			DeliveryTotal:   req.DeliveryTotal,
+			Status:          "active",
+			SupplierID:      po.SupplierID,
+			TotalPOQty:      totalQty,
+			TotalDNCreated:  summary.Total,
+			TotalDNIncoming: summary.Incoming,
+			CreatedAt:       time.Now(),
+			UpdatedAt:       time.Now(),
+		}
+
+		if err := s.repo.Create(ctx, tx, &dn); err != nil {
+			return err
+		}
+
+		// workflow, err := s.approvalRepo.FindByActionName(ctx, "Delivery Note")
+		// if err != nil {
+		// 	return fmt.Errorf("workflow belum dibuat oleh operator")
+		// }
+
+		// ==============================
+		// 🔥 BUILD APPROVAL
+		// ==============================
+		// progress, maxLevel := BuildApprovalProgress(*workflow)
+
+		// ==============================
+		// 🔥 CREATE APPROVAL INSTANCE
+		// ==============================
+		// instance := workflowModels.ApprovalInstance{
+		// 	ActionName:         workflow.ActionName,
+		// 	ReferenceTable:     "delivery_notes",
+		// 	ReferenceID:        dn.ID,
+		// 	ApprovalWorkflowID: workflow.ID,
+		// 	CurrentLevel:       1,
+		// 	MaxLevel:           maxLevel,
+		// 	Status:             "pending",
+		// 	SubmittedBy:        "system",
+		// 	ApprovalProgress:   progress,
+		// 	CreatedAt:          time.Now(),
+		// 	UpdatedAt:          time.Now(),
+		// }
+
+		// if err := s.approvalRepo.CreateInstance(ctx, tx, &instance); err != nil {
+		// 	return err
+		// }
+
+		// ==============================
+		// 🔥 VALIDASI ITEMS
+		// ==============================
+		seen := make(map[string]bool)
+		var items []models.DeliveryNoteItem
+
+		for i, it := range req.Items {
+
+			poItem, ok := poMap[it.ItemUniqCode]
+			if !ok {
+				return fmt.Errorf("item %s tidak ada di PO", it.ItemUniqCode)
+			}
+
+			if seen[it.ItemUniqCode] {
+				return fmt.Errorf("duplicate item %s", it.ItemUniqCode)
+			}
+			seen[it.ItemUniqCode] = true
+
+			if it.Qty <= 0 {
+				return fmt.Errorf("qty harus > 0")
+			}
+
+			if it.Qty > int64(poItem.OrderedQty) {
+				return fmt.Errorf("qty melebihi PO")
+			}
+
+			used, _ := s.repo.GetUsedQtyByItem(ctx, it.ItemUniqCode)
+			if used+it.Qty > int64(poItem.OrderedQty) {
+				return fmt.Errorf("qty over %s", it.ItemUniqCode)
+			}
+
+			supplierItemUniqCode := resolveSupplierItemUniqCode(poItem)
+			pcsPerKanban, err := s.repo.GetSupplierItemPcsPerKanban(ctx, po.SupplierID, supplierItemUniqCode)
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return fmt.Errorf(
+						"Pcs/Kanban Supplier Item %s untuk UNIQ PO %s belum tersedia",
+						supplierItemUniqCode,
+						it.ItemUniqCode,
+					)
+				}
+				return fmt.Errorf("gagal mengambil Supplier Item %s untuk UNIQ PO %s: %w", supplierItemUniqCode, it.ItemUniqCode, err)
+			}
+			if pcsPerKanban <= 0 {
+				return fmt.Errorf(
+					"Pcs/Kanban Supplier Item %s untuk UNIQ PO %s harus lebih dari 0",
+					supplierItemUniqCode,
+					it.ItemUniqCode,
+				)
+			}
+
+			kanban, err := s.repo.GetKanbanByItemCode(ctx, it.ItemUniqCode)
+			if err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					// Preserve the existing DN relation by creating its kanban record when absent.
+					totalKanban, err := s.repo.CountKanban(ctx)
+					if err != nil {
+						return err
+					}
+
+					totalPO := totalKanban + 1
+					formatted := fmt.Sprintf("%04d", totalPO)
+					kanbanNumber := fmt.Sprintf("KBN-%d-%s", time.Now().Year(), formatted)
+
+					data := models.KanbanParameter{
+						KanbanNumber: kanbanNumber,
+						ItemUniqCode: it.ItemUniqCode,
+						KanbanQty:    0,
+						MinStock:     0,
+						MaxStock:     int(it.Qty),
+						Status:       "ACTIVE",
+					}
+
+					if err := s.repo.CreateKanban(ctx, &data); err != nil {
+						return err
+					}
+
+					kanban = &data
+				} else {
+					return err
+				}
+			}
+
+			date, err := time.Parse("02/01/2006", it.IncomingDate)
+			if err != nil {
+				return err
+			}
+
+			qtyStart, err := s.repo.CheckItemExistsInDN(ctx, it.ItemUniqCode)
+			if err != nil {
+				return err
+			}
+
+			packing := fmt.Sprintf("DN-%04d-PKG-%04d", dn.ID, i+1)
+
+			items = append(items, models.DeliveryNoteItem{
+				DNID:          dn.ID,
+				ItemUniqCode:  it.ItemUniqCode,
+				Quantity:      it.Qty,
+				OrderQty:      int64(poItem.OrderedQty),
+				QtyStated:     qtyStart,
+				UOM:           poItem.UOM,
+				Weight:        int64(poItem.WeightKg),
+				KanbanID:      kanban.ID,
+				PcsPerKanban:  pcsPerKanban,
+				PackingNumber: packing,
+				DateIncoming:  &date,
+				Check:         "progress",
+				QtySent:       0,
+				CreatedAt:     time.Now(),
+				UpdatedAt:     time.Now(),
+			})
+		}
+
+		if len(items) > 0 {
+			if err := s.repo.CreateItems(ctx, tx, items); err != nil {
+				return err
+			}
+		}
+
+		for _, item := range items {
+
+			payload := models.QRPayload{
+				Packing: item.PackingNumber,
+			}
+
+			qrBytes, err := json.Marshal(payload)
+			if err != nil {
+				return err
+			}
+
+			qrValue := string(qrBytes)
+
+			qrBase64, err := generateQRBase64(qrValue)
+			if err != nil {
+				return err
+			}
+
+			if err := tx.Model(&models.DeliveryNoteItem{}).
+				Where("id = ?", item.ID).
+				Update("qr", qrBase64).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &dn, nil
+}
+
+func (s *deliveryNoteService) GetAll(ctx context.Context, page, limit int) ([]models.DeliveryNote, models.Pagination, error) {
+	var data []models.DeliveryNote
+	var total int64
+
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	offset := (page - 1) * limit
+
+	// total data
+	if err := s.db.WithContext(ctx).
+		Model(&models.DeliveryNote{}).
+		Count(&total).Error; err != nil {
+		return nil, models.Pagination{}, err
+	}
+
+	// ambil data
+	err := s.db.WithContext(ctx).
+		Model(&models.DeliveryNote{}).
+		Select(`
+		delivery_notes.*,
+		COALESCE(
+			(
+				SELECT ims.material_grade
+				FROM delivery_note_items dni
+				JOIN items i
+					ON i.uniq_code = dni.item_uniq_code
+				LEFT JOIN item_material_specs ims
+					ON ims.item_revision_id = i.id
+				WHERE dni.dn_id = delivery_notes.id
+				ORDER BY dni.id
+				LIMIT 1
+			),
+			''
+		) AS material_grade
+	`).
+		Preload("Supplier").
+		Preload("Items").
+		Preload("Items.Kanban").
+		Limit(limit).
+		Offset(offset).
+		Order("delivery_notes.id DESC").
+		Find(&data).Error
+
+	if err != nil {
+		return nil, models.Pagination{}, err
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(limit)))
+
+	pagination := models.Pagination{
+		Total:      total,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+	}
+
+	return data, pagination, nil
+}
+
+func (s *deliveryNoteService) GetByID(ctx context.Context, id int64) (*models.DeliveryNote, error) {
+	var data models.DeliveryNote
+
+	err := s.db.WithContext(ctx).
+		Model(&models.DeliveryNote{}).
+		Select(`
+		delivery_notes.*,
+		COALESCE(
+			(
+				SELECT ims.material_grade
+				FROM delivery_note_items dni
+				JOIN items i
+					ON i.uniq_code = dni.item_uniq_code
+				LEFT JOIN item_material_specs ims
+					ON ims.item_revision_id = i.id
+				WHERE dni.dn_id = delivery_notes.id
+				ORDER BY dni.id
+				LIMIT 1
+			),
+			''
+		) AS material_grade
+	`).
+		Preload("Supplier").
+		Preload("Items").
+		Preload("Items.Kanban").
+		Order("delivery_notes.id DESC").
+		First(&data, id).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &data, nil
+}
+
+// DNHistoryLog represents a stock-movement history entry for a delivery note.
+// These are recorded when QC Incoming is approved (source_flag=qc_approve),
+// supporting partial incoming across multiple approvals for one DN.
+type DNHistoryLog struct {
+	ID            int64     `json:"id" gorm:"column:id"`
+	UniqCode      string    `json:"uniq_code" gorm:"column:uniq_code"`
+	QtyChange     float64   `json:"qty_change" gorm:"column:qty_change"`
+	WeightChange  *float64  `json:"weight_change" gorm:"column:weight_change"`
+	MovementType  string    `json:"movement_type" gorm:"column:movement_type"`
+	SourceFlag    *string   `json:"source_flag" gorm:"column:source_flag"`
+	PackingNumber *string   `json:"packing_number" gorm:"column:packing_number"`
+	LoggedBy      *string   `json:"logged_by" gorm:"column:logged_by"`
+	LoggedAt      time.Time `json:"logged_at" gorm:"column:logged_at"`
+}
+
+// GetHistory returns the stock-movement history for a delivery note, sourced from
+// inventory_movement_logs written at QC Incoming approval. It links movement logs
+// to the DN via the delivery note item's packing_number + item_uniq_code, so partial
+// incoming (multiple approvals under one DN) is captured chronologically.
+func (s *deliveryNoteService) GetHistory(ctx context.Context, dnID int64) ([]DNHistoryLog, error) {
+	var rows []DNHistoryLog
+	err := s.db.WithContext(ctx).
+		Table("inventory_movement_logs iml").
+		Joins("JOIN delivery_note_items dni ON dni.packing_number = iml.reference_id AND dni.item_uniq_code = iml.uniq_code").
+		Where("dni.dn_id = ? AND iml.movement_type = ? AND iml.source_flag = ?", dnID, "incoming", "qc_approve").
+		Select(`
+			iml.id,
+			iml.uniq_code,
+			iml.qty_change,
+			iml.weight_change,
+			iml.movement_type,
+			iml.source_flag,
+			iml.reference_id AS packing_number,
+			iml.logged_by,
+			iml.logged_at
+		`).
+		Order("iml.logged_at DESC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func generateDNNumber(last string, prefix string) string {
+	if last == "" {
+		return fmt.Sprintf("%s-0001", prefix)
+	}
+
+	parts := strings.Split(last, "-")
+	if len(parts) == 0 {
+		return fmt.Sprintf("%s-0001", prefix)
+	}
+
+	seqStr := parts[len(parts)-1]
+
+	seq, err := strconv.Atoi(seqStr)
+	if err != nil {
+		return fmt.Sprintf("%s-0001", prefix)
+	}
+
+	seq++
+
+	return fmt.Sprintf("%s-%04d", prefix, seq)
+}
+
+// func generateQRBase64(content string) (string, error) {
+// 	png, err := qrcode.Encode(content, qrcode.Medium, 256)
+// 	if err != nil {
+// 		return "", err
+// 	}
+
+// 	base64Str := base64.StdEncoding.EncodeToString(png)
+
+// 	return "data:image/png;base64," + base64Str, nil
+// }
+
+func generateQRBase64(value string) (string, error) {
+	// generate PNG QR (256x256)
+	png, err := qrcode.Encode(value, qrcode.Medium, 256)
+	if err != nil {
+		return "", err
+	}
+
+	// encode ke base64
+	base64Str := base64.StdEncoding.EncodeToString(png)
+
+	// optional: prefix biar langsung bisa dipakai di frontend
+	return "data:image/png;base64," + base64Str, nil
+}
+
+func (s *deliveryNoteService) Scan(ctx context.Context, req models.QRPayload) (string, error) {
+
+	var result string
+
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+
+		if req.Quantity <= 0 {
+			return fmt.Errorf("qty harus lebih dari 0")
+		}
+
+		var item models.DeliveryNoteItem
+
+		// 🔒 lock row
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("packing_number = ?", req.Packing).
+			First(&item).Error; err != nil {
+
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("item tidak ditemukan")
+			}
+			return err
+		}
+
+		var dn models.DeliveryNote
+		if err := tx.Where("id = ?", item.DNID).
+			First(&dn).Error; err != nil {
+			return err
+		}
+
+		if dn.Status != "active" {
+			return fmt.Errorf("DN tidak aktif")
+		}
+
+		qty := int64(req.Quantity)
+		now := time.Now()
+
+		var scanType, fromLoc, toLoc, status string
+
+		// ======================================================
+		// 🟢 RM / IRM
+		// ======================================================
+		if dn.Type == "RM" || dn.Type == "IRM" {
+
+			remaining := item.Quantity - item.QtyReceived
+
+			if remaining <= 0 {
+				return fmt.Errorf("item sudah selesai, tidak bisa scan lagi")
+			}
+
+			if qty > remaining {
+				return fmt.Errorf("qty melebihi sisa. sisa saat ini: %d", remaining)
+			}
+
+			newQty := item.QtyReceived + qty
+
+			// 🔥 status logic
+			if item.QtyReceived == 0 {
+				status = "incoming"
+			} else if newQty < item.Quantity {
+				status = "remaining"
+			} else {
+				status = "completed"
+			}
+
+			if err := tx.Model(&models.DeliveryNoteItem{}).
+				Where("id = ?", item.ID).
+				Updates(map[string]interface{}{
+					"qty_received": gorm.Expr("COALESCE(qty_received,0) + ?", qty),
+					"check":        status,
+				}).Error; err != nil {
+				return err
+			}
+
+			scanType = "incoming"
+			fromLoc = "supplier"
+			toLoc = "warehouse"
+			result = status
+		}
+
+		// ======================================================
+		// 🔴 SUBCON
+		// ======================================================
+		if dn.Type == "SUBCON" {
+
+			// ===============================
+			// 🔴 OUTGOING
+			// ===============================
+			if item.QtySent < item.Quantity {
+
+				remaining := item.Quantity - item.QtySent
+
+				if remaining <= 0 {
+					return fmt.Errorf("item sudah selesai, tidak bisa scan lagi")
+				}
+
+				if qty > remaining {
+					return fmt.Errorf("qty melebihi sisa kirim. sisa saat ini: %d", remaining)
+				}
+
+				newQty := item.QtySent + qty
+
+				if item.QtySent == 0 {
+					status = "outgoing"
+				} else if newQty < item.Quantity {
+					status = "remaining"
+				} else {
+					status = "remaining" // belum selesai, masih nunggu return
+				}
+
+				if err := tx.Model(&models.DeliveryNoteItem{}).
+					Where("id = ?", item.ID).
+					Updates(map[string]interface{}{
+						"qty_sent": gorm.Expr("COALESCE(qty_sent,0) + ?", qty),
+						"check":    status,
+					}).Error; err != nil {
+					return err
+				}
+
+				scanType = "outgoing"
+				fromLoc = "warehouse"
+				toLoc = "vendor"
+				result = status
+
+			}
+		}
+
+		if err := tx.Exec(`
+                    INSERT INTO qc_logs (
+                        dn_item_id,
+                        uniq_code,
+                        qty_checked,
+                        qty_pass,
+                        qty_defect,
+                        qty_scrap,
+                        status,
+                        defect_source,
+                        checked_at
+                    )
+                    VALUES (?, ?, ?, 0, 0, 0, ?, ?, NOW())
+                    `,
+			item.ID,
+			item.ItemUniqCode,
+			qty,
+			"PENDING",
+			"incoming_material",
+		).Error; err != nil {
+			return err
+		}
+
+		// ======================================================
+		// 🧾 LOG
+		// ======================================================
+		log := models.DeliveryNoteLog{
+			DNID:          item.DNID,
+			DNItemID:      item.ID,
+			ItemUniqCode:  item.ItemUniqCode,
+			PackingNumber: req.Packing,
+			ScanType:      scanType,
+			Qty:           float64(qty),
+			FromLocation:  fromLoc,
+			ToLocation:    toLoc,
+			CreatedAt:     now,
+		}
+
+		if err := tx.Create(&log).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	return result, nil
+}
+
+func (s *deliveryNoteService) PreviewDN(ctx context.Context, req models.PreviewDNRequest) (*models.PreviewDNResponse, error) {
+
+	if req.PONumber == "" {
+		return nil, fmt.Errorf("po_number wajib diisi")
+	}
+
+	// 🔥 1. ambil PO
+	po, err := s.repo.GetPOByPONumber(ctx, req.PONumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed get PO: %w", err)
+	}
+
+	supplier, err := s.repo.GetSupplierByID(ctx, po.SupplierID)
+	if err != nil {
+		supplier = &models.Supplier{}
+	}
+
+	supplier.SupplierName = ""
+
+	// 🔥 3. items
+	poItems, err := s.repo.GetPOItemsByPOID(ctx, po.PoID)
+	if err != nil {
+		return nil, fmt.Errorf("failed get PO items: %w", err)
+	}
+
+	// 🔥 4. total qty
+	totalQty, err := s.repo.GetTotalQtyByPOID(ctx, po.PoID)
+	if err != nil {
+		return nil, fmt.Errorf("failed get total qty: %w", err)
+	}
+
+	// 🔥 5. DN incoming
+	totalIncoming, err := s.repo.CountDNIncomingByPONumber(ctx, req.PONumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed count DN incoming: %w", err)
+	}
+
+	// 🔥 6. generate DN number
+	dnType := "DN-"
+
+	prefix := fmt.Sprintf("DN-%s", dnType)
+
+	count, err := s.repo.CountDNByPrefix(ctx, prefix)
+	if err != nil {
+		return nil, fmt.Errorf("failed count DN: %w", err)
+	}
+
+	materialGrade := ""
+
+	if len(poItems) > 0 {
+		materialGrade, err = s.repo.GetMaterialGradeByItemUniqCode(ctx, poItems[0].ItemUniqCode)
+		if err != nil {
+			materialGrade = ""
+		}
+	}
+
+	next := count + 1
+	dnNumber := fmt.Sprintf("%s-%04d", prefix, next)
+
+	// Material code tiap baris PO: kolom material_grade; bila kosong, cari dari
+	// spec BOM berdasarkan uniq child lalu uniq baris.
+	materialCodeByLine := make(map[int]string, len(poItems))
+	lookupCodes := make([]string, 0)
+	for i, poItem := range poItems {
+		if g := strings.TrimSpace(poItem.MaterialGrade); g != "" {
+			materialCodeByLine[i] = g
+			continue
+		}
+		if c := strings.TrimSpace(poItem.ChildUniqCode); c != "" {
+			lookupCodes = append(lookupCodes, c)
+		}
+		if c := strings.TrimSpace(poItem.ItemUniqCode); c != "" {
+			lookupCodes = append(lookupCodes, c)
+		}
+	}
+	if len(lookupCodes) > 0 {
+		if byUniq, lookupErr := s.repo.GetMaterialCodesByUniqCodes(ctx, lookupCodes); lookupErr == nil {
+			for i, poItem := range poItems {
+				if _, ok := materialCodeByLine[i]; ok {
+					continue
+				}
+				if g := byUniq[strings.TrimSpace(poItem.ChildUniqCode)]; g != "" {
+					materialCodeByLine[i] = g
+				} else if g := byUniq[strings.TrimSpace(poItem.ItemUniqCode)]; g != "" {
+					materialCodeByLine[i] = g
+				}
+			}
+		}
+	}
+
+	// 🔥 7. mapping items
+	items := make([]models.PreviewDNItemResponse, 0, len(poItems))
+
+	for i, poItem := range poItems {
+		supplierItemUniqCode := resolveSupplierItemUniqCode(poItem)
+		pcsPerKanban, supplierItemErr := s.repo.GetSupplierItemPcsPerKanban(ctx, po.SupplierID, supplierItemUniqCode)
+		switch {
+		case errors.Is(supplierItemErr, gorm.ErrRecordNotFound):
+			pcsPerKanban = 0
+		case supplierItemErr != nil:
+			return nil, fmt.Errorf(
+				"gagal mengambil Supplier Item %s untuk UNIQ PO %s: %w",
+				supplierItemUniqCode,
+				poItem.ItemUniqCode,
+				supplierItemErr,
+			)
+		}
+
+		seq := fmt.Sprintf("%04d", i+1)
+		packingNumber := fmt.Sprintf("%s-PKG-%s", dnNumber, seq)
+
+		items = append(items, models.PreviewDNItemResponse{
+			ItemUniqCode:  poItem.ItemUniqCode,
+			ChildUniqCode: strings.TrimSpace(poItem.ChildUniqCode),
+			MaterialCode:  materialCodeByLine[i],
+			MaterialInfo:  poItem.ItemUniqCode,
+			TotalQty:      int64(poItem.OrderedQty),
+			RemainingQty:  int64(poItem.OrderedQty), // lebih masuk akal daripada 0
+			UOM:           poItem.UOM,
+			OrderQty:      int64(poItem.OrderedQty),
+			PcsPerKanban:  pcsPerKanban,
+			PackingNumber: packingNumber,
+			DateIncoming:  time.Now().Format("02/01/2006"),
+		})
+	}
+
+	// 🔥 8. response
+	return &models.PreviewDNResponse{
+		Period:        po.Period,
+		PONumber:      po.PoNumber,
+		Supplier:      supplier.SupplierName,
+		TotalPO:       int64(totalQty),
+		TotalIncoming: int64(totalIncoming),
+		TotalDNCreatd: int64(len(items)),
+		MaterialGrade: materialGrade,
+		Items:         items,
+	}, nil
+}
+
+func (s *deliveryNoteService) PreviewItem(ctx context.Context, req models.PreviewDNItem) (*models.PreviewDNItemRespons, error) {
+
+	// 🔥 1. ambil item dari PO
+	poItem, err := s.repo.GetPOItemByPackingNumber(ctx, req.Packing)
+	if err != nil {
+		return nil, fmt.Errorf("item tidak ditemukan")
+	}
+
+	dn, err := s.repo.GetDNByID(ctx, poItem.DNID)
+	if err != nil {
+		return nil, fmt.Errorf("dn tidak ditemukan")
+	}
+
+	supplier, err := s.repo.GetSupplierByID(ctx, dn.SupplierID)
+	if err != nil {
+		return nil, fmt.Errorf("supplier tidak ditemukan")
+	}
+	// 🔥 3. build response
+	res := &models.PreviewDNItemRespons{
+		DNNumber:      dn.DNNumber,
+		PackingNumber: poItem.PackingNumber,
+		PONumber:      dn.PONumber,
+		Supplier:      supplier.SupplierName,
+		ItemUniqCode:  poItem.ItemUniqCode,
+		MaterialInfo:  poItem.ItemUniqCode,
+		Weight:        poItem.Weight,
+		TotalQty:      int64(poItem.Quantity),
+		RemainingQty:  int64(poItem.QtyReceived),
+		UOM:           poItem.UOM,
+		OrderQty:      int64(poItem.QtyReceived),
+		PcsPerKanban:  poItem.PcsPerKanban,
+	}
+	return res, nil
+}
+
+func BuildApprovalProgress(workflow workflowModels.ApprovalWorkflow) (workflowModels.ApprovalProgress, int) {
+
+	roles := []string{
+		workflow.Level1Role,
+		workflow.Level2Role,
+		workflow.Level3Role,
+		workflow.Level4Role,
+	}
+
+	var levels []workflowModels.ApprovalLevel
+	maxLevel := 0
+
+	for i, role := range roles {
+		level := i + 1
+
+		status := "pending"
+		if role == "" {
+			status = "skipped"
+		} else {
+			maxLevel = level
+		}
+
+		levels = append(levels, workflowModels.ApprovalLevel{
+			Note:       "",
+			Role:       role,
+			Level:      level,
+			Status:     status,
+			ApprovedAt: "",
+			ApprovedBy: "",
+		})
+	}
+
+	return workflowModels.ApprovalProgress{Levels: levels}, maxLevel
+}
+
+func (s *deliveryNoteService) ScanDelivery(ctx context.Context, req models.ScanDeliveryRequest) error {
+
+	if req.KanbanNumber == "" {
+		return errors.New("kanban wajib diisi")
+	}
+
+	if req.DNNumber == "" {
+		return errors.New("DN wajib diisi")
+	}
+
+	if req.Qty <= 0 {
+		return errors.New("qty harus > 0")
+	}
+
+	return s.repo.WithTx(ctx, func(tx *gorm.DB) error {
+
+		poItem, err := s.repo.GetPOItemByPackingNumber(ctx, req.KanbanNumber)
+		if err != nil {
+			return errors.New("item tidak ditemukan")
+		}
+		// =============================
+		// 🔎 CEK DN SUDAH ADA?
+		// =============================
+		dn, err := s.repo.FindDNByNumber(ctx, tx, req.DNNumber)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		// =============================
+		// 🆕 CREATE HEADER (kalau belum ada)
+		// =============================
+		if dn == nil || dn.ID == 0 {
+			now := time.Now()
+
+			newDN := models.DeliveryNoteSupplier{
+				DNNumber:     req.DNNumber,
+				KanbanNumber: req.KanbanNumber,
+				Status:       "active",
+				ScannedBy:    req.ScannedBy,
+				ScannedAt:    &now,
+				TotalQty:     req.Qty,
+				WONumber:     req.WONumber,
+			}
+
+			if err := s.repo.CreateDN(ctx, tx, &newDN); err != nil {
+				return err
+			}
+
+			dn = &newDN
+		} else {
+			// =============================
+			// ➕ UPDATE TOTAL QTY
+			// =============================
+			if err := s.repo.AddDNQty(ctx, tx, dn.ID, req.Qty); err != nil {
+				return err
+			}
+		}
+
+		// =============================
+		// 📝 INSERT ITEM
+		// =============================
+		item := models.DeliveryNoteSupplierItem{
+			DNID:         dn.ID,
+			KanbanNumber: req.KanbanNumber,
+			Qty:          req.Qty,
+		}
+
+		if err := s.repo.InsertDNItem(ctx, tx, &item); err != nil {
+			return err
+		}
+
+		// =============================
+		// 📦 SUBCON: STOCK IN VENDOR (barang keluar utk diproses subcon di vendor)
+		// Tidak mengurangi Finished Goods / WIP; hanya mencatat stok di vendor.
+		// =============================
+		if err := s.addSubconStockOut(tx, poItem.ItemUniqCode, req.DNNumber, req.Qty, req.ScannedBy); err != nil {
+			return err
+		}
+
+		// [subcon-dnlog] Catat Delivery Note Log supaya scan ini muncul di
+		// ERP > Inventory > Subcon Material > detail > tab Delivery Note Logs.
+		if err := s.logSubconDNScan(tx, poItem.ItemUniqCode, req.DNNumber, req.KanbanNumber, req.Qty, req.ScannedBy, "SUBCON-OUT"); err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
+func (s *deliveryNoteService) SubmitDelivery(ctx context.Context, req models.SubmitDeliveryRequest) error {
+
+	if len(req.Items) == 0 {
+		return errors.New("items tidak boleh kosong")
+	}
+
+	parsedDate, err := time.Parse("2006-01-02", req.Date)
+	if err != nil {
+		return errors.New("format date salah (YYYY-MM-DD)")
+	}
+
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+
+		priority := req.Priority
+
+		if priority == "" {
+			priority = "normal" // default aman
+		}
+		// =============================
+		// 🧾 CREATE HEADER
+		// =============================
+		header := models.DeliveryScheduleCustomer{
+			UUID:           uuid.NewString(),
+			ScheduleNumber: generateScheduleNumber(),
+			CustomerID:     req.CustomerID,
+			ScheduleDate:   parsedDate,
+			Cycle:          req.Cycle,
+			Priority:       priority,
+			Status:         "dn_created",
+			ApprovalStatus: "approved",
+			CreatedBy:      req.CreatedBy,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
+		}
+
+		if err := s.repo.InsertHeaderTx(tx, &header); err != nil {
+			return err
+		}
+
+		// =============================
+		// 🔁 LOOP ITEMS
+		// =============================
+		for i, item := range req.Items {
+
+			// 🔒 LOCK FG
+			fg, err := s.repo.GetFGForUpdate(tx, item.ItemUniqCode)
+			if err != nil {
+				return errors.New("finished goods tidak ditemukan")
+			}
+
+			// =============================
+			// ❗ VALIDASI STOCK
+			// =============================
+			if fg.StockQty < item.Qty {
+				return errors.New("stock tidak cukup untuk item " + item.ItemUniqCode)
+			}
+
+			// =============================
+			// 📦 INSERT ITEM
+			// =============================
+			detail := models.DeliveryScheduleItemCustomer{
+				UUID:              uuid.NewString(),
+				ScheduleID:        header.ID,
+				LineNo:            i + 1,
+				ItemUniqCode:      item.ItemUniqCode,
+				PartName:          fg.PartName,
+				PartNumber:        fg.PartNumber,
+				TotalOrderQty:     fg.StockQty, // optional
+				TotalDeliveryQty:  item.Qty,
+				UOM:               item.UOM,
+				Status:            "dn_created",
+				FGReadinessStatus: "ready",
+				CreatedAt:         time.Now(),
+				UpdatedAt:         time.Now(),
+			}
+
+			if err := s.repo.InsertItemTx(tx, &detail); err != nil {
+				return err
+			}
+
+			// =============================
+			// 📉 REDUCE STOCK
+			// =============================
+			if err := s.repo.ReduceFGStock(tx, fg.ID, item.Qty); err != nil {
+				return err
+			}
+
+			// FIX: catat pergerakan Finished Goods (OUT) ke fg_movement_logs supaya
+			// muncul di History Log detail Finished Goods (ERP).
+			if err := s.appendFGMovementLog(tx, fg.ID, item.ItemUniqCode, "delivery_scan",
+				-item.Qty, fg.StockQty, fg.StockQty-item.Qty,
+				header.ScheduleNumber, "Pengiriman ke customer (DN customer action-ui)", req.CreatedBy); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+func generateScheduleNumber() string {
+	return "SCH-" + time.Now().Format("20060102150405")
+}
+
+// =========================
+// DN SUBCON IN (action-ui)
+// =========================
+
+// dnProcessFlowStep mirrors the entries stored in
+// work_order_items.process_flow_json (poka-yoke routing snapshot).
+type dnProcessFlowStep struct {
+	OpSeq       int    `json:"op_seq"`
+	ProcessName string `json:"process_name"`
+	// SubCon / IsAssembly mirror the checkboxes configured in System Settings >
+	// Process (process_parameters). They are snapshotted into the WO process
+	// flow so routing does not depend on the process name text.
+	SubCon     bool `json:"sub_con"`
+	IsAssembly bool `json:"is_assembly"`
+}
+
+func parseDNProcessFlow(js string) ([]dnProcessFlowStep, error) {
+	steps := []dnProcessFlowStep{}
+	if strings.TrimSpace(js) == "" {
+		return steps, nil
+	}
+	if err := json.Unmarshal([]byte(js), &steps); err != nil {
+		return nil, err
+	}
+	return steps, nil
+}
+
+// findSubconStep returns the op_seq of the subcon step. A step counts as a
+// subcon step when its snapshotted sub_con flag is true, or (for older work
+// orders whose snapshot predates the flag) when its process name is flagged
+// as sub_con in the process_parameters master (subconNames). Detection is by
+// flag, not by the process name text.
+func findSubconStep(steps []dnProcessFlowStep, subconNames map[string]bool) (int, bool) {
+	for _, st := range steps {
+		if st.SubCon || subconNames[strings.ToLower(strings.TrimSpace(st.ProcessName))] {
+			return st.OpSeq, true
+		}
+	}
+	return 0, false
+}
+
+// subconStepInfo returns the process name and op_seq of the subcon step, so
+// stock returning from subcon is recorded in WIP under the subcon process name
+// (not the following process).
+func subconStepInfo(steps []dnProcessFlowStep, subconNames map[string]bool) (string, int, bool) {
+	for _, st := range steps {
+		if st.SubCon || subconNames[strings.ToLower(strings.TrimSpace(st.ProcessName))] {
+			return st.ProcessName, st.OpSeq, true
+		}
+	}
+	return "", 0, false
+}
+
+// nextProcessAfterSubcon returns the name and op_seq of the earliest process
+// after the subcon step. ok is false when subcon is the last (or only) step.
+func nextProcessAfterSubcon(steps []dnProcessFlowStep, subconNames map[string]bool) (string, int, bool) {
+	subconSeq, ok := findSubconStep(steps, subconNames)
+	if !ok {
+		return "", 0, false
+	}
+	bestSeq := -1
+	bestName := ""
+	for _, st := range steps {
+		if st.OpSeq > subconSeq {
+			if bestSeq == -1 || st.OpSeq < bestSeq {
+				bestSeq = st.OpSeq
+				bestName = st.ProcessName
+			}
+		}
+	}
+	if bestSeq == -1 {
+		return "", 0, false
+	}
+	return bestName, bestSeq, true
+}
+
+// ScanDeliveryIn records goods returning from a subcon (external) process. It
+// reads the work order's process flow to decide the destination inventory:
+//   - a process still remains after subcon  -> Work In Progress (WIP)
+//   - subcon is the last process            -> Finished Goods (FG)
+func (s *deliveryNoteService) ScanDeliveryIn(ctx context.Context, req models.ScanDeliveryInRequest) (*models.ScanDeliveryInResult, error) {
+	if req.DNNumber == "" {
+		return nil, errors.New("DN wajib diisi")
+	}
+	if req.WONumber == "" {
+		return nil, errors.New("WO wajib diisi")
+	}
+	if req.KanbanNumber == "" {
+		return nil, errors.New("kanban wajib diisi")
+	}
+	if req.Qty <= 0 {
+		return nil, errors.New("qty harus > 0")
+	}
+
+	result := &models.ScanDeliveryInResult{
+		Qty: req.Qty,
+	}
+
+	err := s.repo.WithTx(ctx, func(tx *gorm.DB) error {
+		// Resolve the item uniq code from the scanned kanban/packing number.
+		poItem, err := s.repo.GetPOItemByPackingNumber(ctx, req.KanbanNumber)
+		if err != nil {
+			return errors.New("item tidak ditemukan untuk kanban tersebut")
+		}
+		uniq := poItem.ItemUniqCode
+		result.ItemUniq = uniq
+
+		// Mark the outgoing subcon DN as received (best-effort).
+		if dn, derr := s.repo.FindDNByNumber(ctx, tx, req.DNNumber); derr == nil && dn != nil && dn.ID != 0 {
+			_ = s.repo.MarkDNSupplierReceived(ctx, tx, dn.ID, req.ScannedBy)
+		}
+
+		// =============================
+		// 📦 SUBCON: STOCK RECEIVED FROM VENDOR (barang selesai diproses subcon)
+		// Tidak membuat WIP / Finished Goods. Barang masuk ke Inventory Subcon
+		// Material tab "Stock Received from Vendor". WIP/FG tetap dibuat lewat
+		// flow Production (Mulai Produksi) + QC Process seperti biasa.
+		// =============================
+		if err := s.addSubconStockReceived(tx, uniq, req.DNNumber, req.Qty, req.ScannedBy); err != nil {
+			return err
+		}
+
+		// [subcon-dnlog] Catat Delivery Note Log untuk barang yang kembali
+		// dari vendor subcon.
+		if err := s.logSubconDNScan(tx, uniq, req.DNNumber, req.KanbanNumber, req.Qty, req.ScannedBy, "SUBCON-IN"); err != nil {
+			return err
+		}
+		result.Destination = "Subcon Material (Received from Vendor)"
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (s *deliveryNoteService) GetByUniq(ctx context.Context, uniq string) ([]map[string]interface{}, error) {
+	var data []map[string]interface{}
+
+	err := s.db.WithContext(ctx).
+		Table("delivery_notes dn").
+		Select(`
+			dn.dn_number,
+			dni.item_uniq_code,
+			dni.quantity,
+			dni.qty_opname,
+			dni.packing_number,
+			dni.check
+		`).
+		Joins("JOIN delivery_note_items dni ON dni.dn_id = dn.id").
+		Where("dni.item_uniq_code = ?", uniq).
+		Order("dn.id DESC").
+		Find(&data).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}

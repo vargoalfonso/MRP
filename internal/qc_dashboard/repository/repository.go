@@ -1,0 +1,1140 @@
+package repository
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"strings"
+	"time"
+
+	qcModels "github.com/ganasa18/go-template/internal/qc/models"
+	"github.com/ganasa18/go-template/internal/qc_dashboard/models"
+	scrapModels "github.com/ganasa18/go-template/internal/scrap_stock/models"
+	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/google/uuid"
+	"gorm.io/datatypes"
+	"gorm.io/gorm"
+)
+
+type Filter struct {
+	Limit        int
+	Page         int
+	Offset       int
+	Search       string
+	DateFrom     string
+	DateTo       string
+	Status       string
+	WONumber     string
+	UniqCode     string
+	SupplierID   int64
+	PONumber     string
+	DefectSource string
+	ReasonCode   string
+	GroupBy      string
+	WindowHours  int
+}
+
+type IRepository interface {
+	GetOverviewCards(ctx context.Context, filter Filter) (models.OverviewCards, time.Time, error)
+	GetOverviewBySource(ctx context.Context, filter Filter) ([]models.SourceSummary, error)
+	GetTopIssues(ctx context.Context, filter Filter, limit int) ([]models.IssueSummary, error)
+	CountPendingRework(ctx context.Context) (int64, error)
+	ListProductionQC(ctx context.Context, filter Filter) (*models.ProductionQCListResponse, error)
+	GetProductionQCDetail(ctx context.Context, qcLogID int64) (*models.ProductionQCDetailResponse, error)
+	ListIncomingQC(ctx context.Context, filter Filter) (*models.IncomingQCListResponse, error)
+	ListProductReturnQC(ctx context.Context, filter Filter) (*models.ProductReturnQCListResponse, error)
+	ListDefects(ctx context.Context, filter Filter) (*models.DefectListResponse, error)
+	ListManualReferenceOptions(ctx context.Context, qcType, q string, limit int) (*models.ManualReferenceOptionsResponse, error)
+	CreateManualQCReport(ctx context.Context, req models.CreateManualQCReportRequest, performedBy string) error
+	CreateReworkTask(ctx context.Context, defectID int64, performedBy string) error
+}
+
+type repository struct{ db *gorm.DB }
+
+func New(db *gorm.DB) IRepository { return &repository{db: db} }
+
+func (r *repository) GetOverviewCards(ctx context.Context, filter Filter) (models.OverviewCards, time.Time, error) {
+	where, args := buildRangeWhere(filter, "checked_at")
+	query := `
+		SELECT
+			COUNT(*) AS total_reports,
+			COALESCE(SUM(qty_defect), 0) AS total_defects,
+			COALESCE(SUM(qty_scrap), 0) AS total_scrap,
+			COALESCE(MAX(checked_at), NOW()) AS as_of
+		FROM qc_logs` + where
+	var cards struct {
+		TotalReports int64     `gorm:"column:total_reports"`
+		TotalDefects float64   `gorm:"column:total_defects"`
+		TotalScrap   float64   `gorm:"column:total_scrap"`
+		AsOf         time.Time `gorm:"column:as_of"`
+	}
+	if err := r.db.WithContext(ctx).Raw(query, args...).Scan(&cards).Error; err != nil {
+		return models.OverviewCards{}, time.Time{}, apperror.Internal("qc dashboard overview: " + err.Error())
+	}
+	return models.OverviewCards{
+		TotalReports: cards.TotalReports,
+		TotalDefects: cards.TotalDefects,
+		TotalScrap:   cards.TotalScrap,
+	}, cards.AsOf, nil
+}
+
+func (r *repository) CountPendingRework(ctx context.Context) (int64, error) {
+	var pendingRework int64
+	if err := r.db.WithContext(ctx).Table("qc_tasks").Where("task_type = ? AND status IN ?", "rework_qc", []string{"pending", "in_progress"}).Count(&pendingRework).Error; err != nil {
+		return 0, apperror.Internal("qc dashboard rework count: " + err.Error())
+	}
+	return pendingRework, nil
+}
+
+func (r *repository) GetOverviewBySource(ctx context.Context, filter Filter) ([]models.SourceSummary, error) {
+	where, args := buildRangeWhere(filter, "checked_at")
+	var bySource []models.SourceSummary
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT defect_source, COALESCE(SUM(qty_defect), 0) AS qty_defect, COALESCE(SUM(qty_scrap), 0) AS qty_scrap
+		FROM qc_logs `+where+`
+		GROUP BY defect_source
+		ORDER BY defect_source ASC
+	`, args...).Scan(&bySource).Error; err != nil {
+		return nil, apperror.Internal("qc dashboard by source: " + err.Error())
+	}
+	return bySource, nil
+}
+
+func (r *repository) GetTopIssues(ctx context.Context, filter Filter, limit int) ([]models.IssueSummary, error) {
+	defectWhere, defectArgs := buildRangeWhere(filter, "reported_at")
+	var topIssues []models.IssueSummary
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT
+			COALESCE(NULLIF(defect_reason_code, ''), 'OTHER') AS reason_code,
+			COALESCE(NULLIF(defect_reason_text, ''), 'Other') AS reason_text,
+			COALESCE(SUM(qty_defect), 0) AS qty_defect
+		FROM qc_defect_items `+defectWhere+`
+		GROUP BY COALESCE(NULLIF(defect_reason_code, ''), 'OTHER'), COALESCE(NULLIF(defect_reason_text, ''), 'Other')
+		ORDER BY qty_defect DESC, reason_code ASC
+		LIMIT ?
+	`, append(defectArgs, limit)...).Scan(&topIssues).Error; err != nil {
+		return nil, apperror.Internal("qc dashboard top issues: " + err.Error())
+	}
+	return topIssues, nil
+}
+
+func (r *repository) ListProductionQC(ctx context.Context, filter Filter) (*models.ProductionQCListResponse, error) {
+	where, args := buildProductionWhere(filter)
+	countQuery := `
+		SELECT COUNT(*)
+		FROM qc_logs ql
+		LEFT JOIN work_orders wo ON wo.id = ql.wo_id
+		LEFT JOIN work_order_items woi ON woi.id = ql.wo_item_id` + where
+	var total int64
+	if err := r.db.WithContext(ctx).Raw(countQuery, args...).Scan(&total).Error; err != nil {
+		return nil, apperror.Internal("count production qc: " + err.Error())
+	}
+
+	query := `
+		SELECT
+			ql.id AS qc_log_id,
+			TO_CHAR(ql.checked_at::date, 'YYYY-MM-DD') AS report_date,
+			COALESCE(wo.wo_number, '') AS wo_number,
+			ql.uniq_code,
+			COALESCE(woi.kanban_number, '') AS kanban_number,
+			ql.qty_checked AS items_checked,
+			(
+				SELECT NULLIF(qdi.defect_reason_text, '')
+				FROM qc_defect_items qdi
+				WHERE qdi.qc_log_id = ql.id
+				ORDER BY qdi.qty_defect DESC, qdi.id ASC
+				LIMIT 1
+			) AS issue_label,
+			ql.qty_defect,
+			ql.qty_scrap,
+			CASE WHEN ql.qty_checked > 0 THEN ROUND((ql.qty_pass / ql.qty_checked) * 100, 2) ELSE 0 END AS quality_rate_percent,
+			CASE WHEN UPPER(ql.status) IN ('PASSED', 'APPROVED') THEN 'passed' ELSE 'not_passed' END AS status
+		FROM qc_logs ql
+		LEFT JOIN work_orders wo ON wo.id = ql.wo_id
+		LEFT JOIN work_order_items woi ON woi.id = ql.wo_item_id` + where + `
+		ORDER BY ql.checked_at DESC, ql.id DESC
+		LIMIT ? OFFSET ?`
+	args = append(args, filter.Limit, filter.Offset)
+	var items []models.ProductionQCItem
+	if err := r.db.WithContext(ctx).Raw(query, args...).Scan(&items).Error; err != nil {
+		return nil, apperror.Internal("list production qc: " + err.Error())
+	}
+	// [qc-issue-detail] lampirkan daftar Issue/Reason per baris untuk tooltip.
+	logIDs := make([]int64, 0, len(items))
+	for _, it := range items {
+		logIDs = append(logIDs, it.QCLogID)
+	}
+	issuesByLog, err := r.loadProductionIssues(ctx, logIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].Issues = issuesByLog[items[i].QCLogID]
+	}
+	return &models.ProductionQCListResponse{Items: items, Pagination: buildPagination(total, filter.Page, filter.Limit)}, nil
+}
+
+// [qc-issue-detail] Ambil daftar Issue/Reason (qc_defect_items) untuk sekumpulan
+// qc_log_id, dikelompokkan per qc_log_id.
+func (r *repository) loadProductionIssues(ctx context.Context, logIDs []int64) (map[int64][]models.ProductionQCIssue, error) {
+	result := make(map[int64][]models.ProductionQCIssue)
+	if len(logIDs) == 0 {
+		return result, nil
+	}
+	type issueRow struct {
+		QCLogID          int64
+		DefectSource     string
+		DefectReasonCode string
+		DefectReasonText string
+		Qty              float64
+		QtyDefect        float64
+		QtyScrap         float64
+		ProcessName      string
+	}
+	var rows []issueRow
+	if err := r.db.WithContext(ctx).
+		Table("qc_defect_items").
+		Where("qc_log_id IN ?", logIDs).
+		Where("COALESCE(defect_reason_text, '') <> '' OR qty > 0 OR qty_defect > 0 OR qty_scrap > 0").
+		Order("qc_log_id ASC, id ASC").
+		Select("qc_log_id, defect_source, defect_reason_code, defect_reason_text, qty, qty_defect, qty_scrap, process_name").
+		Scan(&rows).Error; err != nil {
+		return nil, apperror.Internal("load production qc issues: " + err.Error())
+	}
+	for _, rr := range rows {
+		result[rr.QCLogID] = append(result[rr.QCLogID], models.ProductionQCIssue{
+			Source:      rr.DefectSource,
+			ReasonCode:  rr.DefectReasonCode,
+			ReasonText:  rr.DefectReasonText,
+			Qty:         rr.Qty,
+			QtyDefect:   rr.QtyDefect,
+			QtyScrap:    rr.QtyScrap,
+			ProcessName: rr.ProcessName,
+		})
+	}
+	return result, nil
+}
+
+// [qc-issue-detail] Detail satu baris Production QC berdasarkan qc_log_id.
+func (r *repository) GetProductionQCDetail(ctx context.Context, qcLogID int64) (*models.ProductionQCDetailResponse, error) {
+	query := `
+		SELECT
+			ql.id AS qc_log_id,
+			TO_CHAR(ql.checked_at::date, 'YYYY-MM-DD') AS report_date,
+			COALESCE(wo.wo_number, '') AS wo_number,
+			ql.uniq_code,
+			COALESCE(woi.kanban_number, '') AS kanban_number,
+			ql.qty_checked AS items_checked,
+			(
+				SELECT NULLIF(qdi.defect_reason_text, '')
+				FROM qc_defect_items qdi
+				WHERE qdi.qc_log_id = ql.id
+				ORDER BY qdi.qty_defect DESC, qdi.id ASC
+				LIMIT 1
+			) AS issue_label,
+			ql.qty_defect,
+			ql.qty_scrap,
+			CASE WHEN ql.qty_checked > 0 THEN ROUND((ql.qty_pass / ql.qty_checked) * 100, 2) ELSE 0 END AS quality_rate_percent,
+			CASE WHEN UPPER(ql.status) IN ('PASSED', 'APPROVED') THEN 'passed' ELSE 'not_passed' END AS status
+		FROM qc_logs ql
+		LEFT JOIN work_orders wo ON wo.id = ql.wo_id
+		LEFT JOIN work_order_items woi ON woi.id = ql.wo_item_id
+		WHERE ql.id = ?
+		LIMIT 1`
+	var item models.ProductionQCItem
+	if err := r.db.WithContext(ctx).Raw(query, qcLogID).Scan(&item).Error; err != nil {
+		return nil, apperror.Internal("get production qc detail: " + err.Error())
+	}
+	if item.QCLogID == 0 {
+		return nil, apperror.NotFound("production qc tidak ditemukan")
+	}
+	issuesByLog, err := r.loadProductionIssues(ctx, []int64{qcLogID})
+	if err != nil {
+		return nil, err
+	}
+	item.Issues = issuesByLog[qcLogID]
+	return &models.ProductionQCDetailResponse{Item: item}, nil
+}
+
+func (r *repository) ListIncomingQC(ctx context.Context, filter Filter) (*models.IncomingQCListResponse, error) {
+	where, args := buildIncomingWhere(filter)
+	countQuery := `
+		SELECT COUNT(*)
+		FROM qc_logs ql
+		LEFT JOIN qc_tasks qt ON qt.id = ql.qc_task_id
+		LEFT JOIN delivery_note_items dni ON dni.id = ql.dn_item_id
+		LEFT JOIN delivery_notes dn ON dn.id = dni.dn_id
+		LEFT JOIN suppliers s ON s.id = dn.supplier_id` + where
+	var total int64
+	if err := r.db.WithContext(ctx).Raw(countQuery, args...).Scan(&total).Error; err != nil {
+		return nil, apperror.Internal("count incoming qc: " + err.Error())
+	}
+
+	query := `
+		SELECT
+			ql.id AS qc_log_id,
+			COALESCE(qt.id, 0) AS qc_task_id,
+			TO_CHAR(ql.checked_at::date, 'YYYY-MM-DD') AS report_date,
+			COALESCE(dn.dn_number, '') AS dn_number,
+			COALESCE(dni.packing_number, '') AS kanban_pl_scan,
+			COALESCE(dn.po_number, '') AS po_number,
+			'supplier' AS partner_type,
+			COALESCE(s.supplier_name, '') AS partner_name,
+			dn.supplier_id,
+			COALESCE(s.supplier_name, '') AS supplier_name,
+			ql.uniq_code,
+			ql.qty_checked AS items_checked,
+			(
+				SELECT NULLIF(qdi.defect_reason_text, '')
+				FROM qc_defect_items qdi
+				WHERE qdi.qc_log_id = ql.id
+				ORDER BY qdi.qty_defect DESC, qdi.id ASC
+				LIMIT 1
+			) AS issue_label,
+			ql.qty_defect,
+			ql.qty_scrap,
+			CASE WHEN ql.qty_checked > 0 THEN ROUND((ql.qty_pass / ql.qty_checked) * 100, 2) ELSE 0 END AS quality_rate_percent,
+			CASE WHEN UPPER(ql.status) IN ('PASSED', 'APPROVED') THEN 'passed' ELSE 'not_passed' END AS status
+		FROM qc_logs ql
+		LEFT JOIN qc_tasks qt ON qt.id = ql.qc_task_id
+		LEFT JOIN delivery_note_items dni ON dni.id = ql.dn_item_id
+		LEFT JOIN delivery_notes dn ON dn.id = dni.dn_id
+		LEFT JOIN suppliers s ON s.id = dn.supplier_id` + where + `
+		ORDER BY ql.checked_at DESC, ql.id DESC
+		LIMIT ? OFFSET ?`
+	args = append(args, filter.Limit, filter.Offset)
+	var items []models.IncomingQCItem
+	if err := r.db.WithContext(ctx).Raw(query, args...).Scan(&items).Error; err != nil {
+		return nil, apperror.Internal("list incoming qc: " + err.Error())
+	}
+	return &models.IncomingQCListResponse{Items: items, Pagination: buildPagination(total, filter.Page, filter.Limit)}, nil
+}
+
+func (r *repository) ListProductReturnQC(ctx context.Context, filter Filter) (*models.ProductReturnQCListResponse, error) {
+	where, args := buildProductReturnWhere(filter)
+	countQuery := `
+		SELECT COUNT(*)
+		FROM product_returns pr
+		LEFT JOIN LATERAL (
+			SELECT ql.id, ql.checked_at, ql.qty_checked, ql.qty_pass, ql.qty_defect, ql.qty_scrap, ql.status
+			FROM qc_logs ql
+			WHERE ql.uniq_code = pr.uniq
+			  AND ql.defect_source = 'product_return'
+			ORDER BY ql.checked_at DESC, ql.id DESC
+			LIMIT 1
+		) ql ON TRUE` + where
+	var total int64
+	if err := r.db.WithContext(ctx).Raw(countQuery, args...).Scan(&total).Error; err != nil {
+		return nil, apperror.Internal("count product return qc: " + err.Error())
+	}
+
+	query := `
+		SELECT
+			COALESCE(ql.id, 0) AS qc_log_id,
+			pr.id AS product_return_id,
+			TO_CHAR(COALESCE(ql.checked_at, pr.updated_at, pr.created_at)::date, 'YYYY-MM-DD') AS report_date,
+			COALESCE(pr.uniq, '') AS product_return_number,
+			COALESCE(pr.dn_number, '') AS dn_number,
+			'customer' AS partner_type,
+			COALESCE(dnc.customer_name_snapshot, '') AS partner_name,
+			COALESCE(ql.qty_checked, pr.quantity_rework + pr.quantity_scrap) AS items_checked,
+			NULLIF(top_defect.defect_reason_text, '') AS issue_label,
+			COALESCE(pr.quantity_rework, 0) AS qty_rework,
+			COALESCE(ql.qty_defect, pr.quantity_rework + pr.quantity_scrap) AS qty_defect,
+			COALESCE(ql.qty_scrap, pr.quantity_scrap) AS qty_scrap,
+			CASE WHEN COALESCE(ql.qty_checked, pr.quantity_rework + pr.quantity_scrap) > 0 THEN ROUND((COALESCE(ql.qty_pass, pr.quantity_rework) / COALESCE(ql.qty_checked, pr.quantity_rework + pr.quantity_scrap)) * 100, 2) ELSE 0 END AS quality_rate_percent,
+			CASE
+				WHEN UPPER(COALESCE(ql.status, pr.status, '')) IN ('PASSED', 'APPROVED', 'APPROVED_QC') THEN 'passed'
+				WHEN UPPER(COALESCE(ql.status, pr.status, '')) IN ('PENDING', 'WAITING', 'PENDING_QC') THEN 'pending'
+				ELSE 'not_passed'
+			END AS status
+		FROM product_returns pr
+		LEFT JOIN delivery_notes_customer dnc ON dnc.dn_number = pr.dn_number
+		LEFT JOIN LATERAL (
+			SELECT ql.id, ql.checked_at, ql.qty_checked, ql.qty_pass, ql.qty_defect, ql.qty_scrap, ql.status
+			FROM qc_logs ql
+			WHERE ql.uniq_code = pr.uniq
+			  AND ql.defect_source = 'product_return'
+			ORDER BY ql.checked_at DESC, ql.id DESC
+			LIMIT 1
+		) ql ON TRUE
+		LEFT JOIN LATERAL (
+			SELECT qdi.defect_reason_text
+			FROM qc_defect_items qdi
+			WHERE qdi.qc_log_id = ql.id
+			ORDER BY qdi.qty_defect DESC, qdi.id ASC
+			LIMIT 1
+		) top_defect ON TRUE` + where + `
+		ORDER BY COALESCE(ql.checked_at, pr.updated_at, pr.created_at) DESC, pr.id DESC
+		LIMIT ? OFFSET ?`
+	args = append(args, filter.Limit, filter.Offset)
+	var items []models.ProductReturnQCItem
+	if err := r.db.WithContext(ctx).Raw(query, args...).Scan(&items).Error; err != nil {
+		return nil, apperror.Internal("list product return qc: " + err.Error())
+	}
+	if items == nil {
+		items = make([]models.ProductReturnQCItem, 0)
+	}
+	return &models.ProductReturnQCListResponse{Items: items, Pagination: buildPagination(total, filter.Page, filter.Limit)}, nil
+}
+
+func (r *repository) ListDefects(ctx context.Context, filter Filter) (*models.DefectListResponse, error) {
+	where, args := buildDefectWhere(filter)
+	countQuery := `
+		SELECT COUNT(*)
+		FROM qc_defect_items qdi
+		JOIN qc_logs ql ON ql.id = qdi.qc_log_id
+		LEFT JOIN work_order_items woi ON woi.id = qdi.wo_item_id` + where
+	var total int64
+	if err := r.db.WithContext(ctx).Raw(countQuery, args...).Scan(&total).Error; err != nil {
+		return nil, apperror.Internal("count defects: " + err.Error())
+	}
+
+	query := `
+		SELECT
+			qdi.id AS defect_id,
+			qdi.qc_log_id,
+			TO_CHAR(ql.checked_at::date, 'YYYY-MM-DD') AS report_date,
+			qdi.defect_source,
+			COALESCE(woi.kanban_number, dni.packing_number, '') AS kanban_pl,
+			qdi.uniq_code,
+			COALESCE(woi.part_name, qdi.uniq_code) AS product_name,
+			COALESCE(qdi.defect_reason_code, '') AS reason_code,
+			COALESCE(qdi.defect_reason_text, '') AS reason_text,
+			qdi.qty_defect,
+			qdi.qty_scrap,
+			qdi.is_repairable,
+			COALESCE(rt.status, 'none') AS wo_rework_status,
+			rt.id AS rework_qc_task_id
+		FROM qc_defect_items qdi
+		JOIN qc_logs ql ON ql.id = qdi.qc_log_id
+		LEFT JOIN work_order_items woi ON woi.id = qdi.wo_item_id
+		LEFT JOIN delivery_note_items dni ON dni.id = qdi.dn_item_id
+		LEFT JOIN LATERAL (
+			SELECT qt.id, qt.status
+			FROM qc_tasks qt
+			WHERE qt.task_type = 'rework_qc'
+			  AND qt.round_results::text ILIKE '%' || '"source_defect_id":' || qdi.id || '%'
+			ORDER BY qt.id DESC
+			LIMIT 1
+		) rt ON TRUE` + where + `
+		ORDER BY ql.checked_at DESC, qdi.id DESC
+		LIMIT ? OFFSET ?`
+	args = append(args, filter.Limit, filter.Offset)
+	var items []models.DefectItem
+	if err := r.db.WithContext(ctx).Raw(query, args...).Scan(&items).Error; err != nil {
+		return nil, apperror.Internal("list defects: " + err.Error())
+	}
+	return &models.DefectListResponse{
+		Items:              items,
+		Pagination:         buildPagination(total, filter.Page, filter.Limit),
+		ImplementationNote: "Defect report mencakup production, incoming, dan product return sesuai data QC yang sudah tercatat.",
+	}, nil
+}
+
+func (r *repository) ListManualReferenceOptions(ctx context.Context, qcType, q string, limit int) (*models.ManualReferenceOptionsResponse, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	qcType = strings.ToLower(strings.TrimSpace(qcType))
+	if qcType == "" {
+		qcType = "production"
+	}
+
+	type row struct {
+		QCType             string  `gorm:"column:qc_type"`
+		ReferenceNumber    string  `gorm:"column:reference_number"`
+		SecondaryReference string  `gorm:"column:secondary_reference"`
+		UniqCode           string  `gorm:"column:uniq_code"`
+		ContextID          string  `gorm:"column:context_id"`
+		KanbanOrPacking    string  `gorm:"column:kanban_or_packing_number"`
+		PartName           string  `gorm:"column:part_name"`
+		UOM                string  `gorm:"column:uom"`
+		ItemQty            float64 `gorm:"column:item_qty"`
+	}
+
+	args := []interface{}{}
+	query := ""
+	if qcType == "production" {
+		where := ""
+		if strings.TrimSpace(q) != "" {
+			where = `
+				WHERE (
+					wo.wo_number ILIKE ? OR
+					woi.item_uniq_code ILIKE ? OR
+					COALESCE(woi.kanban_number, '') ILIKE ? OR
+					COALESCE(woi.part_name, '') ILIKE ? OR
+					COALESCE(woi.part_number, '') ILIKE ?
+				)`
+			search := like(q)
+			args = append(args, search, search, search, search, search)
+		}
+		query = `
+			SELECT
+				'production' AS qc_type,
+				COALESCE(wo.wo_number, '') AS reference_number,
+				'' AS secondary_reference,
+				COALESCE(woi.item_uniq_code, '') AS uniq_code,
+				COALESCE(woi.uuid::text, '') AS context_id,
+				COALESCE(woi.kanban_number, '') AS kanban_or_packing_number,
+				COALESCE(woi.part_name, '') AS part_name,
+				COALESCE(woi.uom, '') AS uom,
+				COALESCE(woi.quantity, 0) AS item_qty
+			FROM work_order_items woi
+			JOIN work_orders wo ON wo.id = woi.wo_id
+			` + where + `
+			ORDER BY wo.created_at DESC, woi.id DESC
+			LIMIT ?`
+		args = append(args, limit)
+	} else if qcType == "incoming" {
+		where := ""
+		if strings.TrimSpace(q) != "" {
+			where = `
+				WHERE (
+					COALESCE(dn.dn_number, '') ILIKE ? OR
+					COALESCE(dn.po_number, '') ILIKE ? OR
+					dni.item_uniq_code ILIKE ? OR
+					COALESCE(dni.packing_number, '') ILIKE ?
+				)`
+			search := like(q)
+			args = append(args, search, search, search, search)
+		}
+		query = `
+			SELECT
+				'incoming' AS qc_type,
+				COALESCE(dn.dn_number, '') AS reference_number,
+				COALESCE(dn.po_number, '') AS secondary_reference,
+				COALESCE(dni.item_uniq_code, '') AS uniq_code,
+				COALESCE(dni.id::text, '') AS context_id,
+				COALESCE(dni.packing_number, '') AS kanban_or_packing_number,
+				'' AS part_name,
+				COALESCE(dni.uom, '') AS uom,
+				COALESCE(NULLIF(dni.qty_received, 0), dni.quantity, 0) AS item_qty
+			FROM delivery_note_items dni
+			JOIN delivery_notes dn ON dn.id = dni.dn_id
+			` + where + `
+			ORDER BY dn.created_at DESC, dni.id DESC
+			LIMIT ?`
+		args = append(args, limit)
+	} else if qcType == "product_return" {
+		where := ""
+		if strings.TrimSpace(q) != "" {
+			where = `
+				WHERE (
+					COALESCE(pr.uniq, '') ILIKE ? OR
+					COALESCE(pr.dn_number, '') ILIKE ?
+				)`
+			search := like(q)
+			args = append(args, search, search)
+		}
+		query = `
+			SELECT
+				'product_return' AS qc_type,
+				COALESCE(pr.uniq, '') AS reference_number,
+				COALESCE(pr.dn_number, '') AS secondary_reference,
+				COALESCE(pr.uniq, '') AS uniq_code,
+				COALESCE(pr.id::text, '') AS context_id,
+				'' AS kanban_or_packing_number,
+				'' AS part_name,
+				'' AS uom,
+				COALESCE(pr.quantity_rework, 0) + COALESCE(pr.quantity_scrap, 0) AS item_qty
+			FROM product_returns pr
+			` + where + `
+			ORDER BY pr.updated_at DESC NULLS LAST, pr.created_at DESC, pr.id DESC
+			LIMIT ?`
+		args = append(args, limit)
+	} else {
+		return nil, apperror.BadRequest("qc_type must be production, incoming, or product_return")
+	}
+
+	rows := make([]row, 0)
+	if err := r.db.WithContext(ctx).Raw(query, args...).Scan(&rows).Error; err != nil {
+		return nil, apperror.Internal("list manual reference options: " + err.Error())
+	}
+
+	items := make([]models.ManualReferenceOptionItem, 0, len(rows))
+	for _, rr := range rows {
+		items = append(items, models.ManualReferenceOptionItem{
+			QCType:                rr.QCType,
+			ReferenceNumber:       rr.ReferenceNumber,
+			SecondaryReference:    rr.SecondaryReference,
+			UniqCode:              rr.UniqCode,
+			ContextID:             rr.ContextID,
+			KanbanOrPackingNumber: rr.KanbanOrPacking,
+			PartName:              rr.PartName,
+			UOM:                   rr.UOM,
+			ItemQty:               rr.ItemQty,
+		})
+	}
+
+	return &models.ManualReferenceOptionsResponse{Items: items}, nil
+}
+
+func (r *repository) CreateManualQCReport(ctx context.Context, req models.CreateManualQCReportRequest, performedBy string) error {
+	qcType := strings.ToLower(strings.TrimSpace(req.QCType))
+	if qcType == "" {
+		return apperror.BadRequest("qc_type is required")
+	}
+	if qcType != "production" && qcType != "incoming" && qcType != "product_return" {
+		return apperror.BadRequest("qc_type must be production, incoming, or product_return")
+	}
+	if strings.TrimSpace(req.ReportDate) == "" {
+		return apperror.BadRequest("report_date is required")
+	}
+	checkedAt, err := time.Parse("2006-01-02", req.ReportDate)
+	if err != nil {
+		return apperror.BadRequest("report_date must be YYYY-MM-DD")
+	}
+	if qcType != "product_return" && strings.TrimSpace(req.UniqCode) == "" {
+		return apperror.BadRequest("uniq_code is required")
+	}
+	if qcType == "product_return" && strings.TrimSpace(req.UniqCode) == "" && strings.TrimSpace(req.ReferenceNumber) == "" {
+		return apperror.BadRequest("uniq_code or reference_number is required for product_return")
+	}
+	if req.NumberOfItemCheck <= 0 && qcType != "product_return" {
+		return apperror.BadRequest("number_of_item_check must be greater than 0")
+	}
+	if req.NumberOfDefect < 0 || req.NumberOfScrap < 0 {
+		return apperror.BadRequest("number_of_defect and number_of_scrap must be >= 0")
+	}
+	if req.NumberOfScrap > req.NumberOfDefect {
+		return apperror.BadRequest("number_of_scrap cannot exceed number_of_defect")
+	}
+	status, err := normalizeManualQCStatus(qcType, req.Status)
+	if err != nil {
+		return err
+	}
+	performedBy = strings.TrimSpace(performedBy)
+	if performedBy == "" {
+		performedBy = "system"
+	}
+
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var (
+			woID                *int64
+			woItemID            *int64
+			dnItemID            *int64
+			kanban              string
+			uom                 string
+			woNumber            string
+			productReturnID     *int64
+			productReturnNumber string
+		)
+		uniqCode := strings.TrimSpace(req.UniqCode)
+		numberOfItemCheck := req.NumberOfItemCheck
+
+		if qcType == "production" {
+			ctxRow, err := loadProductionManualContext(tx, req.ReferenceNumber, req.UniqCode)
+			if err != nil {
+				return err
+			}
+			woID = &ctxRow.WOID
+			woItemID = &ctxRow.WOItemID
+			kanban = ctxRow.KanbanNumber
+			uom = ctxRow.UOM
+			woNumber = ctxRow.WONumber
+		} else if qcType == "incoming" {
+			ctxRow, err := loadIncomingManualContext(tx, req.ReferenceNumber, req.UniqCode)
+			if err != nil {
+				return err
+			}
+			dnItemID = &ctxRow.DNItemID
+			kanban = ctxRow.PackingNumber
+			uom = ctxRow.UOM
+		} else if qcType == "product_return" {
+			ctxRow, err := loadProductReturnManualContext(tx, req.ReferenceNumber, req.UniqCode)
+			if err != nil {
+				return err
+			}
+			productReturnID = &ctxRow.ProductReturnID
+			productReturnNumber = ctxRow.ProductReturnNumber
+			uniqCode = ctxRow.ProductReturnNumber
+			if numberOfItemCheck <= 0 {
+				numberOfItemCheck = ctxRow.QuantityRework + ctxRow.QuantityScrap
+			}
+			if numberOfItemCheck <= 0 {
+				return apperror.BadRequest("number_of_item_check must be greater than 0")
+			}
+		}
+
+		qtyPass := math.Max(numberOfItemCheck-req.NumberOfDefect, 0)
+		defectSource := "incoming_material"
+		if qcType == "production" {
+			defectSource = "process"
+		} else if qcType == "product_return" {
+			defectSource = "product_return"
+		}
+
+		qcLog := map[string]interface{}{
+			"uuid":          uuid.New().String(),
+			"wo_id":         woID,
+			"wo_item_id":    woItemID,
+			"dn_item_id":    dnItemID,
+			"uniq_code":     uniqCode,
+			"qc_round":      1,
+			"qty_checked":   numberOfItemCheck,
+			"qty_pass":      qtyPass,
+			"qty_defect":    req.NumberOfDefect,
+			"qty_scrap":     req.NumberOfScrap,
+			"status":        status,
+			"defect_source": defectSource,
+			"checked_by":    performedBy,
+			"checked_at":    checkedAt,
+			"created_at":    time.Now(),
+		}
+		if err := tx.Table("qc_logs").Create(&qcLog).Error; err != nil {
+			return apperror.Internal("create manual qc log: " + err.Error())
+		}
+		qcLogID := asInt64(qcLog["id"])
+		if qcLogID == 0 {
+			var row struct {
+				ID int64 `gorm:"column:id"`
+			}
+			if err := tx.Raw("SELECT currval(pg_get_serial_sequence('qc_logs','id')) AS id").Scan(&row).Error; err != nil {
+				return apperror.Internal("create manual qc log: missing inserted id")
+			}
+			qcLogID = row.ID
+		}
+
+		issueText := strings.TrimSpace(req.IssueReasonText)
+		if issueText == "" {
+			issueText = strings.TrimSpace(req.IssueReasonCode)
+		}
+		var sourceDefectID *int64
+		if req.NumberOfDefect > 0 || req.NumberOfScrap > 0 || issueText != "" {
+			defectItem := map[string]interface{}{
+				"qc_log_id":          qcLogID,
+				"wo_id":              woID,
+				"wo_item_id":         woItemID,
+				"dn_item_id":         dnItemID,
+				"uniq_code":          uniqCode,
+				"defect_source":      defectSource,
+				"defect_reason_code": strings.TrimSpace(req.IssueReasonCode),
+				"defect_reason_text": issueText,
+				"qty_defect":         req.NumberOfDefect,
+				"qty_scrap":          req.NumberOfScrap,
+				"is_repairable":      false,
+				"process_name":       nil,
+				"reported_by":        performedBy,
+				"reported_at":        checkedAt,
+			}
+			if err := tx.Table("qc_defect_items").Create(&defectItem).Error; err != nil {
+				return apperror.Internal("create manual qc defect item: " + err.Error())
+			}
+
+			// Tangkap id defect item agar scrap bisa ditelusuri balik ke penyebab QC.
+			defectItemID := asInt64(defectItem["id"])
+			if defectItemID == 0 {
+				var row struct {
+					ID int64 `gorm:"column:id"`
+				}
+				if err := tx.Raw("SELECT currval(pg_get_serial_sequence('qc_defect_items','id')) AS id").Scan(&row).Error; err != nil {
+					return apperror.Internal("create manual qc defect item: missing inserted id")
+				}
+				defectItemID = row.ID
+			}
+			if defectItemID > 0 {
+				sourceDefectID = &defectItemID
+			}
+		}
+
+		if qcType == "production" && req.NumberOfScrap > 0 {
+			scrapStock := scrapModels.ScrapStock{
+				UUID:          uuid.New(),
+				UniqCode:      strings.TrimSpace(req.UniqCode),
+				PackingNumber: stringPtrOrNil(strings.TrimSpace(kanban)),
+				WONumber:      stringPtrOrNil(strings.TrimSpace(woNumber)),
+				ScrapType:     scrapModels.ScrapTypeProcess,
+				Quantity:      req.NumberOfScrap,
+				UOM:           stringPtrOrNil(strings.TrimSpace(uom)),
+				DateReceived:  &checkedAt,
+				Validator:     stringPtrOrNil(performedBy),
+				Status:        scrapModels.StockStatusActive,
+				CreatedBy:     stringPtrOrNil(performedBy),
+				UpdatedBy:     stringPtrOrNil(performedBy),
+				SourceQCLogID: &qcLogID,
+				SourceDefectID: sourceDefectID,
+			}
+			if err := tx.Create(&scrapStock).Error; err != nil {
+				return apperror.Internal("create manual qc scrap stock: " + err.Error())
+			}
+		}
+
+		if qcType == "product_return" {
+			productReturnStatus := "qc_rejected"
+			if status == "APPROVED" {
+				productReturnStatus = "approved"
+			}
+			if productReturnID != nil {
+				if err := tx.Table("product_returns").Where("id = ?", *productReturnID).Updates(map[string]interface{}{
+					"status":     productReturnStatus,
+					"updated_at": time.Now(),
+				}).Error; err != nil {
+					return apperror.Internal("update product return status: " + err.Error())
+				}
+			}
+			if req.NumberOfScrap > 0 {
+				scrapStock := scrapModels.ScrapStock{
+					UUID:          uuid.New(),
+					UniqCode:      uniqCode,
+					PackingNumber: stringPtrOrNil(strings.TrimSpace(productReturnNumber)),
+					ScrapType:     scrapModels.ScrapTypeProductReturn,
+					Quantity:      req.NumberOfScrap,
+					UOM:           stringPtrOrNil(strings.TrimSpace(uom)),
+					DateReceived:  &checkedAt,
+					Validator:     stringPtrOrNil(performedBy),
+					Status:        scrapModels.StockStatusActive,
+					CreatedBy:     stringPtrOrNil(performedBy),
+					UpdatedBy:     stringPtrOrNil(performedBy),
+					SourceQCLogID: &qcLogID,
+					SourceDefectID: sourceDefectID,
+				}
+				if err := tx.Create(&scrapStock).Error; err != nil {
+					return apperror.Internal("create product return scrap stock: " + err.Error())
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
+func (r *repository) CreateReworkTask(ctx context.Context, defectID int64, performedBy string) error {
+	performedBy = strings.TrimSpace(performedBy)
+	if performedBy == "" {
+		performedBy = "system"
+	}
+	type defectRow struct {
+		ID         int64   `gorm:"column:id"`
+		QCLogID    int64   `gorm:"column:qc_log_id"`
+		WOID       *int64  `gorm:"column:wo_id"`
+		WOItemID   *int64  `gorm:"column:wo_item_id"`
+		UniqCode   string  `gorm:"column:uniq_code"`
+		ReasonCode string  `gorm:"column:defect_reason_code"`
+		ReasonText string  `gorm:"column:defect_reason_text"`
+		QtyDefect  float64 `gorm:"column:qty_defect"`
+		QtyScrap   float64 `gorm:"column:qty_scrap"`
+	}
+	var defect defectRow
+	if err := r.db.WithContext(ctx).Table("qc_defect_items").Where("id = ?", defectID).Scan(&defect).Error; err != nil {
+		return apperror.Internal("load defect: " + err.Error())
+	}
+	if defect.ID == 0 {
+		return apperror.NotFound("defect tidak ditemukan")
+	}
+
+	var existing int64
+	if err := r.db.WithContext(ctx).Table("qc_tasks").Where("task_type = 'rework_qc' AND round_results::text ILIKE ?", fmt.Sprintf("%%\"source_defect_id\":%d%%", defectID)).Count(&existing).Error; err != nil {
+		return apperror.Internal("check rework task: " + err.Error())
+	}
+	if existing > 0 {
+		return apperror.Conflict("rework task already exists for this defect")
+	}
+
+	raw, _ := json.Marshal(map[string]interface{}{
+		"event":            "rework_qc_created",
+		"source_qc_log_id": defect.QCLogID,
+		"source_defect_id": defect.ID,
+		"qty_to_rework":    math.Max(defect.QtyDefect-defect.QtyScrap, 0),
+		"reason_code":      defect.ReasonCode,
+		"reason_text":      defect.ReasonText,
+		"uniq_code":        defect.UniqCode,
+		"performed_by":     performedBy,
+		"occurred_at":      time.Now().UTC().Format(time.RFC3339),
+	})
+	task := qcModels.QCTask{
+		TaskType:     "rework_qc",
+		Status:       "pending",
+		WOID:         defect.WOID,
+		WOItemID:     defect.WOItemID,
+		Round:        1,
+		RoundResults: datatypes.JSON(raw),
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+	if err := r.db.WithContext(ctx).Create(&task).Error; err != nil {
+		return apperror.Internal("create rework task: " + err.Error())
+	}
+	return nil
+}
+
+func buildPagination(total int64, page, limit int) models.Pagination {
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	return models.Pagination{Total: total, Page: page, Limit: limit, TotalPages: int(math.Ceil(float64(total) / float64(limit)))}
+}
+
+func buildRangeWhere(filter Filter, column string) (string, []interface{}) {
+	parts := []string{"1=1"}
+	args := make([]interface{}, 0, 4)
+	if filter.DateFrom != "" {
+		parts = append(parts, fmt.Sprintf("%s >= ?", column))
+		args = append(args, filter.DateFrom)
+	}
+	if filter.DateTo != "" {
+		parts = append(parts, fmt.Sprintf("%s < (?::date + INTERVAL '1 day')", column))
+		args = append(args, filter.DateTo)
+	} else if filter.DateFrom == "" && filter.WindowHours > 0 {
+		parts = append(parts, fmt.Sprintf("%s >= ?", column))
+		args = append(args, time.Now().Add(-time.Duration(filter.WindowHours)*time.Hour))
+	}
+	return " WHERE " + strings.Join(parts, " AND "), args
+}
+
+func buildProductionWhere(filter Filter) (string, []interface{}) {
+	parts := []string{"(ql.defect_source IN ('process','setting_machine') OR ql.wo_id IS NOT NULL)"}
+	args := make([]interface{}, 0, 8)
+	parts, args = appendDateParts(parts, args, filter, "ql.checked_at")
+	if filter.Status != "" {
+		if strings.EqualFold(filter.Status, "passed") {
+			parts = append(parts, "UPPER(ql.status) IN ('PASSED','APPROVED')")
+		} else if strings.EqualFold(filter.Status, "not_passed") {
+			parts = append(parts, "UPPER(ql.status) NOT IN ('PASSED','APPROVED')")
+		}
+	}
+	if filter.WONumber != "" {
+		parts = append(parts, "wo.wo_number ILIKE ?")
+		args = append(args, like(filter.WONumber))
+	}
+	if filter.UniqCode != "" {
+		parts = append(parts, "ql.uniq_code ILIKE ?")
+		args = append(args, like(filter.UniqCode))
+	}
+	if filter.Search != "" {
+		parts = append(parts, "(wo.wo_number ILIKE ? OR ql.uniq_code ILIKE ? OR woi.kanban_number ILIKE ?)")
+		search := like(filter.Search)
+		args = append(args, search, search, search)
+	}
+	return " WHERE " + strings.Join(parts, " AND "), args
+}
+
+func buildIncomingWhere(filter Filter) (string, []interface{}) {
+	parts := []string{"ql.defect_source = 'incoming_material'"}
+	args := make([]interface{}, 0, 8)
+	parts, args = appendDateParts(parts, args, filter, "ql.checked_at")
+	if filter.Status != "" {
+		if strings.EqualFold(filter.Status, "passed") {
+			parts = append(parts, "UPPER(ql.status) IN ('PASSED','APPROVED')")
+		} else if strings.EqualFold(filter.Status, "not_passed") {
+			parts = append(parts, "UPPER(ql.status) NOT IN ('PASSED','APPROVED')")
+		}
+	}
+	if filter.SupplierID > 0 {
+		parts = append(parts, "dn.supplier_id = ?")
+		args = append(args, filter.SupplierID)
+	}
+	if filter.PONumber != "" {
+		parts = append(parts, "dn.po_number ILIKE ?")
+		args = append(args, like(filter.PONumber))
+	}
+	if filter.Search != "" {
+		parts = append(parts, "(dn.po_number ILIKE ? OR ql.uniq_code ILIKE ? OR COALESCE(s.supplier_name,'') ILIKE ? OR COALESCE(dn.dn_number,'') ILIKE ?)")
+		search := like(filter.Search)
+		args = append(args, search, search, search, search)
+	}
+	return " WHERE " + strings.Join(parts, " AND "), args
+}
+
+func buildProductReturnWhere(filter Filter) (string, []interface{}) {
+	parts := []string{"1=1"}
+	args := make([]interface{}, 0, 8)
+	parts, args = appendDateParts(parts, args, filter, "COALESCE(ql.checked_at, pr.updated_at, pr.created_at)")
+	if filter.Status != "" {
+		switch {
+		case strings.EqualFold(filter.Status, "passed"):
+			parts = append(parts, "UPPER(COALESCE(ql.status, pr.status, '')) IN ('PASSED','APPROVED','APPROVED_QC')")
+		case strings.EqualFold(filter.Status, "not_passed"):
+			parts = append(parts, "UPPER(COALESCE(ql.status, pr.status, '')) NOT IN ('PASSED','APPROVED','APPROVED_QC','PENDING','WAITING','PENDING_QC')")
+		case strings.EqualFold(filter.Status, "pending"):
+			parts = append(parts, "UPPER(COALESCE(ql.status, pr.status, '')) IN ('PENDING','WAITING','PENDING_QC')")
+		}
+	}
+	if filter.UniqCode != "" {
+		parts = append(parts, "pr.uniq ILIKE ?")
+		args = append(args, like(filter.UniqCode))
+	}
+	if filter.Search != "" {
+		parts = append(parts, "(pr.uniq ILIKE ? OR COALESCE(pr.dn_number, '') ILIKE ? OR COALESCE(dnc.customer_name_snapshot, '') ILIKE ?)")
+		search := like(filter.Search)
+		args = append(args, search, search, search)
+	}
+	return " WHERE " + strings.Join(parts, " AND "), args
+}
+
+func buildDefectWhere(filter Filter) (string, []interface{}) {
+	parts := []string{"1=1"}
+	args := make([]interface{}, 0, 8)
+	parts, args = appendDateParts(parts, args, filter, "ql.checked_at")
+	if filter.DefectSource != "" {
+		parts = append(parts, "qdi.defect_source = ?")
+		args = append(args, filter.DefectSource)
+	}
+	if filter.ReasonCode != "" {
+		parts = append(parts, "qdi.defect_reason_code = ?")
+		args = append(args, filter.ReasonCode)
+	}
+	if filter.UniqCode != "" {
+		parts = append(parts, "qdi.uniq_code ILIKE ?")
+		args = append(args, like(filter.UniqCode))
+	}
+	if filter.Search != "" {
+		parts = append(parts, "(qdi.uniq_code ILIKE ? OR COALESCE(woi.part_name,'') ILIKE ? OR COALESCE(qdi.defect_reason_text,'') ILIKE ?)")
+		search := like(filter.Search)
+		args = append(args, search, search, search)
+	}
+	return " WHERE " + strings.Join(parts, " AND "), args
+}
+
+func appendDateParts(parts []string, args []interface{}, filter Filter, column string) ([]string, []interface{}) {
+	if filter.DateFrom != "" {
+		parts = append(parts, fmt.Sprintf("%s >= ?", column))
+		args = append(args, filter.DateFrom)
+	}
+	if filter.DateTo != "" {
+		parts = append(parts, fmt.Sprintf("%s < (?::date + INTERVAL '1 day')", column))
+		args = append(args, filter.DateTo)
+	}
+	return parts, args
+}
+
+func like(v string) string {
+	return "%" + strings.TrimSpace(v) + "%"
+}
+
+type productionManualContext struct {
+	WOID         int64  `gorm:"column:wo_id"`
+	WOItemID     int64  `gorm:"column:wo_item_id"`
+	WONumber     string `gorm:"column:wo_number"`
+	KanbanNumber string `gorm:"column:kanban_number"`
+	UOM          string `gorm:"column:uom"`
+}
+
+type incomingManualContext struct {
+	DNItemID      int64  `gorm:"column:dn_item_id"`
+	PackingNumber string `gorm:"column:packing_number"`
+	UOM           string `gorm:"column:uom"`
+}
+
+type productReturnManualContext struct {
+	ProductReturnID     int64   `gorm:"column:product_return_id"`
+	ProductReturnNumber string  `gorm:"column:product_return_number"`
+	DNNumber            string  `gorm:"column:dn_number"`
+	QuantityScrap       float64 `gorm:"column:quantity_scrap"`
+	QuantityRework      float64 `gorm:"column:quantity_rework"`
+}
+
+func loadProductionManualContext(tx *gorm.DB, referenceNumber, uniqCode string) (*productionManualContext, error) {
+	var row productionManualContext
+	q := tx.Table("work_order_items woi").
+		Select("wo.id AS wo_id, woi.id AS wo_item_id, COALESCE(wo.wo_number, '') AS wo_number, COALESCE(woi.kanban_number, '') AS kanban_number, COALESCE(woi.uom, '') AS uom").
+		Joins("JOIN work_orders wo ON wo.id = woi.wo_id").
+		Where("woi.item_uniq_code = ?", strings.TrimSpace(uniqCode))
+	if strings.TrimSpace(referenceNumber) != "" {
+		q = q.Where("wo.wo_number = ?", strings.TrimSpace(referenceNumber))
+	}
+	if err := q.Order("woi.id DESC").Limit(1).Scan(&row).Error; err != nil {
+		return nil, apperror.Internal("load production context: " + err.Error())
+	}
+	if row.WOItemID == 0 {
+		return nil, apperror.NotFound("production WO/uniq context tidak ditemukan")
+	}
+	return &row, nil
+}
+
+func loadIncomingManualContext(tx *gorm.DB, referenceNumber, uniqCode string) (*incomingManualContext, error) {
+	var row incomingManualContext
+	q := tx.Table("delivery_note_items dni").
+		Select("dni.id AS dn_item_id, COALESCE(dni.packing_number, '') AS packing_number, COALESCE(dni.uom, '') AS uom").
+		Joins("JOIN delivery_notes dn ON dn.id = dni.dn_id").
+		Where("dni.item_uniq_code = ?", strings.TrimSpace(uniqCode))
+	if ref := strings.TrimSpace(referenceNumber); ref != "" {
+		q = q.Where("(dn.dn_number = ? OR dn.po_number = ?)", ref, ref)
+	}
+	if err := q.Order("dni.id DESC").Limit(1).Scan(&row).Error; err != nil {
+		return nil, apperror.Internal("load incoming context: " + err.Error())
+	}
+	if row.DNItemID == 0 {
+		return nil, apperror.NotFound("incoming DN/PO/uniq context tidak ditemukan")
+	}
+	return &row, nil
+}
+
+func loadProductReturnManualContext(tx *gorm.DB, referenceNumber, uniqCode string) (*productReturnManualContext, error) {
+	var row productReturnManualContext
+	q := tx.Table("product_returns pr").
+		Select("pr.id AS product_return_id, pr.uniq AS product_return_number, COALESCE(pr.dn_number, '') AS dn_number, COALESCE(pr.quantity_scrap, 0) AS quantity_scrap, COALESCE(pr.quantity_rework, 0) AS quantity_rework")
+	if ref := strings.TrimSpace(referenceNumber); ref != "" {
+		q = q.Where("(pr.uniq = ? OR pr.dn_number = ?)", ref, ref)
+	}
+	if code := strings.TrimSpace(uniqCode); code != "" {
+		q = q.Where("pr.uniq = ?", code)
+	}
+	if err := q.Order("pr.id DESC").Limit(1).Scan(&row).Error; err != nil {
+		return nil, apperror.Internal("load product return context: " + err.Error())
+	}
+	if row.ProductReturnID == 0 {
+		return nil, apperror.NotFound("product return context tidak ditemukan")
+	}
+	return &row, nil
+}
+
+func normalizeManualQCStatus(qcType, raw string) (string, error) {
+	status := strings.ToLower(strings.TrimSpace(raw))
+	switch qcType {
+	case "production":
+		switch status {
+		case "passed", "pass":
+			return "PASSED", nil
+		case "failed", "fail", "not_passed", "not passed", "rejected", "reject":
+			return "FAILED", nil
+		}
+	case "incoming":
+		switch status {
+		case "passed", "pass", "approved", "approve":
+			return "APPROVED", nil
+		case "failed", "fail", "not_passed", "not passed", "rejected", "reject":
+			return "REJECTED", nil
+		}
+	case "product_return":
+		switch status {
+		case "passed", "pass", "approved", "approve":
+			return "APPROVED", nil
+		case "failed", "fail", "not_passed", "not passed", "rejected", "reject":
+			return "REJECTED", nil
+		}
+	}
+	return "", apperror.BadRequest("invalid status for qc_type")
+}
+
+func asInt64(v interface{}) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case uint:
+		return int64(n)
+	case uint64:
+		return int64(n)
+	case float64:
+		return int64(n)
+	default:
+		return 0
+	}
+}
+
+func stringPtrOrNil(v string) *string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	return &v
+}

@@ -1,0 +1,1751 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"log"
+	"math"
+	"strings"
+	"time"
+
+	"github.com/ganasa18/go-template/internal/initialpacking"
+	invModels "github.com/ganasa18/go-template/internal/inventory/models"
+	"github.com/ganasa18/go-template/internal/inventory/repository"
+	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/forecastingclient"
+	"github.com/ganasa18/go-template/pkg/inventoryconst"
+	"github.com/ganasa18/go-template/pkg/pagination"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+// ---------------------------------------------------------------------------
+// Interface
+// ---------------------------------------------------------------------------
+
+type IService interface {
+	// Canonical Raw Material Master
+	ListRawMaterialMasters(ctx context.Context, search string, page, limit int) (*invModels.RawMaterialMasterList, error)
+	GetRawMaterialMaster(ctx context.Context, id int64) (*invModels.RawMaterialMaster, error)
+	CreateRawMaterialMaster(ctx context.Context, req invModels.CreateRawMaterialMasterRequest, createdBy string) (*invModels.RawMaterialMaster, error)
+	UpdateRawMaterialMaster(ctx context.Context, id int64, req invModels.UpdateRawMaterialMasterRequest, updatedBy string) (*invModels.RawMaterialMaster, error)
+	DeleteRawMaterialMaster(ctx context.Context, id int64, deletedBy string) error
+	ListRawMaterialPlanning(ctx context.Context) ([]invModels.RawMaterialPlanningItem, error)
+
+	// Raw Material
+	ListRawMaterials(ctx context.Context, p pagination.InventoryRMPaginationInput) (*invModels.RawMaterialListResponse, error)
+	GetRawMaterialByID(ctx context.Context, id int64) (*invModels.RawMaterial, error)
+	// [rm-key] Detail RM lewat id numerik, uniq_code, atau uuid.
+	GetRawMaterialByKey(ctx context.Context, key string) (*invModels.RawMaterial, error)
+	GetRawMaterialHistoryByKey(ctx context.Context, key string, p pagination.PaginationInput) (*invModels.HistoryLogResponse, error)
+	CreateRawMaterial(ctx context.Context, req invModels.CreateRawMaterialRequest, createdBy string) (*invModels.RawMaterialItem, error)
+	// [initial-packing] buat Packing ID untuk RM bertock yang belum punya packing.
+	EnsureInitialPackings(ctx context.Context, key string, createdBy string) (*initialpacking.Result, error)
+	BackfillInitialPackings(ctx context.Context, createdBy string) ([]initialpacking.Result, error)
+	BulkCreateRawMaterials(ctx context.Context, req invModels.BulkCreateRawMaterialRequest, createdBy string) (int, error)
+	UpdateRawMaterial(ctx context.Context, id int64, req invModels.UpdateRawMaterialRequest, updatedBy string) (*invModels.RawMaterial, error)
+	DeleteRawMaterial(ctx context.Context, id int64, deletedBy string) error
+	GetRawMaterialHistory(ctx context.Context, id int64, p pagination.PaginationInput) (*invModels.HistoryLogResponse, error)
+
+	// Indirect Raw Material
+	ListIndirectMaterials(ctx context.Context, p pagination.InventoryIndirectPaginationInput) (*invModels.IndirectMaterialListResponse, error)
+	GetIndirectByID(ctx context.Context, id int64) (*invModels.IndirectRawMaterial, error)
+	CreateIndirectMaterial(ctx context.Context, req invModels.CreateIndirectMaterialRequest, createdBy string) (*invModels.IndirectMaterialItem, error)
+	BulkCreateIndirectMaterials(ctx context.Context, req invModels.BulkCreateIndirectMaterialRequest, createdBy string) (int, error)
+	UpdateIndirectMaterial(ctx context.Context, id int64, req invModels.UpdateIndirectMaterialRequest, updatedBy string) (*invModels.IndirectRawMaterial, error)
+	DeleteIndirectMaterial(ctx context.Context, id int64, deletedBy string) error
+	GetIndirectHistory(ctx context.Context, id int64, p pagination.PaginationInput) (*invModels.HistoryLogResponse, error)
+
+	// Subcon Inventory
+	ListSubconInventory(ctx context.Context, p pagination.InventorySubconPaginationInput) (*invModels.SubconInventoryListResponse, error)
+	GetSubconByID(ctx context.Context, id int64) (*invModels.SubconInventory, error)
+	CreateSubconInventory(ctx context.Context, req invModels.CreateSubconInventoryRequest, createdBy string) (*invModels.SubconInventoryItem, error)
+	UpdateSubconInventory(ctx context.Context, id int64, req invModels.UpdateSubconInventoryRequest, updatedBy string) (*invModels.SubconInventory, error)
+	DeleteSubconInventory(ctx context.Context, id int64, deletedBy string) error
+	GetSubconHistory(ctx context.Context, id int64, p pagination.PaginationInput) (*invModels.HistoryLogResponse, error)
+	// ApproveSubconInventory / RejectSubconInventory only change approval_status (no stock movement).
+	ApproveSubconInventory(ctx context.Context, id int64, approvedBy string) (*invModels.SubconInventory, error)
+	RejectSubconInventory(ctx context.Context, id int64, approvedBy string) (*invModels.SubconInventory, error)
+	// SyncSubconInVendor auto-generates Stock In Vendor rows from subcon PO lines (idempotent).
+	SyncSubconInVendor(ctx context.Context) error
+
+	// Incoming scans (tab view - shared)
+	ListIncoming(ctx context.Context, dnType string, p pagination.InventoryIncomingPaginationInput) (*invModels.IncomingListResponse, error)
+
+	// Kanban summary — per item_uniq_code, called async per row by frontend
+	GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error)
+
+	// Packing list — per item_uniq_code, powers the packing table on the RM /
+	// indirect RM detail page (data comes from the work order barcode scan).
+	GetPackingList(ctx context.Context, uniqCode string) (*invModels.InvPackingListResponse, error)
+
+	// Work Order consumption — deducts stock and writes outgoing movement logs for each WO item.
+	ConsumeStockForWorkOrder(ctx context.Context, items []ConsumeItem, woNumber string, performedBy string) error
+	AppendMovementLog(ctx context.Context, tx *gorm.DB, input MovementLogInput) error
+
+	GenerateQR(ctx context.Context, uniqCode string) (*string, error)
+	GenerateQRIndirect(ctx context.Context, uniqCode string) (*string, error)
+	GenerateQRSubcon(ctx context.Context, uniqCode string) (*string, error)
+}
+
+// ---------------------------------------------------------------------------
+// Implementation
+// ---------------------------------------------------------------------------
+
+type service struct {
+	repo repository.IRepository
+	// plans opsional: sumber nilai safety stock untuk calculation_type "forecast".
+	plans InventoryPlanProvider
+}
+
+// InventoryPlanProvider membaca hasil scheduler forecasting (GET /inventory-plan).
+// *forecastingclient.Client memenuhi interface ini.
+type InventoryPlanProvider interface {
+	GetInventoryPlan(ctx context.Context, opts forecastingclient.GetInventoryPlanOptions) ([]forecastingclient.InventoryPlanItem, error)
+}
+
+func New(repo repository.IRepository) IService { return &service{repo: repo} }
+
+// NewWithForecast sama seperti New, tetapi safety stock bertipe "forecast"
+// memakai hasil scheduler dari API forecasting.
+func NewWithForecast(repo repository.IRepository, plans InventoryPlanProvider) IService {
+	return &service{repo: repo, plans: plans}
+}
+
+// ---------------------------------------------------------------------------
+// Raw Material
+// ---------------------------------------------------------------------------
+
+func (s *service) ListRawMaterials(ctx context.Context, p pagination.InventoryRMPaginationInput) (*invModels.RawMaterialListResponse, error) {
+	f := repository.ListFilter{
+		Search:         p.Search,
+		RMType:         p.RMType,
+		RMSource:       p.RMSource,
+		Status:         p.Status,
+		BuyNotBuy:      p.BuyNotBuy,
+		Page:           p.Page,
+		Limit:          p.Limit,
+		Offset:         p.Offset(),
+		OrderBy:        p.OrderBy,
+		OrderDirection: p.OrderDirection,
+	}
+
+	rows, total, err := s.repo.ListRawMaterials(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+
+	stats, err := s.repo.GetRawMaterialStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]invModels.RawMaterialItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, rawMaterialRowToItem(r))
+	}
+
+	totalPages := 0
+	if p.Limit > 0 {
+		totalPages = int((total + int64(p.Limit) - 1) / int64(p.Limit))
+	}
+
+	return &invModels.RawMaterialListResponse{
+		Stats: invModels.InventoryStats{
+			TotalItems:         stats.TotalItems,
+			BuyRecommendations: stats.BuyRecommendations,
+			LowStockItems:      stats.LowStockItems,
+		},
+		Items: items,
+		Pagination: invModels.InventoryPagination{
+			Total:      total,
+			Page:       p.Page,
+			Limit:      p.Limit,
+			TotalPages: totalPages,
+		},
+	}, nil
+}
+
+func (s *service) GetRawMaterialByID(ctx context.Context, id int64) (*invModels.RawMaterial, error) {
+	return s.repo.GetRawMaterialByID(ctx, id)
+}
+
+// [rm-key] GetRawMaterialByKey menerima id numerik, uniq_code, atau uuid.
+func (s *service) GetRawMaterialByKey(ctx context.Context, key string) (*invModels.RawMaterial, error) {
+	return s.repo.FindRawMaterialByKey(ctx, key)
+}
+
+// [rm-key] GetRawMaterialHistoryByKey = movement log dengan kunci fleksibel.
+func (s *service) GetRawMaterialHistoryByKey(ctx context.Context, key string, p pagination.PaginationInput) (*invModels.HistoryLogResponse, error) {
+	rm, err := s.repo.FindRawMaterialByKey(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetRawMaterialHistory(ctx, rm.ID, p)
+}
+
+func (s *service) CreateRawMaterial(ctx context.Context, req invModels.CreateRawMaterialRequest, createdBy string) (*invModels.RawMaterialItem, error) {
+	// Auto-fill part fields from items table when missing.
+	lookupKey := strings.TrimSpace(req.UniqCode)
+	if req.ItemUniqCode != nil && strings.TrimSpace(*req.ItemUniqCode) != "" {
+		lookupKey = strings.TrimSpace(*req.ItemUniqCode)
+	}
+	itemRow, err := s.repo.FindItemByUniqCode(ctx, lookupKey)
+	if err != nil {
+		return nil, err
+	}
+	partNumber := req.PartNumber
+	partName := req.PartName
+	uom := req.UOM
+	var itemID *int64
+	if itemRow != nil {
+		itemID = &itemRow.ID
+		if partNumber == nil {
+			partNumber = itemRow.PartNumber
+		}
+		if partName == nil {
+			partName = itemRow.PartName
+		}
+		if uom == nil {
+			uom = itemRow.UOM
+		}
+	}
+
+	now := time.Now()
+	rm := invModels.RawMaterial{
+		UUID:                uuid.New(),
+		UniqCode:            req.UniqCode,
+		RawMaterialMasterID: req.RawMaterialMasterID,
+		RawMaterialType:     req.RawMaterialType,
+		RMSource:            req.RMSource,
+		PartNumber:          partNumber,
+		PartName:            partName,
+		WarehouseLocation:   req.WarehouseLocation,
+		UOM:                 uom,
+		ItemID:              itemID,
+		StockQty:            req.StockQty,
+		StockWeightKg:       req.StockWeightKg,
+		KanbanCount:         req.KanbanCount,
+		KanbanStandardQty:   req.KanbanStandardQty,
+		SafetyStockQty:      req.SafetyStockQty,
+		DailyUsageQty:       req.DailyUsageQty,
+		Status:              "normal",
+		BuyNotBuy:           "not_buy",
+		CreatedBy:           &createdBy,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}
+
+	if err := s.repo.CreateRawMaterial(ctx, &rm); err != nil {
+		return nil, err
+	}
+	s.generateOpeningPackings(ctx, rm.UniqCode, rm.StockQty, createdBy)
+	s.writeMovementLog(ctx, MovementLogInput{
+		Category:     "raw_material",
+		MovementType: "incoming",
+		UniqCode:     rm.UniqCode,
+		EntityID:     &rm.ID,
+		QtyChange:    rm.StockQty,
+		WeightChange: rm.StockWeightKg,
+		SourceFlag:   "manual",
+		LoggedBy:     createdBy,
+	})
+	item := rawMaterialModelToItem(rm)
+	return &item, nil
+}
+
+func (s *service) BulkCreateRawMaterials(ctx context.Context, req invModels.BulkCreateRawMaterialRequest, createdBy string) (int, error) {
+	now := time.Now()
+	items := make([]invModels.RawMaterial, 0, len(req.Items))
+	for _, r := range req.Items {
+		lookupKey := strings.TrimSpace(r.UniqCode)
+		if r.ItemUniqCode != nil && strings.TrimSpace(*r.ItemUniqCode) != "" {
+			lookupKey = strings.TrimSpace(*r.ItemUniqCode)
+		}
+		itemRow, err := s.repo.FindItemByUniqCode(ctx, lookupKey)
+		if err != nil {
+			return 0, err
+		}
+		partNumber := r.PartNumber
+		partName := r.PartName
+		uom := r.UOM
+		var itemID *int64
+		if itemRow != nil {
+			itemID = &itemRow.ID
+			if partNumber == nil {
+				partNumber = itemRow.PartNumber
+			}
+			if partName == nil {
+				partName = itemRow.PartName
+			}
+			if uom == nil {
+				uom = itemRow.UOM
+			}
+		}
+
+		items = append(items, invModels.RawMaterial{
+			UUID:                uuid.New(),
+			UniqCode:            r.UniqCode,
+			RawMaterialMasterID: r.RawMaterialMasterID,
+			RawMaterialType:     r.RawMaterialType,
+			RMSource:            r.RMSource,
+			PartNumber:          partNumber,
+			PartName:            partName,
+			WarehouseLocation:   r.WarehouseLocation,
+			UOM:                 uom,
+			ItemID:              itemID,
+			StockQty:            r.StockQty,
+			StockWeightKg:       r.StockWeightKg,
+			KanbanCount:         r.KanbanCount,
+			KanbanStandardQty:   r.KanbanStandardQty,
+			SafetyStockQty:      r.SafetyStockQty,
+			DailyUsageQty:       r.DailyUsageQty,
+			Status:              "normal",
+			BuyNotBuy:           "not_buy",
+			CreatedBy:           &createdBy,
+			CreatedAt:           now,
+			UpdatedAt:           now,
+		})
+	}
+	if err := s.repo.BulkCreateRawMaterials(ctx, items); err != nil {
+		return 0, err
+	}
+	for _, rm := range items {
+		s.generateOpeningPackings(ctx, rm.UniqCode, rm.StockQty, createdBy)
+	}
+	for _, rm := range items {
+		rmCopy := rm
+		s.writeMovementLog(ctx, MovementLogInput{
+			Category:     "raw_material",
+			MovementType: "incoming",
+			UniqCode:     rmCopy.UniqCode,
+			EntityID:     &rmCopy.ID,
+			QtyChange:    rmCopy.StockQty,
+			WeightChange: rmCopy.StockWeightKg,
+			SourceFlag:   "manual",
+			LoggedBy:     createdBy,
+		})
+	}
+	return len(items), nil
+}
+
+// generateOpeningPackings membuat Initial Packing untuk stok yang baru di-inject.
+// Kegagalan hanya di-log: inject stok sudah sukses dan scan produksi akan
+// membuat packing otomatis (EnsureInitialPackings) bila baris ini belum ada.
+func (s *service) generateOpeningPackings(ctx context.Context, uniqCode string, qty float64, createdBy string) {
+	if qty <= 0 {
+		return
+	}
+	if _, err := s.repo.GenerateInitialPackings(ctx, uniqCode, qty, createdBy); err != nil {
+		log.Printf("[initial-packing] gagal generate packing untuk %s (qty %.4f): %v", uniqCode, qty, err)
+	}
+}
+
+// EnsureInitialPackings: key boleh id numerik, uniq_code, atau uuid.
+func (s *service) EnsureInitialPackings(ctx context.Context, key string, createdBy string) (*initialpacking.Result, error) {
+	rm, err := s.repo.FindRawMaterialByKey(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.EnsureInitialPackings(ctx, rm.UniqCode, createdBy)
+}
+
+func (s *service) BackfillInitialPackings(ctx context.Context, createdBy string) ([]initialpacking.Result, error) {
+	return s.repo.BackfillInitialPackings(ctx, createdBy)
+}
+
+func (s *service) UpdateRawMaterial(ctx context.Context, id int64, req invModels.UpdateRawMaterialRequest, updatedBy string) (*invModels.RawMaterial, error) {
+	updates := map[string]interface{}{"updated_by": &updatedBy, "updated_at": time.Now()}
+	if req.RawMaterialMasterID != nil {
+		updates["raw_material_master_id"] = *req.RawMaterialMasterID
+	}
+	if req.RawMaterialType != nil {
+		updates["raw_material_type"] = *req.RawMaterialType
+	}
+	if req.RMSource != nil {
+		updates["rm_source"] = *req.RMSource
+	}
+	if req.PartNumber != nil {
+		updates["part_number"] = *req.PartNumber
+	}
+	if req.PartName != nil {
+		updates["part_name"] = *req.PartName
+	}
+	if req.WarehouseLocation != nil {
+		updates["warehouse_location"] = *req.WarehouseLocation
+	}
+	if req.UOM != nil {
+		updates["uom"] = *req.UOM
+	}
+	if req.StockQty != nil {
+		updates["stock_qty"] = *req.StockQty
+	}
+	if req.StockWeightKg != nil {
+		updates["stock_weight_kg"] = *req.StockWeightKg
+	}
+	if req.KanbanCount != nil {
+		updates["kanban_count"] = *req.KanbanCount
+	}
+	if req.KanbanStandardQty != nil {
+		updates["kanban_standard_qty"] = *req.KanbanStandardQty
+	}
+	if req.SafetyStockQty != nil {
+		updates["safety_stock_qty"] = *req.SafetyStockQty
+	}
+	if req.DailyUsageQty != nil {
+		updates["daily_usage_qty"] = *req.DailyUsageQty
+	}
+	return s.repo.UpdateRawMaterial(ctx, id, updates)
+}
+
+func (s *service) DeleteRawMaterial(ctx context.Context, id int64, deletedBy string) error {
+	return s.repo.SoftDeleteRawMaterial(ctx, id, deletedBy)
+}
+
+func (s *service) GetRawMaterialHistory(ctx context.Context, id int64, p pagination.PaginationInput) (*invModels.HistoryLogResponse, error) {
+	rm, err := s.repo.GetRawMaterialByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	f := repository.ListFilter{
+		Limit:  p.Limit,
+		Offset: p.Offset(),
+	}
+	rows, total, err := s.repo.GetMovementHistory(ctx, "raw_material", rm.UniqCode, f)
+	if err != nil {
+		return nil, err
+	}
+	return buildHistoryResponse(rows, total, p), nil
+}
+
+// ---------------------------------------------------------------------------
+// Indirect Raw Material
+// ---------------------------------------------------------------------------
+
+func (s *service) ListIndirectMaterials(ctx context.Context, p pagination.InventoryIndirectPaginationInput) (*invModels.IndirectMaterialListResponse, error) {
+	f := repository.ListFilter{
+		Search:         p.Search,
+		Status:         p.Status,
+		BuyNotBuy:      p.BuyNotBuy,
+		Page:           p.Page,
+		Limit:          p.Limit,
+		Offset:         p.Offset(),
+		OrderBy:        p.OrderBy,
+		OrderDirection: p.OrderDirection,
+	}
+
+	rows, total, err := s.repo.ListIndirectMaterials(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+
+	stats, err := s.repo.GetIndirectStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]invModels.IndirectMaterialItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, indirectRowToItem(r))
+	}
+
+	totalPages := 0
+	if p.Limit > 0 {
+		totalPages = int((total + int64(p.Limit) - 1) / int64(p.Limit))
+	}
+
+	return &invModels.IndirectMaterialListResponse{
+		Stats: invModels.InventoryStats{
+			TotalItems:         stats.TotalItems,
+			BuyRecommendations: stats.BuyRecommendations,
+			LowStockItems:      stats.LowStockItems,
+		},
+		Items: items,
+		Pagination: invModels.InventoryPagination{
+			Total:      total,
+			Page:       p.Page,
+			Limit:      p.Limit,
+			TotalPages: totalPages,
+		},
+	}, nil
+}
+
+func (s *service) GetIndirectByID(ctx context.Context, id int64) (*invModels.IndirectRawMaterial, error) {
+	return s.repo.GetIndirectByID(ctx, id)
+}
+
+func (s *service) CreateIndirectMaterial(ctx context.Context, req invModels.CreateIndirectMaterialRequest, createdBy string) (*invModels.IndirectMaterialItem, error) {
+	lookupKey := strings.TrimSpace(req.UniqCode)
+	if req.ItemUniqCode != nil && strings.TrimSpace(*req.ItemUniqCode) != "" {
+		lookupKey = strings.TrimSpace(*req.ItemUniqCode)
+	}
+	itemRow, err := s.repo.FindItemByUniqCode(ctx, lookupKey)
+	if err != nil {
+		return nil, err
+	}
+	partNumber := req.PartNumber
+	partName := req.PartName
+	uom := req.UOM
+	var itemID *int64
+	if itemRow != nil {
+		itemID = &itemRow.ID
+		if partNumber == nil {
+			partNumber = itemRow.PartNumber
+		}
+		if partName == nil {
+			partName = itemRow.PartName
+		}
+		if uom == nil {
+			uom = itemRow.UOM
+		}
+	}
+
+	now := time.Now()
+	statusPtr := "normal"
+	irm := invModels.IndirectRawMaterial{
+		UUID:              uuid.New(),
+		UniqCode:          req.UniqCode,
+		PartNumber:        partNumber,
+		PartName:          partName,
+		WarehouseLocation: req.WarehouseLocation,
+		UOM:               uom,
+		ItemID:            itemID,
+		StockQty:          req.StockQty,
+		StockWeightKg:     req.StockWeightKg,
+		KanbanCount:       req.KanbanCount,
+		KanbanStandardQty: req.KanbanStandardQty,
+		SafetyStockQty:    req.SafetyStockQty,
+		DailyUsageQty:     req.DailyUsageQty,
+		Status:            &statusPtr,
+		BuyNotBuy:         "not_buy",
+		CreatedBy:         &createdBy,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	if err := s.repo.CreateIndirectMaterial(ctx, &irm); err != nil {
+		return nil, err
+	}
+	s.writeMovementLog(ctx, MovementLogInput{
+		Category:     "indirect_raw_material",
+		MovementType: "incoming",
+		UniqCode:     irm.UniqCode,
+		EntityID:     &irm.ID,
+		QtyChange:    irm.StockQty,
+		WeightChange: irm.StockWeightKg,
+		SourceFlag:   "manual",
+		LoggedBy:     createdBy,
+	})
+	item := indirectModelToItem(irm)
+	return &item, nil
+}
+
+func (s *service) BulkCreateIndirectMaterials(ctx context.Context, req invModels.BulkCreateIndirectMaterialRequest, createdBy string) (int, error) {
+	now := time.Now()
+	statusPtr := "normal"
+	items := make([]invModels.IndirectRawMaterial, 0, len(req.Items))
+	for _, r := range req.Items {
+		lookupKey := strings.TrimSpace(r.UniqCode)
+		if r.ItemUniqCode != nil && strings.TrimSpace(*r.ItemUniqCode) != "" {
+			lookupKey = strings.TrimSpace(*r.ItemUniqCode)
+		}
+		itemRow, err := s.repo.FindItemByUniqCode(ctx, lookupKey)
+		if err != nil {
+			return 0, err
+		}
+		partNumber := r.PartNumber
+		partName := r.PartName
+		uom := r.UOM
+		var itemID *int64
+		if itemRow != nil {
+			itemID = &itemRow.ID
+			if partNumber == nil {
+				partNumber = itemRow.PartNumber
+			}
+			if partName == nil {
+				partName = itemRow.PartName
+			}
+			if uom == nil {
+				uom = itemRow.UOM
+			}
+		}
+
+		sp := statusPtr
+		items = append(items, invModels.IndirectRawMaterial{
+			UUID:              uuid.New(),
+			UniqCode:          r.UniqCode,
+			PartNumber:        partNumber,
+			PartName:          partName,
+			WarehouseLocation: r.WarehouseLocation,
+			UOM:               uom,
+			ItemID:            itemID,
+			StockQty:          r.StockQty,
+			StockWeightKg:     r.StockWeightKg,
+			KanbanCount:       r.KanbanCount,
+			KanbanStandardQty: r.KanbanStandardQty,
+			SafetyStockQty:    r.SafetyStockQty,
+			DailyUsageQty:     r.DailyUsageQty,
+			Status:            &sp,
+			BuyNotBuy:         "not_buy",
+			CreatedBy:         &createdBy,
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		})
+	}
+	if err := s.repo.BulkCreateIndirectMaterials(ctx, items); err != nil {
+		return 0, err
+	}
+	for _, irm := range items {
+		irmCopy := irm
+		s.writeMovementLog(ctx, MovementLogInput{
+			Category:     "indirect_raw_material",
+			MovementType: "incoming",
+			UniqCode:     irmCopy.UniqCode,
+			EntityID:     &irmCopy.ID,
+			QtyChange:    irmCopy.StockQty,
+			WeightChange: irmCopy.StockWeightKg,
+			SourceFlag:   "manual",
+			LoggedBy:     createdBy,
+		})
+	}
+	return len(items), nil
+}
+
+func (s *service) UpdateIndirectMaterial(ctx context.Context, id int64, req invModels.UpdateIndirectMaterialRequest, updatedBy string) (*invModels.IndirectRawMaterial, error) {
+	updates := map[string]interface{}{"updated_by": &updatedBy, "updated_at": time.Now()}
+	if req.PartNumber != nil {
+		updates["part_number"] = *req.PartNumber
+	}
+	if req.PartName != nil {
+		updates["part_name"] = *req.PartName
+	}
+	if req.WarehouseLocation != nil {
+		updates["warehouse_location"] = *req.WarehouseLocation
+	}
+	if req.UOM != nil {
+		updates["uom"] = *req.UOM
+	}
+	if req.StockQty != nil {
+		updates["stock_qty"] = *req.StockQty
+	}
+	if req.StockWeightKg != nil {
+		updates["stock_weight_kg"] = *req.StockWeightKg
+	}
+	if req.KanbanCount != nil {
+		updates["kanban_count"] = *req.KanbanCount
+	}
+	if req.KanbanStandardQty != nil {
+		updates["kanban_standard_qty"] = *req.KanbanStandardQty
+	}
+	if req.SafetyStockQty != nil {
+		updates["safety_stock_qty"] = *req.SafetyStockQty
+	}
+	if req.DailyUsageQty != nil {
+		updates["daily_usage_qty"] = *req.DailyUsageQty
+	}
+	return s.repo.UpdateIndirectMaterial(ctx, id, updates)
+}
+
+func (s *service) DeleteIndirectMaterial(ctx context.Context, id int64, deletedBy string) error {
+	return s.repo.SoftDeleteIndirectMaterial(ctx, id, deletedBy)
+}
+
+func (s *service) GetIndirectHistory(ctx context.Context, id int64, p pagination.PaginationInput) (*invModels.HistoryLogResponse, error) {
+	irm, err := s.repo.GetIndirectByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	f := repository.ListFilter{Limit: p.Limit, Offset: p.Offset()}
+	rows, total, err := s.repo.GetMovementHistory(ctx, "indirect_raw_material", irm.UniqCode, f)
+	if err != nil {
+		return nil, err
+	}
+	return buildHistoryResponse(rows, total, p), nil
+}
+
+// ---------------------------------------------------------------------------
+// Subcon Inventory
+// ---------------------------------------------------------------------------
+
+func (s *service) ListSubconInventory(ctx context.Context, p pagination.InventorySubconPaginationInput) (*invModels.SubconInventoryListResponse, error) {
+	// Auto-populate Stock In Vendor from subcon PO lines before listing ("auto muncul").
+	// Best-effort: a sync failure must not block reading existing rows.
+	_ = s.SyncSubconInVendor(ctx)
+
+	f := repository.SubconListFilter{
+		Search:         p.Search,
+		PONumber:       p.PONumber,
+		SupplierID:     p.SupplierID,
+		Period:         p.Period,
+		Status:         p.Status,
+		Source:         p.Source,
+		Page:           p.Page,
+		Limit:          p.Limit,
+		Offset:         p.Offset(),
+		OrderBy:        p.OrderBy,
+		OrderDirection: p.OrderDirection,
+	}
+
+	rows, total, err := s.repo.ListSubconInventory(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]invModels.SubconInventoryItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, subconRowToItem(r))
+	}
+
+	totalPages := 0
+	if p.Limit > 0 {
+		totalPages = int((total + int64(p.Limit) - 1) / int64(p.Limit))
+	}
+
+	return &invModels.SubconInventoryListResponse{
+		Items: items,
+		Pagination: invModels.InventoryPagination{
+			Total:      total,
+			Page:       p.Page,
+			Limit:      p.Limit,
+			TotalPages: totalPages,
+		},
+	}, nil
+}
+
+func (s *service) GetSubconByID(ctx context.Context, id int64) (*invModels.SubconInventory, error) {
+	return s.repo.GetSubconByID(ctx, id)
+}
+
+// ApproveSubconInventory marks a subcon row as approved (status-only; no stock movement).
+func (s *service) ApproveSubconInventory(ctx context.Context, id int64, approvedBy string) (*invModels.SubconInventory, error) {
+	return s.repo.ApproveSubconInventory(ctx, id, approvedBy, "approved")
+}
+
+// RejectSubconInventory marks a subcon row as rejected (status-only; no stock movement).
+func (s *service) RejectSubconInventory(ctx context.Context, id int64, approvedBy string) (*invModels.SubconInventory, error) {
+	return s.repo.ApproveSubconInventory(ctx, id, approvedBy, "rejected")
+}
+
+// SyncSubconInVendor reads subcon PO lines and upserts one auto-generated Stock In Vendor row
+// per PO line. New rows start as approval_status = 'pending'; existing rows keep their approval.
+func (s *service) SyncSubconInVendor(ctx context.Context) error {
+	sources, err := s.repo.ListSubconPOSources(ctx)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	for i := range sources {
+		src := sources[i]
+		if strings.TrimSpace(src.ItemUniqCode) == "" || strings.TrimSpace(src.PONumber) == "" {
+			continue
+		}
+		sourceType := "po_subcon"
+		sourceRef := src.PONumber + ":" + src.ItemUniqCode
+		poNumber := src.PONumber
+		period := src.Period
+		totalPO := src.OrderedQty
+		si := invModels.SubconInventory{
+			UUID:             uuid.New(),
+			UniqCode:         sourceRef, // composite keeps uniq_code unique per PO line
+			PartNumber:       src.PartNumber,
+			PartName:         src.PartName,
+			PONumber:         &poNumber,
+			POPeriod:         &period,
+			SubconVendorID:   src.SupplierID,
+			SubconVendorName: src.SupplierName,
+			StockAtVendorQty: 0,
+			TotalPOQty:       &totalPO,
+			DateDelivery:     src.PODate,
+			Status:           "normal",
+			ApprovalStatus:   "pending",
+			SourceType:       &sourceType,
+			SourceRef:        &sourceRef,
+			CreatedAt:        now,
+			UpdatedAt:        now,
+		}
+		if err := s.repo.UpsertSubconFromSource(ctx, &si); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *service) CreateSubconInventory(ctx context.Context, req invModels.CreateSubconInventoryRequest, createdBy string) (*invModels.SubconInventoryItem, error) {
+	lookupKey := strings.TrimSpace(req.UniqCode)
+	if req.ItemUniqCode != nil && strings.TrimSpace(*req.ItemUniqCode) != "" {
+		lookupKey = strings.TrimSpace(*req.ItemUniqCode)
+	}
+	itemRow, err := s.repo.FindItemByUniqCode(ctx, lookupKey)
+	if err != nil {
+		return nil, err
+	}
+	partNumber := req.PartNumber
+	partName := req.PartName
+	if itemRow != nil {
+		if partNumber == nil {
+			partNumber = itemRow.PartNumber
+		}
+		if partName == nil {
+			partName = itemRow.PartName
+		}
+	}
+
+	now := time.Now()
+	si := invModels.SubconInventory{
+		UUID:             uuid.New(),
+		UniqCode:         req.UniqCode,
+		PartNumber:       partNumber,
+		PartName:         partName,
+		PONumber:         req.PONumber,
+		POPeriod:         req.POPeriod,
+		SubconVendorID:   req.SubconVendorID,
+		SubconVendorName: req.SubconVendorName,
+		StockAtVendorQty: req.StockAtVendorQty,
+		TotalPOQty:       req.TotalPOQty,
+		SafetyStockQty:   req.SafetyStockQty,
+		DateDelivery:     req.DateDelivery,
+		Status:           "normal",
+		CreatedBy:        &createdBy,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if err := s.repo.CreateSubconInventory(ctx, &si); err != nil {
+		return nil, err
+	}
+	s.writeMovementLog(ctx, MovementLogInput{
+		Category:     "subcon",
+		MovementType: "received_from_vendor",
+		UniqCode:     si.UniqCode,
+		EntityID:     &si.ID,
+		QtyChange:    si.StockAtVendorQty,
+		SourceFlag:   "manual",
+		LoggedBy:     createdBy,
+	})
+	item := subconModelToItem(si)
+	return &item, nil
+}
+
+func (s *service) UpdateSubconInventory(ctx context.Context, id int64, req invModels.UpdateSubconInventoryRequest, updatedBy string) (*invModels.SubconInventory, error) {
+	updates := map[string]interface{}{"updated_by": &updatedBy, "updated_at": time.Now()}
+	if req.PartNumber != nil {
+		updates["part_number"] = *req.PartNumber
+	}
+	if req.PartName != nil {
+		updates["part_name"] = *req.PartName
+	}
+	if req.PONumber != nil {
+		updates["po_number"] = *req.PONumber
+	}
+	if req.POPeriod != nil {
+		updates["po_period"] = *req.POPeriod
+	}
+	if req.SubconVendorID != nil {
+		updates["subcon_vendor_id"] = *req.SubconVendorID
+	}
+	if req.SubconVendorName != nil {
+		updates["subcon_vendor_name"] = *req.SubconVendorName
+	}
+	if req.StockAtVendorQty != nil {
+		updates["stock_at_vendor_qty"] = *req.StockAtVendorQty
+	}
+	if req.TotalPOQty != nil {
+		updates["total_po_qty"] = *req.TotalPOQty
+	}
+	if req.SafetyStockQty != nil {
+		updates["safety_stock_qty"] = *req.SafetyStockQty
+	}
+	if req.DateDelivery != nil {
+		updates["date_delivery"] = *req.DateDelivery
+	}
+	return s.repo.UpdateSubconInventory(ctx, id, updates)
+}
+
+func (s *service) DeleteSubconInventory(ctx context.Context, id int64, deletedBy string) error {
+	return s.repo.SoftDeleteSubconInventory(ctx, id, deletedBy)
+}
+
+func (s *service) GetSubconHistory(ctx context.Context, id int64, p pagination.PaginationInput) (*invModels.HistoryLogResponse, error) {
+	si, err := s.repo.GetSubconByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	f := repository.ListFilter{Limit: p.Limit, Offset: p.Offset()}
+	rows, total, err := s.repo.GetMovementHistory(ctx, "subcon", si.UniqCode, f)
+	if err != nil {
+		return nil, err
+	}
+	return buildHistoryResponse(rows, total, p), nil
+}
+
+// ---------------------------------------------------------------------------
+// Incoming Scans
+// ---------------------------------------------------------------------------
+
+func (s *service) ListIncoming(ctx context.Context, dnType string, p pagination.InventoryIncomingPaginationInput) (*invModels.IncomingListResponse, error) {
+	// Allow caller to override dn_type from query; default to the path-injected dnType
+	effectiveDNType := dnType
+	if p.DNType != "" {
+		effectiveDNType = p.DNType
+	}
+
+	f := repository.IncomingListFilter{
+		Search:     p.Search,
+		DNType:     effectiveDNType,
+		PONumber:   p.PONumber,
+		Status:     p.Status,
+		SupplierID: p.SupplierID,
+		Page:       p.Page,
+		Limit:      p.Limit,
+		Offset:     p.Offset(),
+	}
+
+	rows, total, err := s.repo.ListIncoming(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]invModels.IncomingItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, invModels.IncomingItem{
+			ScanID:       r.ScanID,
+			UniqCode:     r.ItemUniqCode,
+			IncomingQty:  r.IncomingQty,
+			Warehouse:    r.Warehouse,
+			ScanDate:     r.ScanDate,
+			SupplierName: r.SupplierName,
+			PONumber:     r.PONumber,
+			DNNumber:     r.DNNumber,
+			// [subcon-dnlog]
+			ScanRef:         r.ScanRef,
+			QCStatus:        r.QCStatus,
+			QCStatusDisplay: qcStatusDisplay(r.QCStatus),
+			UOM:             r.UOM,
+			DNType:          r.DNType,
+		})
+	}
+
+	totalPages := 0
+	if p.Limit > 0 {
+		totalPages = int((total + int64(p.Limit) - 1) / int64(p.Limit))
+	}
+
+	return &invModels.IncomingListResponse{
+		Items: items,
+		Pagination: invModels.InventoryPagination{
+			Total:      total,
+			Page:       p.Page,
+			Limit:      p.Limit,
+			TotalPages: totalPages,
+		},
+	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Kanban Summary
+// ---------------------------------------------------------------------------
+
+const (
+	kanbanDefaultPkgQty = 10  // pcs per package until supplier package table is ready
+	kanbanHighRatio     = 2.0 // overstock threshold = safety_stock * highRatio
+)
+
+// forecastSafetyStock mengambil safety_stock_qty dari plan forecasting terbaru
+// untuk (inventoryType, uniqCode). Bila tidak tersedia, mengembalikan warning
+// (safety stock jatuh ke 0 seperti perilaku sebelumnya).
+func (s *service) forecastSafetyStock(ctx context.Context, inventoryType, uniqCode string) (float64, string) {
+	const prefix = "safety_stock calc_type 'forecast': "
+	if s.plans == nil {
+		return 0, prefix + "forecasting client not configured; safety_stock_qty defaulted to 0"
+	}
+	items, err := s.plans.GetInventoryPlan(ctx, forecastingclient.GetInventoryPlanOptions{
+		UniqCodes:     []string{uniqCode},
+		InventoryType: inventoryType,
+	})
+	if err != nil {
+		log.Printf("[inventory] forecast safety stock %s: %v", uniqCode, err)
+		return 0, prefix + "forecasting API unavailable; safety_stock_qty defaulted to 0"
+	}
+	for _, it := range items {
+		if !strings.EqualFold(strings.TrimSpace(it.UniqCode), strings.TrimSpace(uniqCode)) {
+			continue
+		}
+		if it.Note != nil && strings.TrimSpace(*it.Note) != "" {
+			return 0, prefix + strings.TrimSpace(*it.Note) + "; safety_stock_qty defaulted to 0"
+		}
+		if it.SafetyStockQty == nil {
+			return 0, prefix + "no safety_stock_qty in inventory plan; safety_stock_qty defaulted to 0"
+		}
+		return *it.SafetyStockQty, ""
+	}
+	return 0, prefix + "no inventory plan row for this uniq; safety_stock_qty defaulted to 0"
+}
+
+func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error) {
+	const inventoryType = "raw_material"
+
+	// 1. Load stock data from raw_materials.
+	rm, err := s.repo.GetRawMaterialByUniqCode(ctx, uniqCode)
+	if err != nil {
+		return &invModels.KanbanSummary{
+			UniqCode:  uniqCode,
+			Status:    "normal",
+			BuyNotBuy: "n/a",
+		}, nil
+	}
+	stockQty := rm.StockQty
+
+	// 2. Kanban pcs per package (for total_kanban and round-up).
+	kanbanPkgQty := kanbanDefaultPkgQty
+	if pkgQty, err := s.repo.GetKanbanPkgQty(ctx, uniqCode); err == nil && pkgQty > 0 {
+		kanbanPkgQty = pkgQty
+	}
+	// Kanban standard qty for buy-qty round-up (prefer kanban_standard_qty from rm; fallback to pkg qty).
+	kanbanStdQty := kanbanPkgQty
+	if rm.KanbanStandardQty != nil && *rm.KanbanStandardQty > 0 {
+		kanbanStdQty = *rm.KanbanStandardQty
+	}
+	kanbanPkgF := float64(kanbanPkgQty)
+	kanbanStdF := float64(kanbanStdQty)
+
+	// 3. Resolve active_periode from global_parameters.
+	activePeriode, _ := s.repo.GetGlobalActivePeriode(ctx)
+
+	// 4. Demand snapshot: try the new table first, then fall back to legacy PRL-only path.
+	var (
+		totalDemandSum         float64
+		prlSum                 float64
+		poCustomerSum          float64
+		workingDays            int
+		workingDaysPeriodeUsed string
+		snapshotDate           string
+		fromSnapshot           bool
+
+		// stockdays / safety-stock snapshot values (may override per-item param lookup below).
+		snapshotSDCalcType  *string
+		snapshotSDConstanta *float64
+		snapshotSSCalcType  *string
+		snapshotSSConstanta *float64
+	)
+
+	if activePeriode != "" {
+		if snap, found, _ := s.repo.GetDemandSnapshot(ctx, activePeriode, uniqCode); found {
+			prlSum = snap.PRLSum
+			poCustomerSum = snap.POCustomerSum
+			totalDemandSum = snap.TotalDemandSum
+			workingDays = snap.WorkingDaysUsed
+			workingDaysPeriodeUsed = snap.WorkingDaysPeriodeUsed
+			snapshotDate = snap.SnapshotDate
+			fromSnapshot = true
+			snapshotSDCalcType = snap.StockdaysCalcTypeActive
+			snapshotSDConstanta = snap.StockdaysConstantaActive
+			snapshotSSCalcType = snap.SafetyStockCalcTypeActive
+			snapshotSSConstanta = snap.SafetyStockConstantaActive
+		}
+	}
+
+	// Fallback path: no snapshot — query PRL and PO Customer live.
+	if !fromSnapshot {
+		if activePeriode == "" {
+			// last resort: per-item latest approved PRL period
+			activePeriode, _ = s.repo.GetLatestApprovedPRLPeriodByCode(ctx, uniqCode)
+		}
+		if activePeriode != "" {
+			workingDays, workingDaysPeriodeUsed, _ = s.repo.GetWorkingDaysWithFallback(ctx, activePeriode)
+			if cached, hit, _ := s.repo.GetPRLTotalFromCache(ctx, activePeriode, uniqCode); hit {
+				prlSum = cached
+			} else {
+				prlSum, _ = s.repo.GetPRLTotalByPeriodAndCode(ctx, activePeriode, uniqCode)
+			}
+			poCustomerSum, _ = s.repo.GetPOCustomerSumByPeriodeAndCode(ctx, activePeriode, uniqCode)
+			totalDemandSum = prlSum + poCustomerSum
+		}
+	}
+	if workingDays <= 0 {
+		workingDays = 20
+	}
+
+	// 5. Base daily usage = total_demand_sum / working_days.
+	baseDailyUsage := 0.0
+	if workingDays > 0 {
+		baseDailyUsage = totalDemandSum / float64(workingDays)
+	}
+
+	var warnings []string
+
+	// 6. Effective daily usage via stockdays parameter.
+	effectiveDailyUsage := baseDailyUsage
+	var sdCalcType string
+	var sdConstanta float64
+
+	// Prefer snapshot values; fall back to live param lookup.
+	if fromSnapshot && snapshotSDCalcType != nil {
+		sdCalcType = normalizeCalcType(*snapshotSDCalcType)
+		if snapshotSDConstanta != nil {
+			sdConstanta = *snapshotSDConstanta
+		}
+	} else if sdParam, err := s.repo.GetStockdaysParam(ctx, inventoryType, uniqCode); err == nil && sdParam != nil {
+		sdCalcType = normalizeCalcType(sdParam.CalculationType)
+		sdConstanta = sdParam.Constanta
+	}
+	switch sdCalcType {
+	case "days":
+		effectiveDailyUsage = baseDailyUsage * sdConstanta
+	case "percentage":
+		effectiveDailyUsage = baseDailyUsage * (sdConstanta / 100)
+	case "forecast", "machine_pattern":
+		warnings = append(warnings, "stockdays calc_type '"+sdCalcType+"' not yet implemented; effective_daily_usage defaulted to base_daily_usage")
+	}
+
+	// 7. Stock days = floor(stock / max(1, effective_daily_usage)).
+	var stockDays *int
+	var stockDaysRaw float64
+	if effectiveDailyUsage > 0 {
+		stockDaysRaw = stockQty / math.Max(1, effectiveDailyUsage)
+		d := int(stockDaysRaw)
+		stockDays = &d
+	}
+
+	// 8. Safety stock qty via safety_stock parameter.
+	safetyStockQty := 0.0
+	var ssCalcType string
+	var ssConstanta float64
+
+	if fromSnapshot && snapshotSSCalcType != nil {
+		ssCalcType = normalizeCalcType(*snapshotSSCalcType)
+		if snapshotSSConstanta != nil {
+			ssConstanta = *snapshotSSConstanta
+		}
+	} else if ssParam, err := s.repo.GetSafetyStockParamByType(ctx, inventoryType, uniqCode); err == nil && ssParam != nil {
+		ssCalcType = normalizeCalcType(ssParam.CalculationType)
+		ssConstanta = ssParam.Constanta
+	}
+	switch ssCalcType {
+	case "days":
+		safetyStockQty = baseDailyUsage * ssConstanta
+	case "percentage":
+		safetyStockQty = baseDailyUsage * (ssConstanta / 100)
+	case "forecast":
+		// Nilai dari scheduler harian forecasting. Status / threshold / buy tetap
+		// dihitung di bawah memakai stok terkini (rumus sama dengan API forecasting).
+		if qty, warn := s.forecastSafetyStock(ctx, inventoryType, uniqCode); warn != "" {
+			warnings = append(warnings, warn)
+		} else {
+			safetyStockQty = qty
+		}
+	case "machine_pattern":
+		warnings = append(warnings, "safety_stock calc_type '"+ssCalcType+"' not yet implemented; safety_stock_qty defaulted to 0")
+	}
+
+	// 9. Cycle pengiriman from supplier_item.customer_cycle (default 1).
+	cyclePengiriman, _ := s.repo.GetCyclePengiriman(ctx, uniqCode)
+	if cyclePengiriman <= 0 {
+		cyclePengiriman = 1
+	}
+
+	// 10. Threshold = safety_stock_qty × cycle_pengiriman.
+	threshold := safetyStockQty * float64(cyclePengiriman)
+
+	// 11. Status.
+	status := "normal"
+	if safetyStockQty > 0 && stockQty < safetyStockQty {
+		status = "low_on_stock"
+	} else if safetyStockQty > 0 && stockQty > safetyStockQty*kanbanHighRatio {
+		status = "overstock"
+	}
+
+	// 12. Buy / Not Buy: SSP items are always n/a; others use threshold rule.
+	buyNotBuy := "not_buy"
+	if rm.RawMaterialType == "ssp" {
+		buyNotBuy = "n/a"
+	} else if stockQty <= threshold {
+		buyNotBuy = "buy"
+	}
+
+	// 13. Kanban metrics.
+	totalKanban := int64(stockQty / kanbanPkgF)
+
+	// Raw buy qty = max(0, threshold - stock), rounded up to nearest kanban standard.
+	rawBuyQty := math.Max(0, threshold-stockQty)
+	var kanbansNeeded int64
+	var stockToComplete float64
+	if rawBuyQty > 0 && kanbanStdF > 0 {
+		kanbansNeeded = int64(math.Ceil(rawBuyQty / kanbanStdF))
+		stockToComplete = float64(kanbansNeeded) * kanbanStdF
+	}
+
+	return &invModels.KanbanSummary{
+		UniqCode:        uniqCode,
+		StockQty:        stockQty,
+		TotalKanban:     totalKanban,
+		KanbansNeeded:   kanbansNeeded,
+		StockToComplete: stockToComplete,
+		KanbanPkgQty:    kanbanPkgQty,
+		SafetyStockQty:  safetyStockQty,
+		Status:          status,
+		BuyNotBuy:       buyNotBuy,
+		StockDays:       stockDays,
+		CalcContext: invModels.KanbanCalcContext{
+			ForecastPeriod:         activePeriode,
+			WorkingDays:            workingDays,
+			PRLTotal:               totalDemandSum,
+			PRLFromCache:           fromSnapshot,
+			BaseDailyUsage:         baseDailyUsage,
+			StockdaysCalcType:      sdCalcType,
+			StockdaysConstanta:     sdConstanta,
+			EffectiveDailyUsage:    effectiveDailyUsage,
+			SafetyStockCalcType:    ssCalcType,
+			SafetyStockConstanta:   ssConstanta,
+			StockDaysRaw:           stockDaysRaw,
+			ActivePeriode:          activePeriode,
+			SnapshotDate:           snapshotDate,
+			WorkingDaysPeriodeUsed: workingDaysPeriodeUsed,
+			PRLSum:                 prlSum,
+			POCustomerSum:          poCustomerSum,
+			TotalDemandSum:         totalDemandSum,
+			CyclePengiriman:        cyclePengiriman,
+			Threshold:              threshold,
+			Warnings:               warnings,
+		},
+	}, nil
+}
+
+// normalizeCalcType maps the UI label stored in DB to a short internal code.
+// Rules per BRD "Normalisasi calculation_type".
+func normalizeCalcType(label string) string {
+	lower := strings.ToLower(label)
+	switch {
+	case strings.Contains(lower, "percentage"):
+		return "percentage"
+	case strings.Contains(lower, "forecast") || strings.Contains(lower, "demand forecasting"):
+		return "forecast"
+	case strings.Contains(lower, "machine pattern"):
+		return "machine_pattern"
+	case strings.Contains(lower, "days"):
+		return "days"
+	default:
+		return "days"
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Private mapping helpers
+// ---------------------------------------------------------------------------
+
+func rawMaterialRowToItem(r repository.RawMaterialRow) invModels.RawMaterialItem {
+	var materialCode *string
+	if r.MaterialCode != "" {
+		materialCode = &r.MaterialCode
+	}
+	return invModels.RawMaterialItem{
+		ID:                    r.ID,
+		RawMaterialMasterID:   r.RawMaterialMasterID,
+		UniqCode:              r.UniqCode,
+		PartNumber:            r.PartNumber,
+		PartName:              r.PartName,
+		RawMaterialType:       r.RawMaterialType,
+		RMSource:              r.RMSource,
+		WarehouseLocation:     r.WarehouseLocation,
+		UOM:                   r.UOM,
+		StockQty:              r.StockQty,
+		StockWeightKg:         r.StockWeightKg,
+		KanbanCount:           r.KanbanCount,
+		KanbanStandardQty:     r.KanbanStandardQty,
+		SafetyStockQty:        r.SafetyStockQty,
+		DailyUsageQty:         r.DailyUsageQty,
+		Status:                r.Status,
+		StockDays:             r.StockDays,
+		BuyNotBuy:             r.BuyNotBuy,
+		StockToCompleteKanban: r.StockToCompleteKanban,
+		CreatedBy:             r.CreatedBy,
+		CreatedAt:             r.CreatedAt,
+		UpdatedBy:             r.UpdatedBy,
+		UpdatedAt:             r.UpdatedAt,
+		QR:                    r.QR,
+		Model:                 &r.Model,
+		Grade:                 &r.Grade,
+		MaterialCode:          materialCode,
+		ItemUniqCode:          r.ItemUniqCode,
+	}
+}
+
+func indirectRowToItem(r repository.IndirectRow) invModels.IndirectMaterialItem {
+	return invModels.IndirectMaterialItem{
+		ID:                    r.ID,
+		UniqCode:              r.UniqCode,
+		PartNumber:            r.PartNumber,
+		PartName:              r.PartName,
+		WarehouseLocation:     r.WarehouseLocation,
+		UOM:                   r.UOM,
+		StockQty:              r.StockQty,
+		StockWeightKg:         r.StockWeightKg,
+		KanbanCount:           r.KanbanCount,
+		KanbanStandardQty:     r.KanbanStandardQty,
+		SafetyStockQty:        r.SafetyStockQty,
+		DailyUsageQty:         r.DailyUsageQty,
+		Status:                r.Status,
+		StockDays:             r.StockDays,
+		BuyNotBuy:             r.BuyNotBuy,
+		StockToCompleteKanban: r.StockToCompleteKanban,
+		CreatedBy:             r.CreatedBy,
+		CreatedAt:             r.CreatedAt,
+		UpdatedBy:             r.UpdatedBy,
+		UpdatedAt:             r.UpdatedAt,
+	}
+}
+
+func subconRowToItem(r repository.SubconRow) invModels.SubconInventoryItem {
+	return invModels.SubconInventoryItem{
+		ID:               r.ID,
+		UniqCode:         r.UniqCode,
+		PartNumber:       subconCoalesceStr(r.PartNumber, r.FGPartNumber),
+		PartName:         subconCoalesceStr(r.PartName, r.FGPartName),
+		PONumber:         r.PONumber,
+		POPeriod:         r.POPeriod,
+		SubconVendorID:   r.SubconVendorID,
+		SubconVendorName: r.SubconVendorName,
+		StockAtVendorQty: r.StockAtVendorQty,
+		TotalPOQty:       r.TotalPOQty,
+		TotalReceivedQty: r.TotalReceivedQty,
+		DeltaPO:          r.DeltaPO,
+		SafetyStockQty:   subconCoalesceFloat(r.SafetyStockQty, r.FGSafetyStockQty),
+		DateDelivery:     r.DateDelivery,
+		Status:           r.Status,
+		ApprovalStatus:   r.ApprovalStatus,
+		ApprovedBy:       r.ApprovedBy,
+		ApprovedAt:       r.ApprovedAt,
+		SourceType:       r.SourceType,
+		SourceRef:        r.SourceRef,
+		CreatedBy:        r.CreatedBy,
+		CreatedAt:        r.CreatedAt,
+		UpdatedBy:        r.UpdatedBy,
+		UpdatedAt:        r.UpdatedAt,
+	}
+}
+
+// model-to-item mappers (for Create responses — model has no json tags, response struct does)
+func rawMaterialModelToItem(m invModels.RawMaterial) invModels.RawMaterialItem {
+	return invModels.RawMaterialItem{
+		ID:                    m.ID,
+		RawMaterialMasterID:   m.RawMaterialMasterID,
+		UniqCode:              m.UniqCode,
+		PartNumber:            m.PartNumber,
+		PartName:              m.PartName,
+		RawMaterialType:       m.RawMaterialType,
+		RMSource:              m.RMSource,
+		WarehouseLocation:     m.WarehouseLocation,
+		UOM:                   m.UOM,
+		StockQty:              m.StockQty,
+		StockWeightKg:         m.StockWeightKg,
+		KanbanCount:           m.KanbanCount,
+		KanbanStandardQty:     m.KanbanStandardQty,
+		SafetyStockQty:        m.SafetyStockQty,
+		DailyUsageQty:         m.DailyUsageQty,
+		Status:                m.Status,
+		StockDays:             m.StockDays,
+		BuyNotBuy:             m.BuyNotBuy,
+		StockToCompleteKanban: m.StockToCompleteKanban,
+		CreatedBy:             m.CreatedBy,
+		CreatedAt:             m.CreatedAt,
+		UpdatedBy:             m.UpdatedBy,
+		UpdatedAt:             m.UpdatedAt,
+	}
+}
+
+func indirectModelToItem(m invModels.IndirectRawMaterial) invModels.IndirectMaterialItem {
+	return invModels.IndirectMaterialItem{
+		ID:                    m.ID,
+		UniqCode:              m.UniqCode,
+		PartNumber:            m.PartNumber,
+		PartName:              m.PartName,
+		WarehouseLocation:     m.WarehouseLocation,
+		UOM:                   m.UOM,
+		StockQty:              m.StockQty,
+		StockWeightKg:         m.StockWeightKg,
+		KanbanCount:           m.KanbanCount,
+		KanbanStandardQty:     m.KanbanStandardQty,
+		SafetyStockQty:        m.SafetyStockQty,
+		DailyUsageQty:         m.DailyUsageQty,
+		Status:                m.Status,
+		StockDays:             m.StockDays,
+		BuyNotBuy:             m.BuyNotBuy,
+		StockToCompleteKanban: m.StockToCompleteKanban,
+		CreatedBy:             m.CreatedBy,
+		CreatedAt:             m.CreatedAt,
+		UpdatedBy:             m.UpdatedBy,
+		UpdatedAt:             m.UpdatedAt,
+	}
+}
+
+func subconModelToItem(m invModels.SubconInventory) invModels.SubconInventoryItem {
+	return invModels.SubconInventoryItem{
+		ID:               m.ID,
+		UniqCode:         m.UniqCode,
+		PartNumber:       m.PartNumber,
+		PartName:         m.PartName,
+		PONumber:         m.PONumber,
+		POPeriod:         m.POPeriod,
+		SubconVendorID:   m.SubconVendorID,
+		SubconVendorName: m.SubconVendorName,
+		StockAtVendorQty: m.StockAtVendorQty,
+		TotalPOQty:       m.TotalPOQty,
+		SafetyStockQty:   m.SafetyStockQty,
+		DateDelivery:     m.DateDelivery,
+		Status:           m.Status,
+		ApprovalStatus:   m.ApprovalStatus,
+		ApprovedBy:       m.ApprovedBy,
+		ApprovedAt:       m.ApprovedAt,
+		SourceType:       m.SourceType,
+		SourceRef:        m.SourceRef,
+		CreatedBy:        m.CreatedBy,
+		CreatedAt:        m.CreatedAt,
+		UpdatedBy:        m.UpdatedBy,
+		UpdatedAt:        m.UpdatedAt,
+	}
+}
+
+func buildHistoryResponse(rows []repository.HistoryRow, total int64, p pagination.PaginationInput) *invModels.HistoryLogResponse {
+	totalPages := 0
+	if p.Limit > 0 {
+		totalPages = int((total + int64(p.Limit) - 1) / int64(p.Limit))
+	}
+
+	items := make([]invModels.HistoryLogItem, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, invModels.HistoryLogItem{
+			ID:            r.ID,
+			UniqCode:      r.UniqCode,
+			KanbanPacking: r.DNNumber,
+			QtyChange:     r.QtyChange,
+			WeightChange:  r.WeightChange,
+			MovementType:  r.MovementType,
+			Reason:        sourceFlagToReason(r.SourceFlag, r.MovementType),
+			LogStatus:     r.LogStatus,
+			Notes:         r.Notes,
+			LoggedBy:      r.LoggedBy,
+			LoggedAt:      r.LoggedAt,
+		})
+	}
+
+	return &invModels.HistoryLogResponse{
+		Items: items,
+		Pagination: invModels.InventoryPagination{
+			Total:      total,
+			Page:       p.Page,
+			Limit:      p.Limit,
+			TotalPages: totalPages,
+		},
+	}
+}
+
+// sourceFlagToReason maps source_flag/movement_type to the human-readable "Reason" column.
+func sourceFlagToReason(sourceFlag *string, movementType string) string {
+	if sourceFlag != nil {
+		switch *sourceFlag {
+		case string(inventoryconst.SourceQCApprove):
+			// Incoming yang di-approve dari QC Incoming (action-ui) ditampilkan sebagai "Scan".
+			return "Scan"
+		case string(inventoryconst.SourceWOApprove):
+			return "WO Approved"
+		case string(inventoryconst.SourceWOReserve):
+			return "WO Reserved"
+		case string(inventoryconst.SourceWOConsumeActual):
+			return "WO Consume (Actual)"
+		case string(inventoryconst.SourceProductionReject):
+			return "Production Reject"
+		case string(inventoryconst.SourceWOScan):
+			return "WO Scan"
+		case string(inventoryconst.SourceIncomingScan):
+			return "Scan"
+		case string(inventoryconst.SourceStockOpname):
+			return "Stock Opname"
+		case string(inventoryconst.SourceManual):
+			return "Manual Adjustment"
+		}
+	}
+	switch movementType {
+	case string(inventoryconst.MovementStockOpname):
+		return "Stock Opname"
+	case string(inventoryconst.MovementIncoming):
+		return "Incoming"
+	case string(inventoryconst.MovementOutgoing):
+		return "Outgoing"
+	case string(inventoryconst.MovementReceivedFromVendor):
+		return "Received from Vendor"
+	}
+	return movementType
+}
+
+// qcStatusDisplay maps qc_tasks.status → display string shown on UI.
+func qcStatusDisplay(status string) string {
+	switch status {
+	case "approved":
+		return "Received"
+	case "rejected":
+		return "Rejected"
+	case "in_progress":
+		return "In Progress"
+	default:
+		return "Pending Approval"
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Movement Log Helper
+// ---------------------------------------------------------------------------
+
+// ConsumeItem represents one work order item line to deduct from inventory.
+type ConsumeItem struct {
+	UniqCode string
+	Qty      float64
+}
+
+// ConsumeStockForWorkOrder atomically deducts stock for each WO item and writes an outgoing
+// movement log entry. Items tidak ditemukan in either raw_materials or indirect_raw_materials are
+// skipped (they may be finished-goods tracked elsewhere).
+func (s *service) ConsumeStockForWorkOrder(ctx context.Context, items []ConsumeItem, woNumber string, performedBy string) error {
+	for _, item := range items {
+		if item.Qty <= 0 {
+			continue
+		}
+
+		// Try raw_material first.
+		rmID, err := s.repo.DeductRawMaterialByUniqCode(ctx, item.UniqCode, item.Qty, performedBy)
+		if err != nil {
+			return err
+		}
+		if rmID > 0 {
+			s.writeMovementLog(ctx, MovementLogInput{
+				Category:     "raw_material",
+				MovementType: "outgoing",
+				UniqCode:     item.UniqCode,
+				EntityID:     &rmID,
+				QtyChange:    -item.Qty,
+				SourceFlag:   string(inventoryconst.SourceWOApprove),
+				ReferenceID:  &woNumber,
+				LoggedBy:     performedBy,
+			})
+			continue
+		}
+
+		// Try indirect_raw_material.
+		irmID, err := s.repo.DeductIndirectMaterialByUniqCode(ctx, item.UniqCode, item.Qty, performedBy)
+		if err != nil {
+			return err
+		}
+		if irmID > 0 {
+			s.writeMovementLog(ctx, MovementLogInput{
+				Category:     "indirect_raw_material",
+				MovementType: "outgoing",
+				UniqCode:     item.UniqCode,
+				EntityID:     &irmID,
+				QtyChange:    -item.Qty,
+				SourceFlag:   string(inventoryconst.SourceWOApprove),
+				ReferenceID:  &woNumber,
+				LoggedBy:     performedBy,
+			})
+		}
+		// If neither found, silently skip (item not tracked in these tables).
+	}
+	return nil
+}
+
+// MovementLogInput is the input struct for writeMovementLog.
+// Use this wherever inventory stock changes to keep tracking consistent.
+//
+// source_flag values (standard, non-exhaustive):
+//   - "manual"            → manual create/adjustment via API
+//   - "incoming_scan"     → scan incoming (pre-QC)
+//   - "qc_approve"        → stock masuk dari QC approve
+//   - "wo_approve"        → stock keluar untuk WO yang di-approve (reserve/issue)
+//   - "production_reject" → stock masuk kembali karena QC/production reject (future)
+//   - "stock_opname"      → stock opname correction
+//
+// Legacy flags kept for backward compatibility:
+//   - "wo_scan" | "production"
+type MovementLogInput struct {
+	// Category: "raw_material" | "indirect_raw_material" | "subcon"
+	Category string
+	// Type: "incoming" | "outgoing" | "adjustment" | "stock_opname" | "received_from_vendor"
+	MovementType string
+	UniqCode     string
+	EntityID     *int64  // ID baris di raw_materials / indirect_raw_materials / subcon_inventories
+	QtyChange    float64 // positif = masuk, negatif = keluar
+	WeightChange *float64
+	SourceFlag   string  // see list above
+	ReferenceID  *string // PO number, DN number, WO number, dll
+	DNNumber     *string
+	Notes        *string
+	LoggedBy     string
+}
+
+// writeMovementLog inserts one row to inventory_movement_logs. Non-fatal: error only logged, not returned.
+// Call this after any stock change (create, update qty, production consume, etc.).
+func (s *service) writeMovementLog(ctx context.Context, input MovementLogInput) {
+	sf := input.SourceFlag
+	lb := input.LoggedBy
+	_ = s.repo.CreateMovementLog(ctx, &invModels.InventoryMovementLog{
+		MovementCategory: input.Category,
+		MovementType:     input.MovementType,
+		UniqCode:         input.UniqCode,
+		EntityID:         input.EntityID,
+		QtyChange:        input.QtyChange,
+		WeightChange:     input.WeightChange,
+		SourceFlag:       &sf,
+		ReferenceID:      input.ReferenceID,
+		DNNumber:         input.DNNumber,
+		Notes:            input.Notes,
+		LoggedBy:         &lb,
+	})
+}
+
+func (s *service) AppendMovementLog(ctx context.Context, tx *gorm.DB, input MovementLogInput) error {
+	sf := input.SourceFlag
+	lb := input.LoggedBy
+	log := &invModels.InventoryMovementLog{
+		MovementCategory: input.Category,
+		MovementType:     input.MovementType,
+		UniqCode:         input.UniqCode,
+		EntityID:         input.EntityID,
+		QtyChange:        input.QtyChange,
+		WeightChange:     input.WeightChange,
+		SourceFlag:       &sf,
+		ReferenceID:      input.ReferenceID,
+		DNNumber:         input.DNNumber,
+		Notes:            input.Notes,
+		LoggedBy:         &lb,
+	}
+	if tx != nil {
+		if err := tx.WithContext(ctx).Create(log).Error; err != nil {
+			return err
+		}
+		return nil
+	}
+	s.writeMovementLog(ctx, input)
+	return nil
+}
+
+// fetchStoredDNQR returns the specific QR that DN management already generated
+// and stored for the given uniq code (delivery_note_items.qr). We do NOT
+// generate a new QR here — the QR is taken as-is from DN management so that one
+// uniq always maps to exactly one QR. Returns "delivery note not found" when no
+// QR has been stored for the uniq yet.
+func (s *service) fetchStoredDNQR(ctx context.Context, uniqCode string) (string, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return "", errors.New("uniq code is required")
+	}
+
+	qr, err := s.repo.FindDNQRByItemUniqCode(ctx, uniqCode)
+	if err != nil {
+		return "", err
+	}
+
+	if strings.TrimSpace(qr) == "" {
+		return "", errors.New("delivery note not found")
+	}
+
+	return qr, nil
+}
+
+func (s *service) GenerateQR(ctx context.Context, uniqCode string) (*string, error) {
+	qr, err := s.fetchStoredDNQR(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	// Persist the DN QR on the raw material so 1 uniq keeps 1 QR.
+	if err := s.repo.UpdateRawMaterialQR(ctx, uniqCode, qr); err != nil {
+		return nil, err
+	}
+
+	return &qr, nil
+}
+
+// GenerateQRIndirect returns the QR for an indirect raw material, taken from the
+// stored DN management QR for the uniq (1 uniq = 1 QR).
+func (s *service) GenerateQRIndirect(ctx context.Context, uniqCode string) (*string, error) {
+	qr, err := s.fetchStoredDNQR(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+	return &qr, nil
+}
+
+// GenerateQRSubcon returns the QR for a subcon inventory item, taken from the
+// stored DN management QR for the uniq (1 uniq = 1 QR).
+func (s *service) GenerateQRSubcon(ctx context.Context, uniqCode string) (*string, error) {
+	qr, err := s.fetchStoredDNQR(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+	return &qr, nil
+}
+
+// [subcon-fix] helper enrichment finished_goods.
+func subconCoalesceStr(primary, fallback *string) *string {
+	if primary != nil && *primary != "" {
+		return primary
+	}
+	return fallback
+}
+
+func subconCoalesceFloat(primary, fallback *float64) *float64 {
+	if primary != nil {
+		return primary
+	}
+	return fallback
+}
+
+// ---------------------------------------------------------------------------
+// Packing List
+// ---------------------------------------------------------------------------
+
+// GetPackingList returns the packing/kanban rows for one inventory uniq code,
+// including the DN number, qty saat ini, qty maksimal, and the progress
+// percentage rendered by the raw material / indirect raw material detail page.
+func (s *service) GetPackingList(ctx context.Context, uniqCode string) (*invModels.InvPackingListResponse, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return nil, apperror.BadRequest("uniq_code is required")
+	}
+
+	rows, err := s.repo.ListPackingList(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]invModels.InvPackingListItem, 0, len(rows))
+	var totalCurrent, totalMax float64
+	for _, row := range rows {
+		progress := 0
+		if row.QtyMax > 0 {
+			progress = int(math.Floor((row.QtyCurrent / row.QtyMax) * 100))
+			if progress < 0 {
+				progress = 0
+			}
+			if progress > 100 {
+				progress = 100
+			}
+		}
+		totalCurrent += row.QtyCurrent
+		totalMax += row.QtyMax
+		items = append(items, invModels.InvPackingListItem{
+			DNNumber:      row.DNNumber,
+			PackingNumber: row.PackingNumber,
+			Quantity:      row.Quantity,
+			QtyCurrent:    row.QtyCurrent,
+			QtyMax:        row.QtyMax,
+			Progress:      progress,
+			Status:        row.Status,
+			WONumber:      row.WONumber,
+			Source:        row.Source,
+		})
+	}
+
+	return &invModels.InvPackingListResponse{
+		UniqCode:        uniqCode,
+		Items:           items,
+		TotalPacking:    len(items),
+		TotalQtyCurrent: totalCurrent,
+		TotalQtyMax:     totalMax,
+	}, nil
+}

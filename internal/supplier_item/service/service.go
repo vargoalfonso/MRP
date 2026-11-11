@@ -1,0 +1,370 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+
+	"github.com/ganasa18/go-template/internal/supplier_item/models"
+	supplierItemRepo "github.com/ganasa18/go-template/internal/supplier_item/repository"
+	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/google/uuid"
+	"gorm.io/datatypes"
+)
+
+type SupplierItemService interface {
+	Create(ctx context.Context, req models.CreateSupplierItemRequest, rawPayload []byte) (*models.SupplierItem, error)
+	GetByUUID(ctx context.Context, uuid string) (*models.SupplierItem, error)
+	List(ctx context.Context, query models.ListSupplierItemQuery) (*models.SupplierItemListResult, error)
+	Update(ctx context.Context, uuid string, req models.UpdateSupplierItemRequest, rawPayload []byte) (*models.SupplierItem, error)
+	Delete(ctx context.Context, uuid string) error
+	PreviewByMaterialCode(ctx context.Context, q models.MaterialCodePreviewQuery) ([]models.MaterialCodeUniq, error)
+	CreateByMaterialCode(ctx context.Context, req models.BulkByMaterialCodeRequest) (*models.BulkByMaterialCodeResult, error)
+}
+
+type service struct {
+	repo supplierItemRepo.IRepository
+}
+
+func New(repo supplierItemRepo.IRepository) SupplierItemService {
+	return &service{repo: repo}
+}
+
+func (s *service) Create(ctx context.Context, req models.CreateSupplierItemRequest, rawPayload []byte) (*models.SupplierItem, error) {
+	supplier, err := s.repo.FindSupplierByUUID(ctx, req.SupplierUUID)
+	if err != nil {
+		return nil, err
+	}
+
+	itemType := normalizeType(req.Type)
+	// The same supplier may register the same UNIQ once per category.
+	// Example: one raw-material row and one subcon row for the same UNIQ.
+	if strings.TrimSpace(req.UniqCode) != "" {
+		exists, err := s.repo.ExistsBySupplierAndUniqType(
+			ctx,
+			req.SupplierUUID,
+			req.UniqCode,
+			itemType,
+			"",
+		)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			return nil, apperror.BadRequest(fmt.Sprintf(
+				"uniq code '%s' sudah terdaftar untuk supplier ini pada kategori %s",
+				strings.ToUpper(strings.TrimSpace(req.UniqCode)),
+				itemType,
+			))
+		}
+	}
+
+	quantity, err := parseRequiredInt64(req.Quantity, "quantity")
+	if err != nil {
+		return nil, err
+	}
+	weight, err := parseOptionalFloat64(req.Weight, "weight")
+	if err != nil {
+		return nil, err
+	}
+	pcsPerKanban, err := parseOptionalInt64(req.PcsPerKanban, "pcs_per_kanban")
+	if err != nil {
+		return nil, err
+	}
+	percentage, err := parseOptionalFloat64(req.Percentage, "percentage")
+	if err != nil {
+		return nil, err
+	}
+	cycleTime, err := parseOptionalInt64(req.CycleTime, "cycle_time")
+	if err != nil {
+		return nil, err
+	}
+
+	payloadJSON, err := normalizePayloadJSON(rawPayload)
+	if err != nil {
+		return nil, err
+	}
+
+	warehouseUUID, warehouseName, err := s.resolveWarehouse(ctx, req.WarehouseUUID)
+	if err != nil {
+		return nil, err
+	}
+
+	item := &models.SupplierItem{
+		UUID:          uuid.NewString(),
+		SupplierUUID:  supplier.UUID,
+		SupplierName:  supplier.SupplierName,
+		WarehouseUUID: warehouseUUID,
+		WarehouseName: warehouseName,
+		SebangoCode:   models.NormalizeOptionalString(toOptionalString(req.SebangoCode)),
+		UniqCode:      models.NormalizeOptionalString(toOptionalString(req.UniqCode)),
+		Type:          itemType,
+		Description:   models.NormalizeOptionalString(toOptionalString(req.Description)),
+		Quantity:      quantity,
+		UOM:           models.NormalizeOptionalString(toOptionalString(req.UOM)),
+		Weight:        weight,
+		PcsPerKanban:  pcsPerKanban,
+		CustomerCycle: models.NormalizeOptionalString(toOptionalString(req.CustomerCycle)),
+		Percentage:    percentage,
+		CycleTime:     cycleTime,
+		PayloadJSON:   payloadJSON,
+		Status:        normalizeStatus(req.Status),
+	}
+
+	if err := s.repo.Create(ctx, item); err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+// getRawByUUID membaca apa adanya dari database (dipakai Update/Delete supaya
+// terjemahan material code saat-baca tidak ikut tersimpan).
+func (s *service) getRawByUUID(ctx context.Context, uuid string) (*models.SupplierItem, error) {
+	if strings.TrimSpace(uuid) == "" {
+		return nil, apperror.BadRequest("supplier item id is required")
+	}
+	return s.repo.FindByUUID(ctx, uuid)
+}
+
+func (s *service) GetByUUID(ctx context.Context, uuid string) (*models.SupplierItem, error) {
+	item, err := s.getRawByUUID(ctx, uuid)
+	if err != nil {
+		return nil, err
+	}
+	s.resolveLegacyMaterialCodes(ctx, []models.SupplierItem{*item}, func(_ int, code string) {
+		item.SebangoCode = &code
+	})
+	return item, nil
+}
+
+func (s *service) List(ctx context.Context, query models.ListSupplierItemQuery) (*models.SupplierItemListResult, error) {
+	page := query.Page
+	if page <= 0 {
+		page = 1
+	}
+	limit := query.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 10000 {
+		limit = 10000
+	}
+
+	filters := models.SupplierItemListFilters{
+		Search: strings.TrimSpace(query.Search),
+		Page:   page,
+		Limit:  limit,
+		Offset: (page - 1) * limit,
+	}
+	if strings.TrimSpace(query.SupplierUUID) != "" {
+		supplierUUID := strings.TrimSpace(query.SupplierUUID)
+		filters.SupplierUUID = &supplierUUID
+	}
+	if strings.TrimSpace(query.Type) != "" {
+		typeValue := normalizeType(query.Type)
+		filters.Type = &typeValue
+	}
+	if strings.TrimSpace(query.Status) != "" {
+		statusValue := normalizeStatus(query.Status)
+		filters.Status = &statusValue
+	}
+
+	items, total, err := s.repo.List(ctx, filters)
+	if err != nil {
+		return nil, err
+	}
+	s.resolveLegacyMaterialCodes(ctx, items, func(i int, code string) {
+		items[i].SebangoCode = &code
+	})
+	return &models.SupplierItemListResult{
+		Items:      items,
+		Pagination: models.NewPaginationMeta(page, limit, total),
+	}, nil
+}
+
+func (s *service) Update(ctx context.Context, uuid string, req models.UpdateSupplierItemRequest, rawPayload []byte) (*models.SupplierItem, error) {
+	item, err := s.getRawByUUID(ctx, uuid)
+	if err != nil {
+		return nil, err
+	}
+	supplier, err := s.repo.FindSupplierByUUID(ctx, req.SupplierUUID)
+	if err != nil {
+		return nil, err
+	}
+
+	itemType := normalizeType(req.Type)
+	if strings.TrimSpace(req.UniqCode) != "" {
+		exists, err := s.repo.ExistsBySupplierAndUniqType(
+			ctx,
+			req.SupplierUUID,
+			req.UniqCode,
+			itemType,
+			item.UUID,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			return nil, apperror.BadRequest(fmt.Sprintf(
+				"uniq code '%s' sudah terdaftar untuk supplier ini pada kategori %s",
+				strings.ToUpper(strings.TrimSpace(req.UniqCode)),
+				itemType,
+			))
+		}
+	}
+
+	quantity, err := parseRequiredInt64(req.Quantity, "quantity")
+	if err != nil {
+		return nil, err
+	}
+	weight, err := parseOptionalFloat64(req.Weight, "weight")
+	if err != nil {
+		return nil, err
+	}
+	pcsPerKanban, err := parseOptionalInt64(req.PcsPerKanban, "pcs_per_kanban")
+	if err != nil {
+		return nil, err
+	}
+	percentage, err := parseOptionalFloat64(req.Percentage, "percentage")
+	if err != nil {
+		return nil, err
+	}
+	cycleTime, err := parseOptionalInt64(req.CycleTime, "cycle_time")
+	if err != nil {
+		return nil, err
+	}
+
+	payloadJSON, err := normalizePayloadJSON(rawPayload)
+	if err != nil {
+		return nil, err
+	}
+
+	warehouseUUID, warehouseName, err := s.resolveWarehouse(ctx, req.WarehouseUUID)
+	if err != nil {
+		return nil, err
+	}
+
+	item.SupplierUUID = supplier.UUID
+	item.SupplierName = supplier.SupplierName
+	item.WarehouseUUID = warehouseUUID
+	item.WarehouseName = warehouseName
+	item.SebangoCode = models.NormalizeOptionalString(toOptionalString(req.SebangoCode))
+	item.UniqCode = models.NormalizeOptionalString(toOptionalString(req.UniqCode))
+	item.Type = itemType
+	item.Description = models.NormalizeOptionalString(toOptionalString(req.Description))
+	item.Quantity = quantity
+	item.UOM = models.NormalizeOptionalString(toOptionalString(req.UOM))
+	item.Weight = weight
+	item.PcsPerKanban = pcsPerKanban
+	item.CustomerCycle = models.NormalizeOptionalString(toOptionalString(req.CustomerCycle))
+	item.Percentage = percentage
+	item.CycleTime = cycleTime
+	item.PayloadJSON = payloadJSON
+	item.Status = normalizeStatus(req.Status)
+
+	if err := s.repo.Update(ctx, item); err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+func (s *service) Delete(ctx context.Context, uuid string) error {
+	item, err := s.getRawByUUID(ctx, uuid)
+	if err != nil {
+		return err
+	}
+	return s.repo.Delete(ctx, item)
+}
+
+// resolveWarehouse returns the warehouse uuid and its name from the warehouse
+// table (the name from the frontend input is not trusted).
+func (s *service) resolveWarehouse(ctx context.Context, raw string) (*string, *string, error) {
+	id := strings.TrimSpace(raw)
+	if id == "" {
+		return nil, nil, nil
+	}
+	wh, err := s.repo.FindWarehouseByUUID(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	name := wh.WarehouseName
+	return &id, &name, nil
+}
+
+func normalizeType(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func normalizeStatus(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func toOptionalString(value string) *string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+func parseRequiredInt64(value string, fieldName string) (int64, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil {
+		return 0, apperror.BadRequest(fmt.Sprintf("%s must be a valid integer string", fieldName))
+	}
+	if parsed < 0 {
+		return 0, apperror.BadRequest(fmt.Sprintf("%s must be greater than or equal to 0", fieldName))
+	}
+	return parsed, nil
+}
+
+func parseOptionalInt64(value string, fieldName string) (*int64, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	parsed, err := strconv.ParseInt(trimmed, 10, 64)
+	if err != nil {
+		return nil, apperror.BadRequest(fmt.Sprintf("%s must be a valid integer string", fieldName))
+	}
+	if parsed < 0 {
+		return nil, apperror.BadRequest(fmt.Sprintf("%s must be greater than or equal to 0", fieldName))
+	}
+	return &parsed, nil
+}
+
+func parseOptionalFloat64(value string, fieldName string) (*float64, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil, nil
+	}
+	parsed, err := strconv.ParseFloat(trimmed, 64)
+	if err != nil {
+		return nil, apperror.BadRequest(fmt.Sprintf("%s must be a valid number string", fieldName))
+	}
+	if parsed < 0 {
+		return nil, apperror.BadRequest(fmt.Sprintf("%s must be greater than or equal to 0", fieldName))
+	}
+	return &parsed, nil
+}
+
+func normalizePayloadJSON(rawPayload []byte) (datatypes.JSON, error) {
+	trimmed := bytes.TrimSpace(rawPayload)
+	if len(trimmed) == 0 {
+		return nil, nil
+	}
+
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, trimmed); err != nil {
+		return nil, apperror.InternalWrap("serialize supplier item payload failed", err)
+	}
+
+	return datatypes.JSON(compact.Bytes()), nil
+}

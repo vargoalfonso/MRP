@@ -1,0 +1,3 @@
+uniq_code,customer_name,product_model,material_type,part_name,part_number,quantity,uom,weight_kg,description,supplier_name,sales_plan,purchase_request,prl
+IND-CON-002,,General,Add On,Cutting Oil,CO-001,200,Liter,200.0,Oli potong line stamping,PT Lubricant,0,200,180
+IND-TOOL-002,Toyota Motor Indonesia,LV7,Tooling,Bending Jig Rev B,JIG-LV7-002,1,Pcs,12.0,,PT Tool Works,0,3,3

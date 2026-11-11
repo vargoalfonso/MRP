@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Redis key schema:
@@ -44,7 +46,7 @@ func (s *stateful) Login(ctx context.Context, req models.LoginRequest) (*models.
 		return nil, apperror.Unauthorized("invalid credentials")
 	}
 
-	return s.issueTokenPair(ctx, user.UUID, strings.Split(user.Roles, ","))
+	return s.issueTokenPair(ctx, user.UUID, user.Username, strings.Split(user.Roles, ","))
 }
 
 func (s *stateful) ValidateAccessToken(ctx context.Context, tokenStr string) (*models.Claims, error) {
@@ -91,7 +93,7 @@ func (s *stateful) RefreshTokens(ctx context.Context, refreshToken string) (*mod
 	if err != nil {
 		return nil, err
 	}
-	return s.issueTokenPair(ctx, user.UUID, strings.Split(user.Roles, ","))
+	return s.issueTokenPair(ctx, user.UUID, user.Username, strings.Split(user.Roles, ","))
 }
 
 func (s *stateful) RevokeToken(ctx context.Context, jti string) error {
@@ -104,7 +106,7 @@ func (s *stateful) RevokeToken(ctx context.Context, jti string) error {
 
 // issueTokenPair creates a new access + refresh token pair and registers the
 // refresh token in Redis.
-func (s *stateful) issueTokenPair(ctx context.Context, userID string, roles []string) (*models.TokenPair, error) {
+func (s *stateful) issueTokenPair(ctx context.Context, userID, username string, roles []string) (*models.TokenPair, error) {
 	now := time.Now()
 	accessJTI := uuid.New().String()
 	refreshJTI := uuid.New().String()
@@ -118,8 +120,9 @@ func (s *stateful) issueTokenPair(ctx context.Context, userID string, roles []st
 			ExpiresAt: jwt.NewNumericDate(accessExp),
 			ID:        accessJTI,
 		},
-		UserID: userID,
-		Roles:  roles,
+		UserID:   userID,
+		Username: username,
+		Roles:    roles,
 	}
 	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims).
 		SignedString([]byte(s.cfg.JWTAccessSecret))
@@ -136,8 +139,9 @@ func (s *stateful) issueTokenPair(ctx context.Context, userID string, roles []st
 			ExpiresAt: jwt.NewNumericDate(refreshExp),
 			ID:        refreshJTI,
 		},
-		UserID: userID,
-		Roles:  roles,
+		UserID:   userID,
+		Username: username,
+		Roles:    roles,
 	}
 	refreshToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims).
 		SignedString([]byte(s.cfg.JWTRefreshSecret))
@@ -160,3 +164,107 @@ func (s *stateful) issueTokenPair(ctx context.Context, userID string, roles []st
 
 func refreshKey(jti string) string { return fmt.Sprintf("refresh:%s", jti) }
 func revokedKey(jti string) string { return fmt.Sprintf("revoked:%s", jti) }
+
+func (s *stateful) SetPassword(ctx context.Context, token string, password string, confirm string) error {
+
+	// ==============================
+	// 🔥 VALIDASI PASSWORD MATCH
+	// ==============================
+	if password != confirm {
+		return fmt.Errorf("password dan konfirmasi password tidak sama")
+	}
+
+	if len(password) < 6 {
+		return fmt.Errorf("password minimal 6 karakter")
+	}
+
+	// ==============================
+	// 🔥 AMBIL TOKEN
+	// ==============================
+	act, err := s.repo.FindValidActivation(ctx, token)
+	if err != nil {
+		return fmt.Errorf("token tidak valid")
+	}
+
+	if act.Used {
+		return fmt.Errorf("token sudah digunakan")
+	}
+
+	if time.Now().After(act.ExpiredAt) {
+		return fmt.Errorf("token expired")
+	}
+
+	// ==============================
+	// 🔥 HASH PASSWORD
+	// ==============================
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	// ==============================
+	// 🔥 UPDATE USER
+	// ==============================
+	err = s.repo.UpdateUserPassword(ctx, act.UserID, string(hashed))
+	if err != nil {
+		return err
+	}
+
+	// ==============================
+	// 🔥 MARK TOKEN USED
+	// ==============================
+	err = s.repo.MarkTokenUsed(ctx, act.ID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *stateful) GetTokenDetail(ctx context.Context, token string) (*models.GetTokenResponse, error) {
+
+	// ==============================
+	// 🔥 GET TOKEN
+	// ==============================
+	activation, err := s.repo.GetByToken(ctx, token)
+	if err != nil {
+		return nil, errors.New("token not found")
+	}
+
+	// ==============================
+	// 🔥 CHECK USED
+	// ==============================
+	if activation.Used {
+		return nil, errors.New("token already used")
+	}
+
+	// ==============================
+	// 🔥 CHECK EXPIRED
+	// ==============================
+	if time.Now().After(activation.ExpiredAt) {
+		return nil, errors.New("token expired")
+	}
+
+	// ==============================
+	// 🔥 GET USER
+	// ==============================
+	user, err := s.repo.GetByID(ctx, activation.UserID)
+	if err != nil {
+		return nil, errors.New("user not found")
+	}
+
+	employee, err := s.repo.FindUserByEmployeeEmail(ctx, user.Email)
+	if err != nil {
+		return nil, errors.New("employee not found")
+	}
+
+	response := &models.GetTokenResponse{
+		Fullname:  employee.FullName,
+		Email:     employee.Email,
+		Token:     activation.Token,
+		ExpiredAt: activation.ExpiredAt,
+		CreatedAt: activation.CreatedAt,
+	}
+
+	return response, nil
+}
