@@ -241,18 +241,23 @@ func (h *HTTPHandler) CalculateSafetyStock(appCtx *app.Context) *app.CostumeResp
 		}
 	}
 
-	result, err := h.service.Calculate(appCtx.Request.Context(), itemCode, prl, po, wd)
+	result, note, err := h.service.CalculateWithNote(appCtx.Request.Context(), itemCode, prl, po, wd)
 	if err != nil {
 		return app.NewError(appCtx, err)
+	}
+
+	data := map[string]interface{}{
+		"item_code":    itemCode,
+		"safety_stock": result,
+	}
+	if note != "" {
+		data["note"] = note
 	}
 
 	return &app.CostumeResponse{
 		RequestID: appCtx.APIReqID,
 		Status:    http.StatusOK,
 		Message:   "success",
-		Data: map[string]interface{}{
-			"item_code":    itemCode,
-			"safety_stock": result,
-		},
+		Data:      data,
 	}
 }

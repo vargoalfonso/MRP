@@ -31,6 +31,12 @@ type GeneratePORequest struct {
 	ExternalSystem   string `json:"external_system"`
 	ExternalPoNumber string `json:"external_po_number"`
 
+	// ExternalPoNumbers: nomor PO eksternal (Zahir) PER PO (stage + supplier). Opsional;
+	// bila diisi, tiap PO hanya menerima nomor miliknya sendiri. Bila kosong, perilaku
+	// lama dipakai (ExternalPoNumber yang sama untuk semua PO). PO tanpa entri di sini
+	// dibiarkan tanpa nomor.
+	ExternalPoNumbers []ExternalPoNumberEntry `json:"external_po_numbers"`
+
 	// GenerateMode controls which stages are created:
 	//   "both_stages"       → PO1 + PO2 (default)
 	//   "stage_only"        → only the stage specified in Stage field
@@ -39,6 +45,13 @@ type GeneratePORequest struct {
 
 	// Stage is only used when GenerateMode = "stage_only".
 	Stage int `json:"stage"` // 1 or 2
+}
+
+// ExternalPoNumberEntry is the external (Zahir) PO number of one generated PO.
+type ExternalPoNumberEntry struct {
+	Stage        int    `json:"stage"` // 1 or 2
+	SupplierName string `json:"supplier_name"`
+	Number       string `json:"number"`
 }
 
 // ---------------------------------------------------------------------------

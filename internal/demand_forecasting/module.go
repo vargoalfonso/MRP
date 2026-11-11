@@ -85,6 +85,17 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		g.GET("/model-versions",
 			roleMiddleware.RequirePermission(m.roleService, "forecasting", "view"),
 			m.base.RunAction(m.handler.ListModelVersions))
+		// Training schedule (Automation)
+		g.GET("/schedules",
+			roleMiddleware.RequirePermission(m.roleService, "forecasting", "view"),
+			m.base.RunAction(m.handler.ListSchedules))
+		g.PUT("/schedules/:domain",
+			roleMiddleware.RequirePermission(m.roleService, "forecasting", "update"),
+			m.base.RunAction(m.handler.UpsertSchedule))
+
+		g.GET("/inventory-plan",
+			roleMiddleware.RequirePermission(m.roleService, "forecasting", "view"),
+			m.base.RunAction(m.handler.GetInventoryPlan))
 		g.GET("/deployments",
 			roleMiddleware.RequirePermission(m.roleService, "forecasting", "view"),
 			m.base.RunAction(m.handler.ListDeployments))
@@ -109,5 +120,14 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		g.GET("/inference-results/:id",
 			roleMiddleware.RequirePermission(m.roleService, "forecasting", "view"),
 			m.base.RunAction(m.handler.GetInferenceResult))
+	}
+
+	// Machine-to-machine untuk script forecasting (Basic Auth, kredensial sama dengan
+	// admin jobs): baca jadwal training dan laporkan hasil run.
+	svc := r.Group("/api/v1/forecasting/service")
+	svc.Use(authMiddleware.BasicAuthMiddleware(m.cfg.AdminJobUser, m.cfg.AdminJobPass))
+	{
+		svc.GET("/schedules", m.base.RunAction(m.handler.ListSchedules))
+		svc.POST("/schedules/:domain/runs", m.base.RunAction(m.handler.ReportScheduleRun))
 	}
 }

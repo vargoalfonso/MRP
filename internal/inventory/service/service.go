@@ -12,6 +12,7 @@ import (
 	invModels "github.com/ganasa18/go-template/internal/inventory/models"
 	"github.com/ganasa18/go-template/internal/inventory/repository"
 	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/ganasa18/go-template/pkg/forecastingclient"
 	"github.com/ganasa18/go-template/pkg/inventoryconst"
 	"github.com/ganasa18/go-template/pkg/pagination"
 	"github.com/google/uuid"
@@ -93,9 +94,23 @@ type IService interface {
 
 type service struct {
 	repo repository.IRepository
+	// plans opsional: sumber nilai safety stock untuk calculation_type "forecast".
+	plans InventoryPlanProvider
+}
+
+// InventoryPlanProvider membaca hasil scheduler forecasting (GET /inventory-plan).
+// *forecastingclient.Client memenuhi interface ini.
+type InventoryPlanProvider interface {
+	GetInventoryPlan(ctx context.Context, opts forecastingclient.GetInventoryPlanOptions) ([]forecastingclient.InventoryPlanItem, error)
 }
 
 func New(repo repository.IRepository) IService { return &service{repo: repo} }
+
+// NewWithForecast sama seperti New, tetapi safety stock bertipe "forecast"
+// memakai hasil scheduler dari API forecasting.
+func NewWithForecast(repo repository.IRepository, plans InventoryPlanProvider) IService {
+	return &service{repo: repo, plans: plans}
+}
 
 // ---------------------------------------------------------------------------
 // Raw Material
@@ -933,6 +948,37 @@ const (
 	kanbanHighRatio     = 2.0 // overstock threshold = safety_stock * highRatio
 )
 
+// forecastSafetyStock mengambil safety_stock_qty dari plan forecasting terbaru
+// untuk (inventoryType, uniqCode). Bila tidak tersedia, mengembalikan warning
+// (safety stock jatuh ke 0 seperti perilaku sebelumnya).
+func (s *service) forecastSafetyStock(ctx context.Context, inventoryType, uniqCode string) (float64, string) {
+	const prefix = "safety_stock calc_type 'forecast': "
+	if s.plans == nil {
+		return 0, prefix + "forecasting client not configured; safety_stock_qty defaulted to 0"
+	}
+	items, err := s.plans.GetInventoryPlan(ctx, forecastingclient.GetInventoryPlanOptions{
+		UniqCodes:     []string{uniqCode},
+		InventoryType: inventoryType,
+	})
+	if err != nil {
+		log.Printf("[inventory] forecast safety stock %s: %v", uniqCode, err)
+		return 0, prefix + "forecasting API unavailable; safety_stock_qty defaulted to 0"
+	}
+	for _, it := range items {
+		if !strings.EqualFold(strings.TrimSpace(it.UniqCode), strings.TrimSpace(uniqCode)) {
+			continue
+		}
+		if it.Note != nil && strings.TrimSpace(*it.Note) != "" {
+			return 0, prefix + strings.TrimSpace(*it.Note) + "; safety_stock_qty defaulted to 0"
+		}
+		if it.SafetyStockQty == nil {
+			return 0, prefix + "no safety_stock_qty in inventory plan; safety_stock_qty defaulted to 0"
+		}
+		return *it.SafetyStockQty, ""
+	}
+	return 0, prefix + "no inventory plan row for this uniq; safety_stock_qty defaulted to 0"
+}
+
 func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error) {
 	const inventoryType = "raw_material"
 
@@ -1077,7 +1123,15 @@ func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invMo
 		safetyStockQty = baseDailyUsage * ssConstanta
 	case "percentage":
 		safetyStockQty = baseDailyUsage * (ssConstanta / 100)
-	case "forecast", "machine_pattern":
+	case "forecast":
+		// Nilai dari scheduler harian forecasting. Status / threshold / buy tetap
+		// dihitung di bawah memakai stok terkini (rumus sama dengan API forecasting).
+		if qty, warn := s.forecastSafetyStock(ctx, inventoryType, uniqCode); warn != "" {
+			warnings = append(warnings, warn)
+		} else {
+			safetyStockQty = qty
+		}
+	case "machine_pattern":
 		warnings = append(warnings, "safety_stock calc_type '"+ssCalcType+"' not yet implemented; safety_stock_qty defaulted to 0")
 	}
 

@@ -210,6 +210,23 @@ func (h *HTTPHandler) ListDatasets(c *app.Context) *app.CostumeResponse {
 // List Model Versions
 // ---------------------------------------------------------------------------
 
+// GetInventoryPlan mengembalikan hasil scheduler harian safety stock / buy-not-buy
+// dari API forecasting.
+//
+//	GET /api/v1/forecasting/inventory-plan?uniq_code=R11&uniq_code=R12&inventory_type=raw_material&plan_date=2026-11-09
+func (h *HTTPHandler) GetInventoryPlan(c *app.Context) *app.CostumeResponse {
+	opts := forecastingclient.GetInventoryPlanOptions{
+		UniqCodes:     c.QueryArray("uniq_code"),
+		InventoryType: c.Query("inventory_type"),
+		PlanDate:      c.Query("plan_date"),
+	}
+	resp, err := h.svc.GetInventoryPlan(c.Request.Context(), opts)
+	if err != nil {
+		return app.NewError(c, err)
+	}
+	return app.NewSuccess(c, http.StatusOK, resp)
+}
+
 func (h *HTTPHandler) ListModelVersions(c *app.Context) *app.CostumeResponse {
 	opts := forecastingclient.ListModelVersionsOptions{
 		Scope:  c.Query("scope"),
@@ -458,4 +475,60 @@ func mustUserID(c *app.Context) (string, error) {
 		return "", apperror.Unauthorized("user not authenticated")
 	}
 	return userCtx.UserID, nil
+}
+
+// ---------------------------------------------------------------------------
+// Training schedule (System Settings -> Automation)
+// ---------------------------------------------------------------------------
+
+// ListSchedules returns the training schedules (max 1 per domain: dn, prl).
+//
+//	GET /api/v1/forecasting/schedules          (JWT, forecasting:view)
+//	GET /api/v1/forecasting/service/schedules  (Basic Auth, dibaca script forecasting)
+func (h *HTTPHandler) ListSchedules(c *app.Context) *app.CostumeResponse {
+	resp, err := h.svc.ListSchedules(c.Request.Context())
+	if err != nil {
+		return app.NewError(c, err)
+	}
+	return app.NewSuccess(c, http.StatusOK, resp)
+}
+
+// UpsertSchedule saves the schedule of one domain.
+//
+//	PUT /api/v1/forecasting/schedules/:domain  (JWT, forecasting:update)
+func (h *HTTPHandler) UpsertSchedule(c *app.Context) *app.CostumeResponse {
+	var req models.UpsertScheduleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return app.NewError(c, apperror.BadRequest("invalid request body: "+err.Error()))
+	}
+
+	userCtx := userPkg.MustExtractUserContext(c)
+	updatedBy := userCtx.Username
+	if updatedBy == "" {
+		updatedBy = userCtx.UserID
+	}
+	if updatedBy == "" {
+		return app.NewError(c, apperror.Unauthorized("user not authenticated"))
+	}
+
+	resp, err := h.svc.UpsertSchedule(c.Request.Context(), c.Param("domain"), req, updatedBy)
+	if err != nil {
+		return app.NewError(c, err)
+	}
+	return app.NewSuccess(c, http.StatusOK, resp)
+}
+
+// ReportScheduleRun lets the forecasting script report a run of a schedule.
+//
+//	POST /api/v1/forecasting/service/schedules/:domain/runs  (Basic Auth)
+func (h *HTTPHandler) ReportScheduleRun(c *app.Context) *app.CostumeResponse {
+	var req models.ScheduleRunReport
+	if err := c.ShouldBindJSON(&req); err != nil {
+		return app.NewError(c, apperror.BadRequest("invalid request body: "+err.Error()))
+	}
+	resp, err := h.svc.ReportScheduleRun(c.Request.Context(), c.Param("domain"), req)
+	if err != nil {
+		return app.NewError(c, err)
+	}
+	return app.NewSuccess(c, http.StatusOK, resp)
 }
