@@ -76,29 +76,52 @@ func toOptStr(s string) *string {
 }
 
 func (s *svc) Create(ctx context.Context, req siModels.CreateSupplierInfoRequest) (*siModels.SupplierInfo, error) {
-	// Cari supplier_item sesuai pilihan user (uniq + supplier + type). Jangan
-	// hanya berdasarkan uniq: UNIQ yang sama bisa dimiliki beberapa supplier/type.
-	item, err := s.repo.FindSupplierItem(ctx, req.Uniq, req.SupplierName, itemTypeFromLabel(req.Type))
-	if err != nil {
-		return nil, err
+	var (
+		supplierName string
+		typeLabel    string
+		key          string
+		keyLabel     string
+	)
+
+	if mc := strings.TrimSpace(req.MaterialCode); mc != "" {
+		// Mode Material Code: kunci mapping = material code (disimpan di kolom
+		// uniq). Cukup pastikan supplier + type punya supplier_item aktif.
+		itemType := itemTypeFromLabel(req.Type)
+		supplierName = strings.TrimSpace(req.SupplierName)
+		typeLabel = normalizeTypeLabel(itemType)
+		ok, err := s.repo.ExistsActiveSupplierItem(ctx, supplierName, itemType)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, apperror.NotFound("kombinasi supplier dan type tidak ditemukan di supplier item")
+		}
+		key, keyLabel = mc, "Material Code"
+	} else {
+		// Mode lama: cari supplier_item sesuai pilihan user (uniq + supplier + type).
+		// Jangan hanya berdasarkan uniq: UNIQ yang sama bisa dimiliki beberapa supplier/type.
+		item, err := s.repo.FindSupplierItem(ctx, req.Uniq, req.SupplierName, itemTypeFromLabel(req.Type))
+		if err != nil {
+			return nil, err
+		}
+		supplierName = item.SupplierName
+		typeLabel = normalizeTypeLabel(item.Type)
+		key, keyLabel = strings.TrimSpace(req.Uniq), "UNIQ"
 	}
 
-	supplierName := item.SupplierName
-	typeLabel := normalizeTypeLabel(item.Type)
-
-	// Duplikat dicek per kombinasi (uniq, supplier, type)
-	exists, err := s.repo.ExistsByUniqSupplierType(ctx, req.Uniq, supplierName, typeLabel)
+	// Duplikat dicek per kombinasi (kunci, supplier, type)
+	exists, err := s.repo.ExistsByUniqSupplierType(ctx, key, supplierName, typeLabel)
 	if err != nil {
 		return nil, err
 	}
 	if exists {
-		return nil, apperror.BadRequest(fmt.Sprintf("UNIQ '%s' untuk %s (%s) sudah terdaftar di supplier info",
-			strings.ToUpper(strings.TrimSpace(req.Uniq)), supplierName, typeLabel))
+		return nil, apperror.BadRequest(fmt.Sprintf("%s '%s' untuk %s (%s) sudah terdaftar di supplier info",
+			keyLabel, strings.ToUpper(key), supplierName, typeLabel))
 	}
 
 	info := &siModels.SupplierInfo{
 		UUID:         uuid.NewString(),
-		Uniq:         strings.TrimSpace(req.Uniq),
+		Uniq:         key,
 		UniqZahir:    toOptStr(req.UniqZahir),
 		SupplierName: supplierName,
 		Type:         typeLabel,

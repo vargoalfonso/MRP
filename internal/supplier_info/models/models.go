@@ -24,7 +24,10 @@ func (SupplierInfo) TableName() string {
 }
 
 type CreateSupplierInfoRequest struct {
-	Uniq         string `json:"uniq" validate:"required"`
+	// Uniq wajib diisi kecuali MaterialCode dikirim. Bila MaterialCode diisi,
+	// nilainya yang menjadi kunci mapping (disimpan di kolom uniq).
+	Uniq         string `json:"uniq" validate:"required_without=MaterialCode"`
+	MaterialCode string `json:"material_code" validate:"omitempty,max=255"`
 	UniqZahir    string `json:"uniq_zahir" validate:"omitempty"`
 	SupplierName string `json:"supplier_name" validate:"required"`
 	Type         string `json:"type" validate:"required"`
