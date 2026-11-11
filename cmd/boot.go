@@ -345,7 +345,15 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 
 	// Inventory module (RM database, Indirect RM, Subcon)
 	invRepository := inventoryRepo.New(db)
-	invSvc := inventoryService.New(invRepository)
+	// Forecasting API client (dipakai inventory untuk safety stock 'forecast' dan modul demand forecasting)
+	forecastingClient := forecastingclient.New(forecastingclient.Options{
+		BaseURL:       cfg.ForecastingAPIURL,
+		BasicAuthUser: cfg.ForecastingAPIUser,
+		BasicAuthPass: cfg.ForecastingAPIPass,
+		Timeout:       cfg.ForecastingAPITimeout,
+		LongTimeout:   cfg.ForecastingAPILongTimeout,
+	})
+	invSvc := inventoryService.NewWithForecast(invRepository, forecastingClient)
 	invHTTPHandler := inventoryHandler.New(invSvc)
 
 	// Work Order module (Manufacturing)
@@ -471,13 +479,6 @@ func initHTTP(cfg *appconf.Config) (*server.Server, error) {
 	stockDaysHTTPHandler := stockdaysParameterHandler.New(stockDaysSvc)
 
 	// Demand Forecasting module
-	forecastingClient := forecastingclient.New(forecastingclient.Options{
-		BaseURL:       cfg.ForecastingAPIURL,
-		BasicAuthUser: cfg.ForecastingAPIUser,
-		BasicAuthPass: cfg.ForecastingAPIPass,
-		Timeout:       cfg.ForecastingAPITimeout,
-		LongTimeout:   cfg.ForecastingAPILongTimeout,
-	})
 	dfRepo := demandForecastingRepository.New(db)
 	dfSvc := demandForecastingService.New(dfRepo, forecastingClient)
 	dfHTTPHandler := demandForecastingHandler.New(dfSvc)

@@ -31,6 +31,7 @@ type Service interface {
 	// Lookup
 	ListDatasets(ctx context.Context, name string, limit int) ([]forecastingclient.DatasetListItem, error)
 	ListModelVersions(ctx context.Context, opts forecastingclient.ListModelVersionsOptions) ([]forecastingclient.ModelVersionItem, error)
+	GetInventoryPlan(ctx context.Context, opts forecastingclient.GetInventoryPlanOptions) ([]forecastingclient.InventoryPlanItem, error)
 	ListDeployments(ctx context.Context, opts forecastingclient.ListDeploymentsOptions) ([]forecastingclient.DeploymentItem, error)
 
 	// Promote
@@ -377,6 +378,10 @@ func (s *service) ListTrainingRuns(ctx context.Context, filters repository.Train
 
 func (s *service) ListDatasets(ctx context.Context, name string, limit int) ([]forecastingclient.DatasetListItem, error) {
 	return s.client.ListDatasets(ctx, name, limit)
+}
+
+func (s *service) GetInventoryPlan(ctx context.Context, opts forecastingclient.GetInventoryPlanOptions) ([]forecastingclient.InventoryPlanItem, error) {
+	return s.client.GetInventoryPlan(ctx, opts)
 }
 
 func (s *service) ListModelVersions(ctx context.Context, opts forecastingclient.ListModelVersionsOptions) ([]forecastingclient.ModelVersionItem, error) {

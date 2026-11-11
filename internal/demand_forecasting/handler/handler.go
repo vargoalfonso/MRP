@@ -210,6 +210,23 @@ func (h *HTTPHandler) ListDatasets(c *app.Context) *app.CostumeResponse {
 // List Model Versions
 // ---------------------------------------------------------------------------
 
+// GetInventoryPlan mengembalikan hasil scheduler harian safety stock / buy-not-buy
+// dari API forecasting.
+//
+//	GET /api/v1/forecasting/inventory-plan?uniq_code=R11&uniq_code=R12&inventory_type=raw_material&plan_date=2026-11-09
+func (h *HTTPHandler) GetInventoryPlan(c *app.Context) *app.CostumeResponse {
+	opts := forecastingclient.GetInventoryPlanOptions{
+		UniqCodes:     c.QueryArray("uniq_code"),
+		InventoryType: c.Query("inventory_type"),
+		PlanDate:      c.Query("plan_date"),
+	}
+	resp, err := h.svc.GetInventoryPlan(c.Request.Context(), opts)
+	if err != nil {
+		return app.NewError(c, err)
+	}
+	return app.NewSuccess(c, http.StatusOK, resp)
+}
+
 func (h *HTTPHandler) ListModelVersions(c *app.Context) *app.CostumeResponse {
 	opts := forecastingclient.ListModelVersionsOptions{
 		Scope:  c.Query("scope"),
