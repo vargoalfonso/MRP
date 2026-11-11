@@ -54,7 +54,7 @@ func Validate(s interface{}) []FieldError {
 // humanMessage converts a validator.FieldError into a readable sentence.
 func humanMessage(fe validator.FieldError) string {
 	switch fe.Tag() {
-	case "required":
+	case "required", "required_without":
 		return fmt.Sprintf("%s wajib diisi", fe.Field())
 
 	case "email":

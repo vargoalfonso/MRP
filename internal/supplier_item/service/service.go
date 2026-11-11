@@ -149,8 +149,8 @@ func (s *service) List(ctx context.Context, query models.ListSupplierItemQuery) 
 	if limit <= 0 {
 		limit = 10
 	}
-	if limit > 100 {
-		limit = 100
+	if limit > 10000 {
+		limit = 10000
 	}
 
 	filters := models.SupplierItemListFilters{

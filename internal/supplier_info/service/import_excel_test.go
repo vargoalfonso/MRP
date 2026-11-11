@@ -37,6 +37,9 @@ func (f *fakeRepo) FindSupplierItem(context.Context, string, string, string) (*s
 func (f *fakeRepo) ExistsByUniqSupplierType(context.Context, string, string, string) (bool, error) {
 	return false, nil
 }
+func (f *fakeRepo) ExistsActiveSupplierItem(context.Context, string, string) (bool, error) {
+	return true, nil
+}
 func (f *fakeRepo) ListActiveSupplierItems(context.Context) ([]supplierItemModels.SupplierItem, error) {
 	return f.items, nil
 }

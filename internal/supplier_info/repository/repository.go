@@ -10,6 +10,9 @@ import (
 	"gorm.io/gorm"
 )
 
+// maxListLimit adalah batas atas parameter ?limit= pada List supplier info.
+const maxListLimit = 10000
+
 type IRepository interface {
 	Create(ctx context.Context, info *siModels.SupplierInfo) error
 	FindByUUID(ctx context.Context, uuid string) (*siModels.SupplierInfo, error)
@@ -18,6 +21,9 @@ type IRepository interface {
 	Delete(ctx context.Context, info *siModels.SupplierInfo) error
 	FindSupplierItem(ctx context.Context, uniq, supplierName, itemType string) (*supplierItemModels.SupplierItem, error)
 	ExistsByUniqSupplierType(ctx context.Context, uniq, supplierName, typeLabel string) (bool, error)
+	// ExistsActiveSupplierItem memastikan supplier + type punya minimal satu
+	// supplier_item aktif (dipakai saat supplier info dibuat per Material Code).
+	ExistsActiveSupplierItem(ctx context.Context, supplierName, itemType string) (bool, error)
 	// ListActiveSupplierItems dan ListAll dipakai bulk import agar validasi
 	// dilakukan in-memory (tanpa query per baris).
 	ListActiveSupplierItems(ctx context.Context) ([]supplierItemModels.SupplierItem, error)
@@ -60,8 +66,8 @@ func (r *repository) List(ctx context.Context, query siModels.ListSupplierInfoQu
 	if limit <= 0 {
 		limit = 20
 	}
-	if limit > 200 {
-		limit = 200
+	if limit > maxListLimit {
+		limit = maxListLimit
 	}
 	offset := (page - 1) * limit
 
@@ -128,6 +134,20 @@ func (r *repository) ExistsByUniqSupplierType(ctx context.Context, uniq, supplie
 		Count(&count).Error
 	if err != nil {
 		return false, apperror.InternalWrap("check supplier info duplicate failed", err)
+	}
+	return count > 0, nil
+}
+
+// ExistsActiveSupplierItem memeriksa apakah ada supplier_item aktif untuk
+// kombinasi (supplier_name, type).
+func (r *repository) ExistsActiveSupplierItem(ctx context.Context, supplierName, itemType string) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&supplierItemModels.SupplierItem{}).
+		Where("supplier_name = ? AND type = ? AND status = 'active'",
+			strings.TrimSpace(supplierName), itemType).
+		Count(&count).Error
+	if err != nil {
+		return false, apperror.InternalWrap("check supplier item failed", err)
 	}
 	return count > 0, nil
 }
