@@ -13,8 +13,10 @@ import (
 
 // Training schedule (System Settings -> Automation).
 //
-// ERP hanya menyimpan kapan DN / PRL di-train. Script forecasting membaca jadwal
-// ini dan melaporkan hasil run lewat ReportScheduleRun.
+// ERP menyimpan kapan DN / PRL di-train. Service forecasting membaca jadwal ini
+// (tick tiap 15 menit). Status run terakhir dibaca ERP dari forecasting
+// (GET /admin/scheduler/status) tiap ListSchedules; ReportScheduleRun tetap tersedia
+// bila suatu saat forecasting melapor sendiri.
 
 const defaultScheduleTimezone = "Asia/Jakarta"
 
@@ -32,7 +34,14 @@ var (
 )
 
 func (s *service) ListSchedules(ctx context.Context) ([]models.ForecastingSchedule, error) {
-	return s.repo.ListSchedules(ctx)
+	schedules, err := s.repo.ListSchedules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Forecasting tidak melapor ke ERP, jadi status run terakhir dibaca dari
+	// forecasting (best-effort, lihat schedule_sync.go).
+	s.syncRunStatus(ctx, schedules)
+	return schedules, nil
 }
 
 func (s *service) UpsertSchedule(ctx context.Context, domain string, req models.UpsertScheduleRequest, updatedBy string) (*models.ForecastingSchedule, error) {
