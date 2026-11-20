@@ -56,7 +56,7 @@ type KanbanCalcContext struct {
 	POCustomerSum          float64  `json:"po_customer_sum"`           // PO customer demand for active_periode
 	TotalDemandSum         float64  `json:"total_demand_sum"`          // PRLSum + POCustomerSum
 	CyclePengiriman        int      `json:"cycle_pengiriman"`          // from supplier_item.customer_cycle
-	Threshold              float64  `json:"threshold"`                 // safety_stock_qty × cycle_pengiriman
+	Threshold              float64  `json:"threshold"`                 // safety_stock_qty × cycle_pengiriman; calc_type forecast: safety_stock_qty (10 bila <= 0), cycle diabaikan
 	Warnings               []string `json:"warnings,omitempty"`        // non-empty when a calc_type is not yet implemented
 }
 

@@ -149,8 +149,9 @@ func (s *service) CalculateWithNote(ctx context.Context, itemCode string, prl, p
 	)
 
 	if param.CalculationType == string(constant.CalcForecast) {
-		// Nilai berasal dari job harian forecasting (safety stock = forecast per
-		// hari x konstanta hari), bukan dari tabel lokal.
+		// Nilai berasal dari job harian forecasting (safety stock = forecast
+		// harian, TANPA Constanta; untuk RM/IRM diakumulasi dari BOM), bukan
+		// dari tabel lokal.
 		forecast, note = s.forecastSafetyStock(ctx, param.InventoryType, itemCode)
 	}
 
