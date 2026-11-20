@@ -37,7 +37,7 @@ func (r *repository) GetSession(ctx context.Context, id uuid.UUID) (*models.Uplo
 	var s models.UploadSession
 	err := r.db.WithContext(ctx).Where("id = ?", id).First(&s).Error
 	if err == gorm.ErrRecordNotFound {
-		return nil, apperror.NotFound("upload session not found")
+		return nil, apperror.NotFound("upload session tidak ditemukan")
 	}
 	if err != nil {
 		return nil, apperror.InternalWrap("GetSession", err)

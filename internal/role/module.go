@@ -50,6 +50,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		roleGroup.GET("", roleMiddleware.RequirePermission(m.roleService, "role", "view"), m.base.RunAction(m.handler.GetRoles))
 		roleGroup.POST("", roleMiddleware.RequirePermission(m.roleService, "role", "create"), m.base.RunAction(m.handler.CreateRole))
 		roleGroup.GET("/:id", roleMiddleware.RequirePermission(m.roleService, "role", "view"), m.base.RunAction(m.handler.GetRoleByID))
+		roleGroup.GET("/:id/users", roleMiddleware.RequirePermission(m.roleService, "role", "view"), m.base.RunAction(m.handler.GetUsersByRoleID))
 		roleGroup.PUT("/:id", roleMiddleware.RequirePermission(m.roleService, "role", "update"), m.base.RunAction(m.handler.UpdateRole))
 		roleGroup.DELETE("/:id", roleMiddleware.RequirePermission(m.roleService, "role", "delete"), m.base.RunAction(m.handler.DeleteRole))
 	}

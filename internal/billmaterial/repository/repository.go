@@ -3,64 +3,148 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"strings"
 
+	awmodels "github.com/ganasa18/go-template/internal/approval_workflow/models"
 	"github.com/ganasa18/go-template/internal/billmaterial/models"
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
+// activeMasterDataFilter menyaring master data untuk sheet "Master Data" pada
+// template import BOM.
+//
+// Sengaja memakai pendekatan exclude-list, bukan `status = 'Active'`. Kolom
+// status pada process_parameters / master_machines / uom_parameters ditulis
+// mentah dari payload API tanpa normalisasi, dan migrasi 0015 membuat
+// process_parameters tanpa DEFAULT maupun CHECK constraint. Akibatnya isi kolom
+// bisa berupa NULL, string kosong, "Active", "active", "AKTIF", dan lain-lain.
+//
+// Memakai whitelist (`= 'active'`) akan diam-diam membuang baris yang sebenarnya
+// valid. Jadi baris hanya dibuang bila statusnya secara eksplisit menyatakan
+// tidak aktif; selain itu selalu ditampilkan.
+const activeMasterDataFilter = `(
+	status IS NULL
+	OR TRIM(status) = ''
+	OR LOWER(TRIM(status)) NOT IN (
+		'inactive', 'in-active', 'in active', 'not active', 'nonactive',
+		'non-active', 'non active', 'nonaktif', 'non-aktif', 'tidak aktif',
+		'disabled', 'archived', 'deleted', 'false', '0', 'n', 'no'
+	)
+)`
+
 type IRepository interface {
 	// Core writes
 	CreateItem(ctx context.Context, item *models.Item) error
 	UpdateItem(ctx context.Context, item *models.Item) error
+	// SoftDeleteItem menandai item sebagai terhapus dengan mengisi
+	// `items.deleted_at = NOW()`. Digunakan oleh flow DeleteBom supaya
+	// item parent otomatis dianggap terhapus dan `uniq_code`-nya bisa
+	// dipakai ulang (lihat migration 0096 untuk partial unique index).
+	SoftDeleteItem(ctx context.Context, itemID int64) error
 	CreateRevision(ctx context.Context, rev *models.ItemRevision) error
 	CreateAsset(ctx context.Context, asset *models.ItemAsset) error
+	UpdateAsset(ctx context.Context, assetID int64, fileURL, assetType string) error
+	GetAssetByID(ctx context.Context, assetID int64) (*models.ItemAsset, error)
 	UpsertMaterialSpec(ctx context.Context, spec *models.ItemMaterialSpec) error
 	CreateRoutingHeader(ctx context.Context, h *models.RoutingHeader) error
 	CreateOperation(ctx context.Context, op *models.RoutingOperation) error
+	UpdateOperation(ctx context.Context, op *models.RoutingOperation) error
+	GetOperationByID(ctx context.Context, opID int64) (*models.RoutingOperation, error)
 	CreateTooling(ctx context.Context, t *models.RoutingOperationTooling) error
+	ReplaceToolings(ctx context.Context, operationID int64, toolings []models.ToolingInput) error
 	CreateBomItem(ctx context.Context, b *models.BomItem) error
+	UpdateBomItem(ctx context.Context, bom *models.BomItem) error
 	CreateBomLine(ctx context.Context, line *models.BomLine) error
+	DeleteBomItem(ctx context.Context, bomID int64) error
+	DeleteBomLinesByIDs(ctx context.Context, bomID int64, lineIDs []int64) (int64, error)
+	DeleteRoutingByItemID(ctx context.Context, itemID int64) error
+	DeleteRoutingByRevisionID(ctx context.Context, revisionID int64) error
+	UpsertItemAssetURL(ctx context.Context, itemID int64, assetType, url string) error
+	UpdateBomLine(ctx context.Context, line *models.BomLine) error
+	GetBomLineByID(ctx context.Context, bomID, lineID int64) (*models.BomLine, error)
 
 	// Reads
 	GetItemByID(ctx context.Context, id int64) (*models.Item, error)
 	GetItemByUniq(ctx context.Context, uniqCode string) (*models.Item, error)
+	GetRevisionByID(ctx context.Context, revisionID int64) (*models.ItemRevision, error)
 	GetLatestRevision(ctx context.Context, itemID int64) (*models.ItemRevision, error)
+	GetRevisionsByIDs(ctx context.Context, revisionIDs []int64) ([]models.ItemRevision, error)
 	GetFirstAsset(ctx context.Context, itemID int64) (*models.ItemAsset, error)
 	GetMaterialSpec(ctx context.Context, revisionID int64) (*models.ItemMaterialSpec, error)
+	GetRoutingHeaderByRevisionID(ctx context.Context, revisionID int64) (*models.RoutingHeader, error)
 	GetRoutingWithOps(ctx context.Context, itemID int64) (*models.RoutingHeader, []models.RoutingOperation, []models.RoutingOperationTooling, error)
 	GetSupplierName(ctx context.Context, id uuid.UUID) string
 	GetProcessName(ctx context.Context, id int64) string
 	GetMachineName(ctx context.Context, id int64) string
+	GetProcessIDByCode(ctx context.Context, code string) (int64, bool)
+	GetMachineIDByNumber(ctx context.Context, number string) (int64, bool)
 	GetItemsByIDs(ctx context.Context, ids []int64) ([]models.Item, error)
 	GetLatestRevisionsByItemIDs(ctx context.Context, itemIDs []int64) ([]models.ItemRevision, error)
 	GetFirstAssetsByItemIDs(ctx context.Context, itemIDs []int64) ([]models.ItemAsset, error)
 	GetMaterialSpecsByRevisionIDs(ctx context.Context, revisionIDs []int64) ([]models.ItemMaterialSpec, error)
 	GetBomLinesByBomIDs(ctx context.Context, bomItemIDs []int64) ([]models.BomLine, error)
 	GetLatestRoutingHeadersByItemIDs(ctx context.Context, itemIDs []int64) ([]models.RoutingHeader, error)
+	GetRoutingHeadersByRevisionIDs(ctx context.Context, revisionIDs []int64) ([]models.RoutingHeader, error)
 	GetRoutingOperationsByHeaderIDs(ctx context.Context, headerIDs []int64) ([]models.RoutingOperation, error)
 	GetToolingsByOperationIDs(ctx context.Context, operationIDs []int64) ([]models.RoutingOperationTooling, error)
 	GetSupplierNamesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error)
+	FindSupplierByCode(ctx context.Context, code string) (*models.Supplier, error)
+	ListAllSuppliers(ctx context.Context) ([]models.Supplier, error)
+	ListAllProcesses(ctx context.Context) ([]models.ProcessParameter, error)
+	ListAllMachines(ctx context.Context) ([]models.MasterMachine, error)
+	ListAllUoms(ctx context.Context) ([]models.UomParameter, error)
 	GetProcessNamesByIDs(ctx context.Context, ids []int64) (map[int64]string, error)
+	GetProcessSequencesByIDs(ctx context.Context, ids []int64) (map[int64]int, error)
 	GetMachineNamesByIDs(ctx context.Context, ids []int64) (map[int64]string, error)
 
 	// BOM list — returns parent bom_items with their item info
 	ListBomItems(ctx context.Context, filter ListFilter) ([]models.BomItem, int64, error)
 	GetBomByID(ctx context.Context, bomID int64) (*models.BomItem, error)
+	GetBomByItemAndVersion(ctx context.Context, itemID int64, version int) (*models.BomItem, error)
+	GetBomVersionsByItemID(ctx context.Context, itemID int64) ([]models.BomItem, error)
 	// BOM lines flat for a given bom_item_id, ordered by level then line creation
 	GetBomLines(ctx context.Context, bomItemID int64) ([]models.BomLine, error)
+
+	// BOM Approval (legacy bom_approvals table — kept for backward compatibility)
+	CreateBomApproval(ctx context.Context, a *models.BomApproval) error
+	GetBomApproval(ctx context.Context, bomItemID int64) (*models.BomApproval, error)
+	UpdateBomApproval(ctx context.Context, a *models.BomApproval) error
+
+	// Approval Instances — generic multi-module approval tracker
+	CreateApprovalInstance(ctx context.Context, a *awmodels.ApprovalInstance) error
+	GetApprovalInstanceByRef(ctx context.Context, actionName, refTable string, refID int64) (*awmodels.ApprovalInstance, error)
+	UpdateApprovalInstance(ctx context.Context, a *awmodels.ApprovalInstance) error
+	// BulkActivateItemsByBomID sets items.status='Active' for all child items of a BOM
+	// and also updates bom_item.status='Active'. Called when a BOM reaches full approval.
+	BulkActivateItemsByBomID(ctx context.Context, bomItemID int64) error
+
+	// Approval workflow master — looked up at approval time, not copied into bom_approvals
+	GetApprovalWorkflowByActionName(ctx context.Context, actionName string) (*awmodels.ApprovalWorkflow, error)
+	GetApprovalWorkflowByID(ctx context.Context, id int64) (*awmodels.ApprovalWorkflow, error)
+
+	// interface IRepository:
+	CreateImportHistory(ctx context.Context, h *models.BomImportHistory) error
+	ListImportHistory(ctx context.Context, limit int) ([]models.BomImportHistory, error)
+	GetImportHistoryErrorFile(ctx context.Context, id string) ([]byte, error)
+
+	// DB returns the underlying *gorm.DB so the service layer can open transactions.
+	DB() *gorm.DB
 }
 
 type ListFilter struct {
-	UniqCode       string
-	Status         string
-	Search         string // ILIKE on uniq_code OR part_name
-	Page           int
-	Limit          int
-	OrderBy        string
-	OrderDirection string
+	UniqCode            string
+	Status              string
+	Search              string // ILIKE on uniq_code OR part_name
+	SupplierID          string // UUID — filter by material spec supplier
+	TypeMaterial        string // raw | indirect (item_material_specs.type_material) | subcon (item_material_specs.is_subcon)
+	ExcludeSupplierUUID string // exclude bom items whose uniq_code already exists in supplier_item for this supplier
+	Page                int
+	Limit               int
+	OrderBy             string
+	OrderDirection      string
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +152,8 @@ type ListFilter struct {
 type repository struct{ db *gorm.DB }
 
 func New(db *gorm.DB) IRepository { return &repository{db: db} }
+
+func (r *repository) DB() *gorm.DB { return r.db }
 
 // ---------------------------------------------------------------------------
 // Writes
@@ -88,9 +174,30 @@ func (r *repository) UpdateItem(ctx context.Context, item *models.Item) error {
 	return nil
 }
 
+// SoftDeleteItem mengisi kolom `deleted_at` pada baris item yang masih
+// aktif (deleted_at IS NULL). Idempotent — memanggil pada item yang
+// sudah soft-delete tidak error dan tidak mengubah baris manapun.
+// Setelah dipanggil, uniq_code item ini otomatis bebas dipakai ulang
+// karena partial unique index `uq_items_uniq_code_active` hanya berlaku
+// untuk baris dengan deleted_at IS NULL.
+func (r *repository) SoftDeleteItem(ctx context.Context, itemID int64) error {
+	res := r.db.WithContext(ctx).
+		Model(&models.Item{}).
+		Where("id = ? AND deleted_at IS NULL", itemID).
+		Update("deleted_at", gorm.Expr("NOW()"))
+	if res.Error != nil {
+		return apperror.InternalWrap("SoftDeleteItem", res.Error)
+	}
+	return nil
+}
+
 func (r *repository) CreateRevision(ctx context.Context, rev *models.ItemRevision) error {
 	rev.UUID = uuid.New()
 	if err := r.db.WithContext(ctx).Create(rev).Error; err != nil {
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "item_revisions_item_id_revision_key") || strings.Contains(msg, "duplicate key value") {
+			return apperror.Conflict("revision label already exists for this item")
+		}
 		return apperror.InternalWrap("Create Revision Error", err)
 	}
 	return nil
@@ -104,12 +211,44 @@ func (r *repository) CreateAsset(ctx context.Context, asset *models.ItemAsset) e
 	return nil
 }
 
+func (r *repository) UpdateAsset(ctx context.Context, assetID int64, fileURL, assetType string) error {
+	if err := r.db.WithContext(ctx).
+		Model(&models.ItemAsset{}).
+		Where("id = ?", assetID).
+		Updates(map[string]interface{}{"file_url": fileURL, "asset_type": assetType}).Error; err != nil {
+		return apperror.InternalWrap("UpdateAsset", err)
+	}
+	return nil
+}
+
+func (r *repository) GetAssetByID(ctx context.Context, assetID int64) (*models.ItemAsset, error) {
+	var a models.ItemAsset
+	if err := r.db.WithContext(ctx).First(&a, "id = ?", assetID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, apperror.NotFound("asset tidak ditemukan")
+		}
+		return nil, apperror.InternalWrap("GetAssetByID", err)
+	}
+	return &a, nil
+}
+
 func (r *repository) UpsertMaterialSpec(ctx context.Context, spec *models.ItemMaterialSpec) error {
 	if err := r.db.WithContext(ctx).
 		Where(models.ItemMaterialSpec{ItemRevisionID: spec.ItemRevisionID}).
 		Assign(*spec).
 		FirstOrCreate(spec).Error; err != nil {
 		return apperror.InternalWrap("UpsertMaterialSpec", err)
+	}
+	// Assign(struct) mengabaikan zero-value, sehingga is_subcon=false dan type_material
+	// yang dikosongkan tidak tersimpan. Tulis eksplisit kedua kolom ini.
+	if err := r.db.WithContext(ctx).
+		Model(&models.ItemMaterialSpec{}).
+		Where("id = ?", spec.ID).
+		Updates(map[string]interface{}{
+			"is_subcon":     spec.IsSubcon,
+			"type_material": spec.TypeMaterial,
+		}).Error; err != nil {
+		return apperror.InternalWrap("UpsertMaterialSpec.subcon", err)
 	}
 	return nil
 }
@@ -124,14 +263,55 @@ func (r *repository) CreateRoutingHeader(ctx context.Context, h *models.RoutingH
 
 func (r *repository) CreateOperation(ctx context.Context, op *models.RoutingOperation) error {
 	if err := r.db.WithContext(ctx).Create(op).Error; err != nil {
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "routing_operations_routing_header_id_op_seq_key") || strings.Contains(msg, "duplicate key value") {
+			return apperror.Conflict("op_seq already exists in this routing version")
+		}
 		return apperror.InternalWrap("CreateOperation", err)
 	}
 	return nil
 }
 
+func (r *repository) UpdateOperation(ctx context.Context, op *models.RoutingOperation) error {
+	if err := r.db.WithContext(ctx).Save(op).Error; err != nil {
+		return apperror.InternalWrap("UpdateOperation", err)
+	}
+	return nil
+}
+
+func (r *repository) GetOperationByID(ctx context.Context, opID int64) (*models.RoutingOperation, error) {
+	var op models.RoutingOperation
+	err := r.db.WithContext(ctx).First(&op, "id = ?", opID).Error
+	return one(&op, err, "routing operation")
+}
+
 func (r *repository) CreateTooling(ctx context.Context, t *models.RoutingOperationTooling) error {
 	if err := r.db.WithContext(ctx).Create(t).Error; err != nil {
 		return apperror.InternalWrap("CreateTooling", err)
+	}
+	return nil
+}
+
+func (r *repository) ReplaceToolings(ctx context.Context, operationID int64, toolings []models.ToolingInput) error {
+	if len(toolings) == 0 {
+		return nil
+	}
+	if err := r.db.WithContext(ctx).Where("routing_operation_id = ?", operationID).Delete(&models.RoutingOperationTooling{}).Error; err != nil {
+		if isMissingRoutingToolingsTable(err) {
+			return nil
+		}
+		return apperror.InternalWrap("ReplaceToolings delete", err)
+	}
+	for _, ti := range toolings {
+		tooling := &models.RoutingOperationTooling{
+			RoutingOperationID: operationID,
+			ToolingType:        ti.ToolingType,
+			ToolingCode:        ti.ToolingCode,
+			ToolingName:        ti.ToolingName,
+		}
+		if err := r.CreateTooling(ctx, tooling); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -151,6 +331,143 @@ func (r *repository) CreateBomLine(ctx context.Context, line *models.BomLine) er
 	return nil
 }
 
+func (r *repository) DeleteBomItem(ctx context.Context, bomID int64) error {
+	res := r.db.WithContext(ctx).Where("id = ?", bomID).Delete(&models.BomItem{})
+	if res.Error != nil {
+		return apperror.InternalWrap("DeleteBomItem", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return apperror.NotFound("bom item tidak ditemukan")
+	}
+	return nil
+}
+
+func (r *repository) DeleteBomLinesByIDs(ctx context.Context, bomID int64, lineIDs []int64) (int64, error) {
+	if len(lineIDs) == 0 {
+		return 0, nil
+	}
+	res := r.db.WithContext(ctx).
+		Where("bom_item_id = ? AND id IN ?", bomID, lineIDs).
+		Delete(&models.BomLine{})
+	if res.Error != nil {
+		return 0, apperror.InternalWrap("DeleteBomLinesByIDs", res.Error)
+	}
+	return res.RowsAffected, nil
+}
+
+func (r *repository) UpdateBomItem(ctx context.Context, bom *models.BomItem) error {
+	if err := r.db.WithContext(ctx).Save(bom).Error; err != nil {
+		return apperror.InternalWrap("UpdateBomItem", err)
+	}
+	return nil
+}
+
+// DeleteRoutingByItemID removes all routing headers, operations, and toolings for an item.
+func (r *repository) DeleteRoutingByItemID(ctx context.Context, itemID int64) error {
+	var headers []models.RoutingHeader
+	if err := r.db.WithContext(ctx).Where("item_id = ?", itemID).Find(&headers).Error; err != nil {
+		return apperror.InternalWrap("DeleteRoutingByItemID find headers", err)
+	}
+	if len(headers) == 0 {
+		return nil
+	}
+
+	headerIDs := make([]int64, len(headers))
+	for i, h := range headers {
+		headerIDs[i] = h.ID
+	}
+
+	var ops []models.RoutingOperation
+	if err := r.db.WithContext(ctx).Where("routing_header_id IN ?", headerIDs).Find(&ops).Error; err != nil {
+		return apperror.InternalWrap("DeleteRoutingByItemID find ops", err)
+	}
+	if len(ops) > 0 {
+		opIDs := make([]int64, len(ops))
+		for i, op := range ops {
+			opIDs[i] = op.ID
+		}
+		if err := r.db.WithContext(ctx).Where("routing_operation_id IN ?", opIDs).Delete(&models.RoutingOperationTooling{}).Error; err != nil {
+			return apperror.InternalWrap("DeleteRoutingByItemID delete toolings", err)
+		}
+		if err := r.db.WithContext(ctx).Where("id IN ?", opIDs).Delete(&models.RoutingOperation{}).Error; err != nil {
+			return apperror.InternalWrap("DeleteRoutingByItemID delete ops", err)
+		}
+	}
+	if err := r.db.WithContext(ctx).Where("item_id = ?", itemID).Delete(&models.RoutingHeader{}).Error; err != nil {
+		return apperror.InternalWrap("DeleteRoutingByItemID delete headers", err)
+	}
+	return nil
+}
+
+func (r *repository) DeleteRoutingByRevisionID(ctx context.Context, revisionID int64) error {
+	var headers []models.RoutingHeader
+	if err := r.db.WithContext(ctx).Where("item_revision_id = ?", revisionID).Find(&headers).Error; err != nil {
+		return apperror.InternalWrap("DeleteRoutingByRevisionID find headers", err)
+	}
+	if len(headers) == 0 {
+		return nil
+	}
+	headerIDs := make([]int64, len(headers))
+	for i, h := range headers {
+		headerIDs[i] = h.ID
+	}
+	var ops []models.RoutingOperation
+	if err := r.db.WithContext(ctx).Where("routing_header_id IN ?", headerIDs).Find(&ops).Error; err != nil {
+		return apperror.InternalWrap("DeleteRoutingByRevisionID find ops", err)
+	}
+	if len(ops) > 0 {
+		opIDs := make([]int64, len(ops))
+		for i, op := range ops {
+			opIDs[i] = op.ID
+		}
+		if err := r.db.WithContext(ctx).Where("routing_operation_id IN ?", opIDs).Delete(&models.RoutingOperationTooling{}).Error; err != nil {
+			return apperror.InternalWrap("DeleteRoutingByRevisionID delete toolings", err)
+		}
+		if err := r.db.WithContext(ctx).Where("id IN ?", opIDs).Delete(&models.RoutingOperation{}).Error; err != nil {
+			return apperror.InternalWrap("DeleteRoutingByRevisionID delete ops", err)
+		}
+	}
+	if err := r.db.WithContext(ctx).Where("id IN ?", headerIDs).Delete(&models.RoutingHeader{}).Error; err != nil {
+		return apperror.InternalWrap("DeleteRoutingByRevisionID delete headers", err)
+	}
+	return nil
+}
+
+// UpsertItemAssetURL updates the first active asset for the item or creates one if none exists.
+func (r *repository) UpsertItemAssetURL(ctx context.Context, itemID int64, assetType, url string) error {
+	res := r.db.WithContext(ctx).
+		Model(&models.ItemAsset{}).
+		Where("item_id = ? AND status = 'Active'", itemID).
+		Updates(map[string]interface{}{"file_url": url, "asset_type": assetType})
+	if res.Error != nil {
+		return apperror.InternalWrap("UpsertItemAssetURL", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return r.CreateAsset(ctx, &models.ItemAsset{
+			ItemID:    itemID,
+			AssetType: assetType,
+			FileURL:   url,
+			Status:    "Active",
+		})
+	}
+	return nil
+}
+
+func (r *repository) UpdateBomLine(ctx context.Context, line *models.BomLine) error {
+	if err := r.db.WithContext(ctx).Save(line).Error; err != nil {
+		return apperror.InternalWrap("UpdateBomLine", err)
+	}
+	return nil
+}
+
+func (r *repository) GetBomLineByID(ctx context.Context, bomID, lineID int64) (*models.BomLine, error) {
+	var line models.BomLine
+	err := r.db.WithContext(ctx).
+		Where("id = ? AND bom_item_id = ?", lineID, bomID).
+		First(&line).Error
+	return one(&line, err, "bom line")
+}
+
 // ---------------------------------------------------------------------------
 // Reads
 // ---------------------------------------------------------------------------
@@ -167,6 +484,12 @@ func (r *repository) GetItemByUniq(ctx context.Context, uniqCode string) (*model
 	return one(&item, err, "item")
 }
 
+func (r *repository) GetRevisionByID(ctx context.Context, revisionID int64) (*models.ItemRevision, error) {
+	var rev models.ItemRevision
+	err := r.db.WithContext(ctx).First(&rev, "id = ?", revisionID).Error
+	return one(&rev, err, "revision")
+}
+
 func (r *repository) GetLatestRevision(ctx context.Context, itemID int64) (*models.ItemRevision, error) {
 	var rev models.ItemRevision
 	err := r.db.WithContext(ctx).Where("item_id = ?", itemID).Order("id DESC").First(&rev).Error
@@ -174,6 +497,17 @@ func (r *repository) GetLatestRevision(ctx context.Context, itemID int64) (*mode
 		return nil, nil // no revision is not an error
 	}
 	return one(&rev, err, "revision")
+}
+
+func (r *repository) GetRevisionsByIDs(ctx context.Context, revisionIDs []int64) ([]models.ItemRevision, error) {
+	if len(revisionIDs) == 0 {
+		return nil, nil
+	}
+	var revisions []models.ItemRevision
+	if err := r.db.WithContext(ctx).Where("id IN ?", revisionIDs).Find(&revisions).Error; err != nil {
+		return nil, apperror.InternalWrap("GetRevisionsByIDs", err)
+	}
+	return revisions, nil
 }
 
 func (r *repository) GetFirstAsset(ctx context.Context, itemID int64) (*models.ItemAsset, error) {
@@ -194,6 +528,18 @@ func (r *repository) GetMaterialSpec(ctx context.Context, revisionID int64) (*mo
 	return one(&spec, err, "material spec")
 }
 
+func (r *repository) GetRoutingHeaderByRevisionID(ctx context.Context, revisionID int64) (*models.RoutingHeader, error) {
+	var header models.RoutingHeader
+	err := r.db.WithContext(ctx).
+		Where("item_revision_id = ?", revisionID).
+		Order("id DESC").
+		First(&header).Error
+	if err == gorm.ErrRecordNotFound {
+		return nil, nil
+	}
+	return one(&header, err, "routing header")
+}
+
 func (r *repository) GetRoutingWithOps(ctx context.Context, itemID int64) (*models.RoutingHeader, []models.RoutingOperation, []models.RoutingOperationTooling, error) {
 	var header models.RoutingHeader
 	err := r.db.WithContext(ctx).Where("item_id = ?", itemID).Order("version DESC").First(&header).Error
@@ -205,7 +551,11 @@ func (r *repository) GetRoutingWithOps(ctx context.Context, itemID int64) (*mode
 	}
 
 	var ops []models.RoutingOperation
-	if err := r.db.WithContext(ctx).Where("routing_header_id = ?", header.ID).Order("op_seq ASC").Find(&ops).Error; err != nil {
+	if err := r.db.WithContext(ctx).
+		Joins("JOIN process_parameters pp ON pp.id = routing_operations.process_id").
+		Where("routing_header_id = ?", header.ID).
+		Order("routing_operations.op_seq ASC, pp.sequence ASC, routing_operations.id ASC").
+		Find(&ops).Error; err != nil {
 		return nil, nil, nil, apperror.InternalWrap("GetRoutingOps", err)
 	}
 
@@ -227,7 +577,7 @@ func (r *repository) GetRoutingWithOps(ctx context.Context, itemID int64) (*mode
 
 func (r *repository) GetSupplierName(ctx context.Context, id uuid.UUID) string {
 	var s models.Supplier
-	if err := r.db.WithContext(ctx).Select("supplier_name").Where("id = ?", id).First(&s).Error; err != nil {
+	if err := r.db.WithContext(ctx).Select("supplier_name").Where("uuid = ?", id).First(&s).Error; err != nil {
 		return ""
 	}
 	return s.SupplierName
@@ -247,6 +597,22 @@ func (r *repository) GetMachineName(ctx context.Context, id int64) string {
 		return ""
 	}
 	return m.MachineName
+}
+
+func (r *repository) GetProcessIDByCode(ctx context.Context, code string) (int64, bool) {
+	var p models.ProcessParameter
+	if err := r.db.WithContext(ctx).Select("id").Where("process_code = ?", code).First(&p).Error; err != nil {
+		return 0, false
+	}
+	return p.ID, true
+}
+
+func (r *repository) GetMachineIDByNumber(ctx context.Context, number string) (int64, bool) {
+	var m models.MasterMachine
+	if err := r.db.WithContext(ctx).Select("id").Where("machine_number = ?", number).First(&m).Error; err != nil {
+		return 0, false
+	}
+	return m.ID, true
 }
 
 func (r *repository) GetItemsByIDs(ctx context.Context, ids []int64) ([]models.Item, error) {
@@ -327,6 +693,27 @@ func (r *repository) GetBomLinesByBomIDs(ctx context.Context, bomItemIDs []int64
 	return lines, nil
 }
 
+func (r *repository) GetRoutingHeadersByRevisionIDs(ctx context.Context, revisionIDs []int64) ([]models.RoutingHeader, error) {
+	if len(revisionIDs) == 0 {
+		return nil, nil
+	}
+	// Ambil hanya header terbaru (id terbesar) per item_revision_id — setara
+	// dengan "ORDER BY id DESC LIMIT 1" versi lama, tapi sekali jalan.
+	sub := r.db.WithContext(ctx).
+		Model(&models.RoutingHeader{}).
+		Select("MAX(id) AS id").
+		Where("item_revision_id IN ?", revisionIDs).
+		Group("item_revision_id")
+
+	var headers []models.RoutingHeader
+	if err := r.db.WithContext(ctx).
+		Where("id IN (?)", sub).
+		Find(&headers).Error; err != nil {
+		return nil, apperror.InternalWrap("GetRoutingHeadersByRevisionIDs", err)
+	}
+	return headers, nil
+}
+
 func (r *repository) GetLatestRoutingHeadersByItemIDs(ctx context.Context, itemIDs []int64) ([]models.RoutingHeader, error) {
 	if len(itemIDs) == 0 {
 		return nil, nil
@@ -352,8 +739,9 @@ func (r *repository) GetRoutingOperationsByHeaderIDs(ctx context.Context, header
 	}
 	var ops []models.RoutingOperation
 	if err := r.db.WithContext(ctx).
+		Joins("JOIN process_parameters pp ON pp.id = routing_operations.process_id").
 		Where("routing_header_id IN ?", headerIDs).
-		Order("routing_header_id ASC, op_seq ASC").
+		Order("routing_header_id ASC, routing_operations.op_seq ASC, pp.sequence ASC, routing_operations.id ASC").
 		Find(&ops).Error; err != nil {
 		return nil, apperror.InternalWrap("GetRoutingOperationsByHeaderIDs", err)
 	}
@@ -368,12 +756,80 @@ func (r *repository) GetToolingsByOperationIDs(ctx context.Context, operationIDs
 	if err := r.db.WithContext(ctx).
 		Where("routing_operation_id IN ?", operationIDs).
 		Find(&toolings).Error; err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), `relation "routing_operation_toolings" does not exist`) {
+		if isMissingRoutingToolingsTable(err) {
 			return nil, nil
 		}
 		return nil, apperror.InternalWrap("GetToolingsByOperationIDs", err)
 	}
 	return toolings, nil
+}
+
+func isMissingRoutingToolingsTable(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "routing_operation_toolings") && strings.Contains(msg, "does not exist")
+}
+
+func (r *repository) FindSupplierByCode(ctx context.Context, code string) (*models.Supplier, error) {
+	var s models.Supplier
+	err := r.db.WithContext(ctx).
+		Where("supplier_code = ?", code).
+		First(&s).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, apperror.InternalWrap("FindSupplierByCode", err)
+	}
+	return &s, nil
+}
+
+func (r *repository) ListAllProcesses(ctx context.Context) ([]models.ProcessParameter, error) {
+	var rows []models.ProcessParameter
+	if err := r.db.WithContext(ctx).
+		Select("id", "process_code", "process_name").
+		Where(activeMasterDataFilter).
+		Order("process_code").
+		Find(&rows).Error; err != nil {
+		return nil, apperror.InternalWrap("ListAllProcesses", err)
+	}
+	return rows, nil
+}
+
+func (r *repository) ListAllMachines(ctx context.Context) ([]models.MasterMachine, error) {
+	var rows []models.MasterMachine
+	if err := r.db.WithContext(ctx).
+		Select("id", "machine_number", "machine_name").
+		Where(activeMasterDataFilter).
+		Order("machine_number").
+		Find(&rows).Error; err != nil {
+		return nil, apperror.InternalWrap("ListAllMachines", err)
+	}
+	return rows, nil
+}
+
+func (r *repository) ListAllUoms(ctx context.Context) ([]models.UomParameter, error) {
+	var rows []models.UomParameter
+	if err := r.db.WithContext(ctx).
+		Select("id", "code", "name").
+		Where(activeMasterDataFilter).
+		Order("code").
+		Find(&rows).Error; err != nil {
+		return nil, apperror.InternalWrap("ListAllUoms", err)
+	}
+	return rows, nil
+}
+
+func (r *repository) ListAllSuppliers(ctx context.Context) ([]models.Supplier, error) {
+	var suppliers []models.Supplier
+	if err := r.db.WithContext(ctx).
+		Select("id", "uuid", "supplier_code", "supplier_name").
+		Where(activeMasterDataFilter).
+		Where("deleted_at IS NULL").
+		Order("supplier_name").
+		Find(&suppliers).Error; err != nil {
+		return nil, apperror.InternalWrap("ListAllSuppliers", err)
+	}
+	return suppliers, nil
 }
 
 func (r *repository) GetSupplierNamesByIDs(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
@@ -383,13 +839,13 @@ func (r *repository) GetSupplierNamesByIDs(ctx context.Context, ids []uuid.UUID)
 	}
 	var suppliers []models.Supplier
 	if err := r.db.WithContext(ctx).
-		Select("id", "supplier_name").
-		Where("id IN ?", ids).
+		Select("uuid", "supplier_name").
+		Where("uuid IN ?", ids).
 		Find(&suppliers).Error; err != nil {
 		return nil, apperror.InternalWrap("GetSupplierNamesByIDs", err)
 	}
 	for _, supplier := range suppliers {
-		result[supplier.ID] = supplier.SupplierName
+		result[supplier.UUID] = supplier.SupplierName
 	}
 	return result, nil
 }
@@ -408,6 +864,24 @@ func (r *repository) GetProcessNamesByIDs(ctx context.Context, ids []int64) (map
 	}
 	for _, process := range processes {
 		result[process.ID] = process.ProcessName
+	}
+	return result, nil
+}
+
+func (r *repository) GetProcessSequencesByIDs(ctx context.Context, ids []int64) (map[int64]int, error) {
+	result := make(map[int64]int)
+	if len(ids) == 0 {
+		return result, nil
+	}
+	var processes []models.ProcessParameter
+	if err := r.db.WithContext(ctx).
+		Select("id", "sequence").
+		Where("id IN ?", ids).
+		Find(&processes).Error; err != nil {
+		return nil, apperror.InternalWrap("GetProcessSequencesByIDs", err)
+	}
+	for _, p := range processes {
+		result[p.ID] = p.Sequence
 	}
 	return result, nil
 }
@@ -435,10 +909,12 @@ func (r *repository) GetMachineNamesByIDs(ctx context.Context, ids []int64) (map
 // ---------------------------------------------------------------------------
 
 func (r *repository) ListBomItems(ctx context.Context, f ListFilter) ([]models.BomItem, int64, error) {
-	needJoin := f.UniqCode != "" || f.Search != ""
+	needItemJoin := f.UniqCode != "" || f.Search != ""
+	needSpecJoin := f.SupplierID != ""
 
 	q := r.db.WithContext(ctx).Model(&models.BomItem{})
-	if needJoin {
+	q = q.Where("bom_item.is_current = ?", true)
+	if needItemJoin {
 		q = q.Joins("JOIN items ON items.id = bom_item.item_id").
 			Where("items.deleted_at IS NULL")
 	}
@@ -449,7 +925,84 @@ func (r *repository) ListBomItems(ctx context.Context, f ListFilter) ([]models.B
 		q = q.Where("items.uniq_code ILIKE ?", "%"+f.UniqCode+"%")
 	}
 	if f.Search != "" {
-		q = q.Where("items.uniq_code ILIKE ? OR items.part_name ILIKE ?", "%"+f.Search+"%", "%"+f.Search+"%")
+		// [bom-search] Label dropdown UNIQ Code di ERP berbentuk:
+		//   <material_grade> - <uniq_code> - <part_name> - <model>
+		// contoh: "SP7 - M11 - STAY HEADREST FR W - 4L45W"
+		//
+		// Sebelumnya hanya uniq_code + part_name yang dicari, sehingga
+		// segmen ke-1 (material_grade) dan ke-4 (model) tidak pernah ketemu.
+		//
+		// material_grade/grade ada di item_material_specs dan diambil lewat
+		// EXISTS, bukan JOIN, supaya baris hasil tidak terduplikasi.
+		// Pemilihan revisi memakai pola COALESCE yang sama dengan filter
+		// type_material di bawah.
+		like := "%" + f.Search + "%"
+		q = q.Where(`(
+			items.uniq_code ILIKE ?
+			OR items.part_name ILIKE ?
+			OR items.part_number ILIKE ?
+			OR items.model ILIKE ?
+			OR EXISTS (
+				SELECT 1
+				FROM item_material_specs ims_s
+				WHERE ims_s.item_revision_id = COALESCE(
+						bom_item.root_item_revision_id,
+						(SELECT MAX(ir_s.id) FROM item_revisions ir_s WHERE ir_s.item_id = bom_item.item_id)
+					)
+				  AND (ims_s.material_grade ILIKE ? OR ims_s.grade ILIKE ? OR ims_s.material_code ILIKE ?)
+			)
+			OR EXISTS (
+				SELECT 1
+				FROM bom_lines bl
+				JOIN items ci ON ci.id = bl.child_item_id AND ci.deleted_at IS NULL
+				LEFT JOIN item_revisions cir ON cir.id = COALESCE(
+						bl.child_item_revision_id,
+						(SELECT MAX(ir_c.id) FROM item_revisions ir_c WHERE ir_c.item_id = bl.child_item_id)
+					)
+				LEFT JOIN item_material_specs cims ON cims.item_revision_id = cir.id
+				WHERE bl.bom_item_id = bom_item.id
+				  AND bl.deleted_at IS NULL
+				  AND (
+					ci.uniq_code ILIKE ?
+					OR ci.part_name ILIKE ?
+					OR ci.part_number ILIKE ?
+					OR ci.model ILIKE ?
+					OR cims.material_grade ILIKE ?
+					OR cims.grade ILIKE ?
+					OR cims.material_code ILIKE ?
+				  )
+			)
+		)`, like, like, like, like, like, like, like, like, like, like, like, like, like, like)
+	}
+	if needSpecJoin {
+		q = q.Joins(`JOIN item_revisions ON item_revisions.id = bom_item.root_item_revision_id`).
+			Joins(`JOIN item_material_specs ON item_material_specs.item_revision_id = item_revisions.id`)
+		if f.SupplierID != "" {
+			q = q.Where("item_material_specs.supplier_id = ?", f.SupplierID)
+		}
+	}
+	if f.TypeMaterial != "" {
+		// Child: BOM yang salah satu child-nya punya type_material cocok.
+		childSub := r.db.Table("bom_lines").
+			Select("bom_lines.bom_item_id").
+			Joins(`JOIN item_revisions cr ON cr.id = COALESCE(bom_lines.child_item_revision_id, (SELECT MAX(ir.id) FROM item_revisions ir WHERE ir.item_id = bom_lines.child_item_id))`).
+			Joins("JOIN item_material_specs ims ON ims.item_revision_id = cr.id").
+			Where(specTypeCond("ims", f.TypeMaterial), specTypeArgs(f.TypeMaterial)...)
+		// Root: BOM yang root item-nya sendiri punya type_material cocok.
+		rootSub := r.db.Table("bom_item bi_r").
+			Select("bi_r.id").
+			Joins(`JOIN item_revisions rr ON rr.id = COALESCE(bi_r.root_item_revision_id, (SELECT MAX(ir2.id) FROM item_revisions ir2 WHERE ir2.item_id = bi_r.item_id))`).
+			Joins("JOIN item_material_specs rims ON rims.item_revision_id = rr.id").
+			Where(specTypeCond("rims", f.TypeMaterial), specTypeArgs(f.TypeMaterial)...)
+		q = q.Where("bom_item.id IN (?) OR bom_item.id IN (?)", childSub, rootSub)
+	}
+	if f.ExcludeSupplierUUID != "" {
+		// Exclude root BOM items whose uniq_code is already registered in supplier_item for this supplier.
+		alreadyAdded := r.db.Table("items AS ex_items").
+			Select("ex_items.id").
+			Joins("JOIN supplier_item si ON si.uniq_code = ex_items.uniq_code").
+			Where("si.supplier_uuid = ? AND si.deleted_at IS NULL AND ex_items.deleted_at IS NULL", f.ExcludeSupplierUUID)
+		q = q.Where("bom_item.item_id NOT IN (?)", alreadyAdded)
 	}
 
 	var total int64
@@ -473,6 +1026,20 @@ func (r *repository) GetBomByID(ctx context.Context, bomID int64) (*models.BomIt
 	return one(&b, err, "bom item")
 }
 
+func (r *repository) GetBomByItemAndVersion(ctx context.Context, itemID int64, version int) (*models.BomItem, error) {
+	var b models.BomItem
+	err := r.db.WithContext(ctx).Where("item_id = ? AND version = ?", itemID, version).First(&b).Error
+	return one(&b, err, "bom item")
+}
+
+func (r *repository) GetBomVersionsByItemID(ctx context.Context, itemID int64) ([]models.BomItem, error) {
+	var items []models.BomItem
+	if err := r.db.WithContext(ctx).Where("item_id = ?", itemID).Order("version ASC").Find(&items).Error; err != nil {
+		return nil, apperror.InternalWrap("GetBomVersionsByItemID", err)
+	}
+	return items, nil
+}
+
 func (r *repository) GetBomLines(ctx context.Context, bomItemID int64) ([]models.BomLine, error) {
 	var lines []models.BomLine
 	if err := r.db.WithContext(ctx).
@@ -484,14 +1051,135 @@ func (r *repository) GetBomLines(ctx context.Context, bomItemID int64) ([]models
 	return lines, nil
 }
 
+func (r *repository) CreateBomApproval(ctx context.Context, a *models.BomApproval) error {
+	return r.db.WithContext(ctx).Create(a).Error
+}
+
+func (r *repository) GetBomApproval(ctx context.Context, bomItemID int64) (*models.BomApproval, error) {
+	var a models.BomApproval
+	err := r.db.WithContext(ctx).Where("bom_item_id = ?", bomItemID).First(&a).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, apperror.InternalWrap("GetBomApproval", err)
+	}
+	return &a, nil
+}
+
+func (r *repository) UpdateBomApproval(ctx context.Context, a *models.BomApproval) error {
+	return r.db.WithContext(ctx).Save(a).Error
+}
+
+func (r *repository) GetApprovalWorkflowByActionName(ctx context.Context, actionName string) (*awmodels.ApprovalWorkflow, error) {
+	var w awmodels.ApprovalWorkflow
+	err := r.db.WithContext(ctx).Where("action_name = ?", actionName).First(&w).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+func (r *repository) GetApprovalWorkflowByID(ctx context.Context, id int64) (*awmodels.ApprovalWorkflow, error) {
+	var w awmodels.ApprovalWorkflow
+	err := r.db.WithContext(ctx).First(&w, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
+// ---------------------------------------------------------------------------
+// Approval Instances
+// ---------------------------------------------------------------------------
+
+func (r *repository) CreateApprovalInstance(ctx context.Context, a *awmodels.ApprovalInstance) error {
+	return r.db.WithContext(ctx).Create(a).Error
+}
+
+func (r *repository) GetApprovalInstanceByRef(ctx context.Context, actionName, refTable string, refID int64) (*awmodels.ApprovalInstance, error) {
+	var a awmodels.ApprovalInstance
+	err := r.db.WithContext(ctx).
+		Where("action_name = ? AND reference_table = ? AND reference_id = ?", actionName, refTable, refID).
+		Order("id DESC").
+		First(&a).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, apperror.InternalWrap("GetApprovalInstanceByRef", err)
+	}
+	return &a, nil
+}
+
+func (r *repository) UpdateApprovalInstance(ctx context.Context, a *awmodels.ApprovalInstance) error {
+	return r.db.WithContext(ctx).Save(a).Error
+}
+
+// BulkActivateItemsByBomID activates the parent item and all child items of the given BOM.
+// Both parent (via bom_item.item_id) and children (via bom_lines.child_item_id) start as Draft.
+func (r *repository) BulkActivateItemsByBomID(ctx context.Context, bomItemID int64) error {
+	return r.db.WithContext(ctx).Exec(`
+		UPDATE items SET status = 'Active', updated_at = NOW()
+		WHERE id = (SELECT item_id FROM bom_item WHERE id = ?)
+		   OR id IN (SELECT child_item_id FROM bom_lines WHERE bom_item_id = ?)
+	`, bomItemID, bomItemID).Error
+}
+
+func (r *repository) CreateImportHistory(ctx context.Context, h *models.BomImportHistory) error {
+	if err := r.db.WithContext(ctx).Create(h).Error; err != nil {
+		return apperror.InternalWrap("create bom import history", err)
+	}
+	return nil
+}
+
+func (r *repository) ListImportHistory(ctx context.Context, limit int) ([]models.BomImportHistory, error) {
+	var out []models.BomImportHistory
+	err := r.db.WithContext(ctx).
+		Table("bom_import_histories").
+		Select("bom_import_histories.id, bom_import_histories.file_name, bom_import_histories.file_size_kb, bom_import_histories.row_count, COALESCE(users.username, bom_import_histories.uploaded_by) AS uploaded_by, bom_import_histories.status, bom_import_histories.summary, " +
+			"bom_import_histories.imported_count, bom_import_histories.failed_count, bom_import_histories.preview_rows, bom_import_histories.request_id, bom_import_histories.created_at, bom_import_histories.updated_at, " +
+			"(bom_import_histories.error_file IS NOT NULL AND length(bom_import_histories.error_file) > 0) AS has_error_file").
+		Joins("LEFT JOIN users ON users.id::text = bom_import_histories.uploaded_by OR users.uuid::text = bom_import_histories.uploaded_by").
+		Order("bom_import_histories.created_at DESC").
+		Limit(limit).
+		Scan(&out).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("list bom import history", err)
+	}
+	return out, nil
+}
+
+func (r *repository) GetImportHistoryErrorFile(ctx context.Context, id string) ([]byte, error) {
+	var h models.BomImportHistory
+	err := r.db.WithContext(ctx).
+		Select("error_file").
+		First(&h, "id = ?", id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, apperror.NotFound("history tidak ditemukan")
+	}
+	if err != nil {
+		return nil, apperror.InternalWrap("get bom import history error file", err)
+	}
+	return h.ErrorFile, nil
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 // limitOffset returns SQL LIMIT and OFFSET from pagination input.
 func limitOffset(limit, page int) (int, int) {
-	if limit < 1 || limit > 200 {
+	if limit < 1 {
 		limit = 20
+	} else if limit > 10000 {
+		limit = 10000
 	}
 	if page < 1 {
 		page = 1
@@ -513,9 +1201,25 @@ func safeOrder(col, dir string) string {
 func one[T any](v *T, err error, entity string) (*T, error) {
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, apperror.NotFound(entity + " not found")
+			return nil, apperror.NotFound(entity + " tidak ditemukan")
 		}
 		return nil, apperror.InternalWrap("get "+entity, err)
 	}
 	return v, nil
+}
+
+// specTypeCond builds the WHERE fragment for the type filter: "subcon" is a boolean flag,
+// "raw"/"indirect" are categories.
+func specTypeCond(alias, typeMaterial string) string {
+	if typeMaterial == "subcon" {
+		return alias + ".is_subcon = true"
+	}
+	return alias + ".type_material = ?"
+}
+
+func specTypeArgs(typeMaterial string) []interface{} {
+	if typeMaterial == "subcon" {
+		return nil
+	}
+	return []interface{}{typeMaterial}
 }

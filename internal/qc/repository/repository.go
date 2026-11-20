@@ -1,0 +1,562 @@
+package repository
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"strings"
+	"time"
+
+	procModels "github.com/ganasa18/go-template/internal/procurement/models"
+	qcModels "github.com/ganasa18/go-template/internal/qc/models"
+	"github.com/ganasa18/go-template/pkg/apperror"
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+type ListFilter struct {
+	TaskType string
+	Status   string
+	Page     int
+	Limit    int
+	Offset   int
+}
+
+type TaskListRow struct {
+	ID        int64     `gorm:"column:id"`
+	TaskType  string    `gorm:"column:task_type"`
+	Status    string    `gorm:"column:status"`
+	CreatedAt time.Time `gorm:"column:created_at"`
+
+	PackingNumber *string  `gorm:"column:packing_number"`
+	DnNumber      *string  `gorm:"column:dn_number"`
+	PoNumber      *string  `gorm:"column:po_number"`
+	SupplierName  *string  `gorm:"column:supplier_name"`
+	ItemUniqCode  *string  `gorm:"column:item_uniq_code"`
+	QtyReceived   *float64 `gorm:"column:qty_received"`
+	UOM           *string  `gorm:"column:uom"`
+}
+
+type IRepository interface {
+	ListTasks(ctx context.Context, f ListFilter) ([]TaskListRow, int64, error)
+	StartTask(ctx context.Context, taskID int64, performedBy string) (*qcModels.QCTask, error)
+	ApproveIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string, defects []qcModels.DefectInput) error
+	RejectIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string, defects []qcModels.DefectInput) error
+}
+
+type repo struct{ db *gorm.DB }
+
+func New(db *gorm.DB) IRepository { return &repo{db: db} }
+
+func (r *repo) ListTasks(ctx context.Context, f ListFilter) ([]TaskListRow, int64, error) {
+	q := r.db.WithContext(ctx).Table("qc_tasks t")
+	q = q.Joins("LEFT JOIN delivery_note_items idi ON idi.id = t.incoming_dn_item_id")
+	q = q.Joins("LEFT JOIN delivery_notes idn ON idn.id = idi.dn_id")
+	q = q.Joins("LEFT JOIN suppliers s ON s.id = idn.supplier_id")
+
+	if f.TaskType != "" {
+		q = q.Where("t.task_type = ?", f.TaskType)
+	}
+	if f.Status != "" {
+		q = q.Where("t.status = ?", f.Status)
+	}
+
+	var total int64
+	if err := q.Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("ListTasks count: %w", err)
+	}
+
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	offset := f.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	var rows []TaskListRow
+	err := q.Select(`
+		t.id,
+		t.task_type,
+		t.status,
+		t.created_at,
+		idn.dn_number AS packing_number,
+		idn.dn_number,
+		idn.po_number,
+		s.supplier_name,
+		idi.item_uniq_code,
+		GREATEST(idi.qty_received::numeric - COALESCE((
+			SELECT SUM(ql.qty_checked) FROM qc_logs ql WHERE ql.dn_item_id = idi.id
+		), 0), 0) AS qty_received,
+		idi.uom
+	`).
+		Order("t.created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, 0, fmt.Errorf("ListTasks scan: %w", err)
+	}
+	return rows, total, nil
+}
+
+func (r *repo) StartTask(ctx context.Context, taskID int64, performedBy string) (*qcModels.QCTask, error) {
+	performedBy = normalizeActor(performedBy)
+
+	var task qcModels.QCTask
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", taskID).Error; err != nil {
+			return apperror.NotFound("qc task tidak ditemukan")
+		}
+		if task.Status == "approved" || task.Status == "rejected" {
+			return apperror.Conflict("qc task already completed")
+		}
+		if task.Status == "in_progress" {
+			return nil
+		}
+
+		if err := tx.Model(&qcModels.QCTask{}).Where("id = ?", taskID).Update("status", "in_progress").Error; err != nil {
+			return fmt.Errorf("update qc task: %w", err)
+		}
+		// append small audit event
+		if err := appendRoundEventTx(tx, taskID, map[string]interface{}{
+			"event":        "qc_start",
+			"performed_by": performedBy,
+			"occurred_at":  time.Now().UTC().Format(time.RFC3339),
+		}); err != nil {
+			return err
+		}
+
+		return tx.First(&task, "id = ?", taskID).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+func (r *repo) ApproveIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string, defects []qcModels.DefectInput) error {
+	performedBy = normalizeActor(performedBy)
+
+	if numberOfDefects < 0 {
+		return apperror.BadRequest("number_of_defects must be >= 0")
+	}
+
+	// Parse date_checked (YYYY-MM-DD)
+	checkedAt, err := time.Parse("2006-01-02", dateChecked)
+	if err != nil {
+		return apperror.BadRequest("date_checked must be in YYYY-MM-DD format")
+	}
+	if err := validateDefectInputs(defects, float64(numberOfDefects), math.Max(float64(numberOfDefects), 0)); err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var task qcModels.QCTask
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", taskID).Error; err != nil {
+			return apperror.NotFound("qc task tidak ditemukan")
+		}
+		if task.TaskType != "incoming_qc" {
+			return apperror.UnprocessableEntity("task_type must be incoming_qc")
+		}
+		if task.IncomingDNItemID == nil || *task.IncomingDNItemID <= 0 {
+			return apperror.UnprocessableEntity("incoming_dn_item_id is required for incoming_qc")
+		}
+
+		var dnItem procModels.IncomingDNItem
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&dnItem, "id = ?", *task.IncomingDNItemID).Error; err != nil {
+			return apperror.NotFound("incoming_dn_item tidak ditemukan")
+		}
+		if task.Status == "approved" {
+			return updateDeliveryNoteTotalPOIncoming(tx, dnItem.IncomingDNID)
+		}
+		if task.Status == "rejected" {
+			return apperror.Conflict("qc task already rejected")
+		}
+
+		roundQty, err := pendingIncomingQtyTx(tx, dnItem.ID, dnItem.QtyReceived)
+		if err != nil {
+			return err
+		}
+		if numberOfDefects > roundQty {
+			return apperror.UnprocessableEntity("number_of_defects must be <= qty_received")
+		}
+
+		approvedQty := roundQty - numberOfDefects
+		ngQty := numberOfDefects
+
+		// Update task fields
+		if err := tx.Model(&qcModels.QCTask{}).Where("id = ?", taskID).Updates(map[string]interface{}{
+			"status":        "approved",
+			"good_quantity": approvedQty,
+			"ng_quantity":   ngQty,
+			"date_checked":  checkedAt,
+			"updated_at":    time.Now(),
+		}).Error; err != nil {
+			return fmt.Errorf("update qc_tasks: %w", err)
+		}
+
+		// Update DN item quality
+		if err := tx.Model(&procModels.IncomingDNItem{}).Where("id = ?", dnItem.ID).Update("quality_status", "Approved").Error; err != nil {
+			return fmt.Errorf("update delivery_note_items: %w", err)
+		}
+
+		if err := updateDeliveryNoteTotalPOIncoming(tx, dnItem.IncomingDNID); err != nil {
+			return err
+		}
+
+		event := map[string]interface{}{
+			"event":             "qc_approve",
+			"approved_qty":      approvedQty,
+			"ng_qty":            ngQty,
+			"number_of_defects": numberOfDefects,
+			"date_checked":      dateChecked,
+			"performed_by":      performedBy,
+			"occurred_at":       time.Now().UTC().Format(time.RFC3339),
+		}
+		if err := appendRoundEventTx(tx, taskID, event); err != nil {
+			return err
+		}
+
+		dnType, poNumber, err := loadDNTypeAndPONumber(tx, dnItem.IncomingDNID)
+		if err != nil {
+			return err
+		}
+
+		if approvedQty > 0 {
+			// Look up warehouse_location from the most recent scan for this dn_item.
+			var warehouseLocation *string
+			var latestScan struct {
+				WarehouseLocation *string `gorm:"column:warehouse_location"`
+			}
+			tx.Table("incoming_receiving_scans").
+				Select("warehouse_location").
+				Where("incoming_dn_item_id = ? AND warehouse_location IS NOT NULL", *task.IncomingDNItemID).
+				Order("scanned_at DESC").Limit(1).Scan(&latestScan)
+			warehouseLocation = latestScan.WarehouseLocation
+
+			if err := r.postToInventoryByDNType(tx, dnType, dnItem.ItemUniqCode, approvedQty, dnItem.WeightReceived, dnItem.Uom, warehouseLocation, performedBy, *task.IncomingDNItemID, dnItem.PackingNumber); err != nil {
+				return err
+			}
+			_ = poNumber // reserved for future PO rollup
+		}
+
+		qtyScrap := sumDefectScrap(defects)
+		qtyDefect := sumDefectDefect(defects)
+		if len(defects) == 0 && numberOfDefects > 0 {
+			qtyDefect = float64(numberOfDefects)
+		}
+
+		if numberOfDefects > 0 {
+			_, poNumberApprove, err := loadDNTypeAndPONumber(tx, dnItem.IncomingDNID)
+			if err != nil {
+				return err
+			}
+			productReturn := map[string]interface{}{
+				"uniq":            dnItem.ItemUniqCode,
+				"dn_number":       poNumberApprove,
+				"quantity_scrap":  int(qtyScrap),
+				"quantity_rework": int(qtyDefect),
+				"status":          "pending",
+				"created_at":      time.Now(),
+				"updated_at":      time.Now(),
+			}
+
+			if err := tx.Table("product_returns").Create(productReturn).Error; err != nil {
+				return fmt.Errorf("create product_return: %w", err)
+			}
+		}
+
+		qcLogID, err := insertIncomingQCLog(tx, task, dnItem, checkedAt, performedBy, roundQty, approvedQty, numberOfDefects, qtyScrap, "APPROVED", defects)
+		if err != nil {
+			return err
+		}
+		if err := insertIncomingQCDefects(tx, task, dnItem, qcLogID, performedBy, defects); err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
+func (r *repo) RejectIncoming(ctx context.Context, taskID int64, numberOfDefects int, dateChecked string, performedBy string, defects []qcModels.DefectInput) error {
+	performedBy = normalizeActor(performedBy)
+
+	if numberOfDefects < 0 {
+		return apperror.BadRequest("number_of_defects must be >= 0")
+	}
+
+	checkedAt, err := time.Parse("2006-01-02", dateChecked)
+	if err != nil {
+		return apperror.BadRequest("date_checked must be in YYYY-MM-DD format")
+	}
+	if err := validateDefectInputs(defects, float64(numberOfDefects), math.Max(float64(numberOfDefects), 0)); err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var task qcModels.QCTask
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", taskID).Error; err != nil {
+			return apperror.NotFound("qc task tidak ditemukan")
+		}
+		if task.TaskType != "incoming_qc" {
+			return apperror.UnprocessableEntity("task_type must be incoming_qc")
+		}
+		if task.Status == "rejected" {
+			return nil
+		}
+		if task.Status == "approved" {
+			return apperror.Conflict("qc task already approved")
+		}
+		if task.IncomingDNItemID == nil || *task.IncomingDNItemID <= 0 {
+			return apperror.UnprocessableEntity("incoming_dn_item_id is required for incoming_qc")
+		}
+
+		var dnItem procModels.IncomingDNItem
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&dnItem, "id = ?", *task.IncomingDNItemID).Error; err != nil {
+			return apperror.NotFound("incoming_dn_item tidak ditemukan")
+		}
+
+				roundQty, err := pendingIncomingQtyTx(tx, dnItem.ID, dnItem.QtyReceived)
+		if err != nil {
+			return err
+		}
+		if numberOfDefects > roundQty {
+			return apperror.UnprocessableEntity("number_of_defects must be <= qty_received")
+		}
+
+		if err := tx.Model(&qcModels.QCTask{}).Where("id = ?", taskID).Updates(map[string]interface{}{
+			"status":       "rejected",
+			"ng_quantity":  numberOfDefects,
+			"date_checked": checkedAt,
+			"updated_at":   time.Now(),
+		}).Error; err != nil {
+			return fmt.Errorf("update qc_tasks: %w", err)
+		}
+		if err := tx.Model(&procModels.IncomingDNItem{}).Where("id = ?", dnItem.ID).Update("quality_status", "Rejected").Error; err != nil {
+			return fmt.Errorf("update delivery_note_items: %w", err)
+		}
+
+		event := map[string]interface{}{
+			"event":             "qc_reject",
+			"number_of_defects": numberOfDefects,
+			"date_checked":      dateChecked,
+			"performed_by":      performedBy,
+			"occurred_at":       time.Now().UTC().Format(time.RFC3339),
+		}
+		if err := appendRoundEventTx(tx, taskID, event); err != nil {
+			return err
+		}
+
+		_, poNumber, err := loadDNTypeAndPONumber(tx, dnItem.IncomingDNID)
+		if err != nil {
+			return err
+		}
+
+		qtyScrap := sumDefectScrap(defects)
+		qtyDefect := sumDefectDefect(defects)
+		if len(defects) == 0 && numberOfDefects > 0 {
+			qtyDefect = float64(numberOfDefects)
+		}
+
+		productReturn := map[string]interface{}{
+			"uniq":            dnItem.ItemUniqCode,
+			"dn_number":       poNumber,
+			"quantity_scrap":  int(qtyScrap),
+			"quantity_rework": int(qtyDefect),
+			"status":          "pending",
+			"created_at":      time.Now(),
+			"updated_at":      time.Now(),
+		}
+
+		if err := tx.Table("product_returns").Create(productReturn).Error; err != nil {
+			return fmt.Errorf("create product_return: %w", err)
+		}
+
+		qcLogID, err := insertIncomingQCLog(tx, task, dnItem, checkedAt, performedBy, roundQty, 0, numberOfDefects, qtyScrap, "REJECTED", defects)
+		if err != nil {
+			return err
+		}
+		return insertIncomingQCDefects(tx, task, dnItem, qcLogID, performedBy, defects)
+	})
+}
+
+func pendingIncomingQtyTx(tx *gorm.DB, dnItemID int64, totalReceived int) (int, error) {
+	var alreadyChecked float64
+	if err := tx.Table("qc_logs").
+		Where("dn_item_id = ?", dnItemID).
+		Select("COALESCE(SUM(qty_checked), 0)").
+		Scan(&alreadyChecked).Error; err != nil {
+		return 0, fmt.Errorf("sum qc_logs qty_checked: %w", err)
+	}
+	pending := totalReceived - int(alreadyChecked)
+	if pending < 0 {
+		pending = 0
+	}
+	return pending, nil
+}
+
+func validateDefectInputs(defects []qcModels.DefectInput, totalDefect, totalScrapCap float64) error {
+	defectQty := 0.0
+	scrapQty := 0.0
+	for _, defect := range defects {
+		if defect.QtyDefect < 0 || defect.QtyScrap < 0 {
+			return apperror.BadRequest("defect quantities must be >= 0")
+		}
+		defectQty += defect.QtyDefect
+		scrapQty += defect.QtyScrap
+	}
+	if defectQty > totalDefect+0.0001 {
+		return apperror.BadRequest("sum defects qty_defect exceeds number_of_defects")
+	}
+	if scrapQty > totalScrapCap+0.0001 {
+		return apperror.BadRequest("sum defects qty_scrap exceeds number_of_defects")
+	}
+	return nil
+}
+
+func sumDefectScrap(defects []qcModels.DefectInput) float64 {
+	total := 0.0
+	for _, defect := range defects {
+		total += defect.QtyScrap
+	}
+	return total
+}
+
+func sumDefectDefect(defects []qcModels.DefectInput) float64 {
+	total := 0.0
+	for _, defect := range defects {
+		total += defect.QtyDefect
+	}
+	return total
+}
+
+func insertIncomingQCLog(tx *gorm.DB, task qcModels.QCTask, dnItem procModels.IncomingDNItem, checkedAt time.Time, performedBy string, qtyChecked, approvedQty, defectQty int, qtyScrap float64, status string, defects []qcModels.DefectInput) (int64, error) {
+	row := map[string]interface{}{
+		"uuid":          uuid.New().String(),
+		"qc_task_id":    task.ID,
+		"dn_item_id":    dnItem.ID,
+		"uniq_code":     dnItem.ItemUniqCode,
+		"qc_round":      1,
+		"qty_checked":   qtyChecked,
+		"qty_pass":      approvedQty,
+		"qty_defect":    defectQty,
+		"qty_scrap":     qtyScrap,
+		"status":        status,
+		"defect_source": "incoming_material",
+		"checked_by":    performedBy,
+		"checked_at":    checkedAt,
+		"created_at":    time.Now(),
+	}
+	if err := tx.Table("qc_logs").Create(&row).Error; err != nil {
+		return 0, fmt.Errorf("insert qc_logs: %w", err)
+	}
+	id, _ := row["id"].(int64)
+	if id == 0 {
+		var out struct {
+			ID int64 `gorm:"column:id"`
+		}
+		if err := tx.Raw("SELECT currval(pg_get_serial_sequence('qc_logs','id')) AS id").Scan(&out).Error; err != nil {
+			return 0, fmt.Errorf("load qc_log id: %w", err)
+		}
+		id = out.ID
+	}
+	return id, nil
+}
+
+func insertIncomingQCDefects(tx *gorm.DB, task qcModels.QCTask, dnItem procModels.IncomingDNItem, qcLogID int64, performedBy string, defects []qcModels.DefectInput) error {
+	for _, defect := range defects {
+		row := map[string]interface{}{
+			"qc_log_id":          qcLogID,
+			"qc_task_id":         task.ID,
+			"dn_item_id":         dnItem.ID,
+			"uniq_code":          dnItem.ItemUniqCode,
+			"defect_source":      "incoming_material",
+			"defect_reason_code": strings.TrimSpace(defect.ReasonCode),
+			"defect_reason_text": strings.TrimSpace(defect.ReasonText),
+			"qty_defect":         defect.QtyDefect,
+			"qty_scrap":          defect.QtyScrap,
+			"is_repairable":      defect.IsRepairable,
+			"reported_by":        performedBy,
+			"reported_at":        time.Now(),
+		}
+		if err := tx.Table("qc_defect_items").Create(&row).Error; err != nil {
+			return fmt.Errorf("insert qc_defect_items: %w", err)
+		}
+	}
+	return nil
+}
+
+func appendRoundEventTx(tx *gorm.DB, taskID int64, event map[string]interface{}) error {
+	// Read current round_results, append, write back.
+	var task qcModels.QCTask
+	if err := tx.Select("id", "round_results").First(&task, "id = ?", taskID).Error; err != nil {
+		return fmt.Errorf("load round_results: %w", err)
+	}
+
+	var arr []interface{}
+	if len(task.RoundResults) > 0 {
+		_ = json.Unmarshal(task.RoundResults, &arr)
+	}
+	arr = append(arr, event)
+	b, _ := json.Marshal(arr)
+	if err := tx.Model(&qcModels.QCTask{}).Where("id = ?", taskID).Update("round_results", b).Error; err != nil {
+		return fmt.Errorf("update round_results: %w", err)
+	}
+	return nil
+}
+
+func loadDNTypeAndPONumber(tx *gorm.DB, dnID int64) (dnType string, poNumber string, err error) {
+	if !tableExists(tx, "delivery_notes") {
+		return "", "", apperror.UnprocessableEntity("delivery_notes table tidak ditemukan; apply migration 0018_create_delivery_note_up.sql and 0015_dn_feature_up.sql")
+	}
+	var row struct {
+		DnType   string `gorm:"column:type"`
+		PoNumber string `gorm:"column:po_number"`
+	}
+	if err := tx.Table("delivery_notes").Select("type, po_number").Where("id = ?", dnID).Limit(1).Scan(&row).Error; err != nil {
+		return "", "", fmt.Errorf("load delivery_notes: %w", err)
+	}
+	return row.DnType, row.PoNumber, nil
+}
+
+func updateDeliveryNoteTotalPOIncoming(tx *gorm.DB, dnID int64) error {
+	if dnID <= 0 {
+		return apperror.UnprocessableEntity("dn_id is required for incoming_qc")
+	}
+
+	var total int
+	if err := tx.Table("qc_tasks qt").
+		Select("COALESCE(SUM(qt.good_quantity), 0)").
+		Joins("JOIN delivery_note_items dni ON dni.id = qt.incoming_dn_item_id").
+		Where("dni.dn_id = ? AND qt.task_type = ? AND qt.status = ?", dnID, "incoming_qc", "approved").
+		Scan(&total).Error; err != nil {
+		return fmt.Errorf("calculate total po incoming delivery_note: %w", err)
+	}
+
+	result := tx.Table("delivery_notes").
+		Where("id = ?", dnID).
+		Updates(map[string]interface{}{
+			"total_po_incoming": total,
+			"updated_at":        time.Now(),
+		})
+	if result.Error != nil {
+		return fmt.Errorf("update total po incoming delivery_note: %w", result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return apperror.NotFound("delivery_note tidak ditemukan")
+	}
+
+	return nil
+}
+
+func normalizeActor(actor string) string {
+	actor = strings.TrimSpace(actor)
+	if actor == "" {
+		return "system"
+	}
+	return actor
+}

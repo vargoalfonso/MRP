@@ -32,7 +32,7 @@ func (h *HTTPHandler) GetACMs(appCtx *app.Context) *app.CostumeResponse {
 	return &app.CostumeResponse{
 		RequestID: appCtx.APIReqID,
 		Status:    http.StatusOK,
-		Message:   http.StatusText(http.StatusOK),
+		Message:   "Berhasil mengambil data user",
 		Data:      data,
 	}
 }
@@ -44,7 +44,7 @@ func (h *HTTPHandler) CreateACM(appCtx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusBadRequest,
-			Message:   "invalid request body",
+			Message:   "Body request tidak valid",
 		}
 	}
 
@@ -52,17 +52,17 @@ func (h *HTTPHandler) CreateACM(appCtx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusUnprocessableEntity,
-			Message:   "validation failed",
+			Message:   "Validasi gagal",
 			Data:      map[string]interface{}{"errors": errs},
 		}
 	}
 
 	data, err := h.service.Create(appCtx.Request.Context(), req)
 	if err != nil {
-		msg := "Error" + err.Error()
+		msg := "Terjadi kesalahan: " + err.Error()
 
 		if strings.Contains(err.Error(), "username") {
-			msg = "username sudah digunakan"
+			msg = "Username sudah digunakan"
 		}
 
 		return &app.CostumeResponse{
@@ -76,7 +76,7 @@ func (h *HTTPHandler) CreateACM(appCtx *app.Context) *app.CostumeResponse {
 	return &app.CostumeResponse{
 		RequestID: appCtx.APIReqID,
 		Status:    http.StatusCreated,
-		Message:   "User created successfully",
+		Message:   "User berhasil dibuat",
 		Data:      data,
 	}
 }
@@ -89,7 +89,7 @@ func (h *HTTPHandler) GetACMByID(appCtx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusBadRequest,
-			Message:   "invalid id",
+			Message:   "ID tidak valid",
 		}
 	}
 
@@ -98,14 +98,14 @@ func (h *HTTPHandler) GetACMByID(appCtx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusNotFound,
-			Message:   "Not Found. User does not exist",
+			Message:   "User tidak ditemukan",
 		}
 	}
 
 	return &app.CostumeResponse{
 		RequestID: appCtx.APIReqID,
 		Status:    http.StatusOK,
-		Message:   http.StatusText(http.StatusOK),
+		Message:   "Berhasil mengambil detail user",
 		Data:      data,
 	}
 }
@@ -118,7 +118,7 @@ func (h *HTTPHandler) UpdateACM(appCtx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusBadRequest,
-			Message:   "invalid id",
+			Message:   "ID tidak valid",
 		}
 	}
 
@@ -127,7 +127,7 @@ func (h *HTTPHandler) UpdateACM(appCtx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusNotFound,
-			Message:   "Not Found. User does not exist",
+			Message:   "User tidak ditemukan",
 		}
 	}
 
@@ -136,7 +136,7 @@ func (h *HTTPHandler) UpdateACM(appCtx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusBadRequest,
-			Message:   "invalid request body",
+			Message:   "Body request tidak valid",
 		}
 	}
 
@@ -144,7 +144,7 @@ func (h *HTTPHandler) UpdateACM(appCtx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusUnprocessableEntity,
-			Message:   "validation failed",
+			Message:   "Validasi gagal",
 			Data:      map[string]interface{}{"errors": errs},
 		}
 	}
@@ -157,7 +157,7 @@ func (h *HTTPHandler) UpdateACM(appCtx *app.Context) *app.CostumeResponse {
 	return &app.CostumeResponse{
 		RequestID: appCtx.APIReqID,
 		Status:    http.StatusOK,
-		Message:   "User updated successfully",
+		Message:   "User berhasil diperbarui",
 		Data:      data,
 	}
 }
@@ -170,7 +170,7 @@ func (h *HTTPHandler) DeleteACM(appCtx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusBadRequest,
-			Message:   "invalid id",
+			Message:   "ID tidak valid",
 		}
 	}
 
@@ -179,7 +179,7 @@ func (h *HTTPHandler) DeleteACM(appCtx *app.Context) *app.CostumeResponse {
 		return &app.CostumeResponse{
 			RequestID: appCtx.APIReqID,
 			Status:    http.StatusNotFound,
-			Message:   "Not Found. User does not exist",
+			Message:   "User tidak ditemukan",
 		}
 	}
 
@@ -191,6 +191,6 @@ func (h *HTTPHandler) DeleteACM(appCtx *app.Context) *app.CostumeResponse {
 	return &app.CostumeResponse{
 		RequestID: appCtx.APIReqID,
 		Status:    http.StatusOK,
-		Message:   "User deleted successfully",
+		Message:   "User berhasil dihapus",
 	}
 }
