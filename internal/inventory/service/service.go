@@ -94,20 +94,22 @@ type IService interface {
 
 type service struct {
 	repo repository.IRepository
-	// plans opsional: sumber nilai safety stock untuk calculation_type "forecast".
+	// plans opsional: sumber nilai safety stock dan stockdays untuk calculation_type "forecast".
 	plans InventoryPlanProvider
 }
 
-// InventoryPlanProvider membaca hasil scheduler forecasting (GET /inventory-plan).
+// InventoryPlanProvider membaca hasil scheduler forecasting:
+// GET /inventory-plan (safety stock) dan GET /inventory-plan/stockdays.
 // *forecastingclient.Client memenuhi interface ini.
 type InventoryPlanProvider interface {
 	GetInventoryPlan(ctx context.Context, opts forecastingclient.GetInventoryPlanOptions) ([]forecastingclient.InventoryPlanItem, error)
+	GetInventoryStockdays(ctx context.Context, opts forecastingclient.GetInventoryPlanOptions) ([]forecastingclient.InventoryStockdaysItem, error)
 }
 
 func New(repo repository.IRepository) IService { return &service{repo: repo} }
 
-// NewWithForecast sama seperti New, tetapi safety stock bertipe "forecast"
-// memakai hasil scheduler dari API forecasting.
+// NewWithForecast sama seperti New, tetapi safety stock dan stockdays bertipe
+// "forecast" memakai hasil scheduler dari API forecasting.
 func NewWithForecast(repo repository.IRepository, plans InventoryPlanProvider) IService {
 	return &service{repo: repo, plans: plans}
 }
@@ -949,8 +951,10 @@ const (
 )
 
 // forecastSafetyStock mengambil safety_stock_qty dari plan forecasting terbaru
-// untuk (inventoryType, uniqCode). Bila tidak tersedia, mengembalikan warning
-// (safety stock jatuh ke 0 seperti perilaku sebelumnya).
+// untuk (inventoryType, uniqCode). Nilainya = forecast harian tanpa Constanta
+// (untuk RM/IRM sudah diakumulasi dari semua FG yang memakainya di BOM).
+// Bila tidak tersedia, mengembalikan warning (safety stock jatuh ke 0 seperti
+// perilaku sebelumnya, dan rumus threshold lama tetap dipakai).
 func (s *service) forecastSafetyStock(ctx context.Context, inventoryType, uniqCode string) (float64, string) {
 	const prefix = "safety_stock calc_type 'forecast': "
 	if s.plans == nil {
@@ -977,6 +981,37 @@ func (s *service) forecastSafetyStock(ctx context.Context, inventoryType, uniqCo
 		return *it.SafetyStockQty, ""
 	}
 	return 0, prefix + "no inventory plan row for this uniq; safety_stock_qty defaulted to 0"
+}
+
+// forecastDailyUsage mengambil daily_usage dari GET /inventory-plan/stockdays
+// untuk (inventoryType, uniqCode). Bila tidak tersedia, mengembalikan warning
+// dan pemanggil jatuh ke base daily usage (PRL + PO customer).
+func (s *service) forecastDailyUsage(ctx context.Context, inventoryType, uniqCode string) (float64, string) {
+	const prefix = "stockdays calc_type 'forecast': "
+	if s.plans == nil {
+		return 0, prefix + "forecasting client not configured; effective_daily_usage defaulted to base_daily_usage"
+	}
+	items, err := s.plans.GetInventoryStockdays(ctx, forecastingclient.GetInventoryPlanOptions{
+		UniqCodes:     []string{uniqCode},
+		InventoryType: inventoryType,
+	})
+	if err != nil {
+		log.Printf("[inventory] forecast stockdays %s: %v", uniqCode, err)
+		return 0, prefix + "forecasting API unavailable; effective_daily_usage defaulted to base_daily_usage"
+	}
+	for _, it := range items {
+		if !strings.EqualFold(strings.TrimSpace(it.UniqCode), strings.TrimSpace(uniqCode)) {
+			continue
+		}
+		if it.Note != nil && strings.TrimSpace(*it.Note) != "" {
+			return 0, prefix + strings.TrimSpace(*it.Note) + "; effective_daily_usage defaulted to base_daily_usage"
+		}
+		if it.DailyUsage == nil {
+			return 0, prefix + "no daily_usage in inventory plan; effective_daily_usage defaulted to base_daily_usage"
+		}
+		return *it.DailyUsage, ""
+	}
+	return 0, prefix + "no inventory plan row for this uniq; effective_daily_usage defaulted to base_daily_usage"
 }
 
 func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invModels.KanbanSummary, error) {
@@ -1091,7 +1126,14 @@ func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invMo
 		effectiveDailyUsage = baseDailyUsage * sdConstanta
 	case "percentage":
 		effectiveDailyUsage = baseDailyUsage * (sdConstanta / 100)
-	case "forecast", "machine_pattern":
+	case "forecast":
+		// daily_usage dari scheduler forecasting (kebutuhan RM/IRM diakumulasi dari BOM).
+		if usage, warn := s.forecastDailyUsage(ctx, inventoryType, uniqCode); warn != "" {
+			warnings = append(warnings, warn)
+		} else {
+			effectiveDailyUsage = usage
+		}
+	case "machine_pattern":
 		warnings = append(warnings, "stockdays calc_type '"+sdCalcType+"' not yet implemented; effective_daily_usage defaulted to base_daily_usage")
 	}
 
@@ -1108,6 +1150,9 @@ func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invMo
 	safetyStockQty := 0.0
 	var ssCalcType string
 	var ssConstanta float64
+	// true bila nilai safety stock forecast berhasil diambil: threshold dan buy/not buy
+	// lalu memakai aturan forecast (tanpa cycle, 10 bila SS <= 0, stock < threshold).
+	forecastRule := false
 
 	if fromSnapshot && snapshotSSCalcType != nil {
 		ssCalcType = normalizeCalcType(*snapshotSSCalcType)
@@ -1130,6 +1175,7 @@ func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invMo
 			warnings = append(warnings, warn)
 		} else {
 			safetyStockQty = qty
+			forecastRule = true
 		}
 	case "machine_pattern":
 		warnings = append(warnings, "safety_stock calc_type '"+ssCalcType+"' not yet implemented; safety_stock_qty defaulted to 0")
@@ -1142,21 +1188,23 @@ func (s *service) GetKanbanSummary(ctx context.Context, uniqCode string) (*invMo
 	}
 
 	// 10. Threshold = safety_stock_qty × cycle_pengiriman.
-	threshold := safetyStockQty * float64(cyclePengiriman)
+	// Safety stock "forecast": threshold = safety stock (10 bila <= 0), cycle tidak dipakai.
+	threshold := thresholdFor(forecastRule, safetyStockQty, cyclePengiriman)
 
-	// 11. Status.
-	status := "normal"
-	if safetyStockQty > 0 && stockQty < safetyStockQty {
-		status = "low_on_stock"
-	} else if safetyStockQty > 0 && stockQty > safetyStockQty*kanbanHighRatio {
-		status = "overstock"
+	// 11. Status. Forecast memakai threshold sebagai dasar (fallback 10, sama dengan
+	// recalculateRMStatus); tipe lain memakai safety stock apa adanya.
+	statusBase := safetyStockQty
+	if forecastRule {
+		statusBase = threshold
 	}
+	status := stockStatus(stockQty, statusBase, kanbanHighRatio)
 
-	// 12. Buy / Not Buy: SSP items are always n/a; others use threshold rule.
+	// 12. Buy / Not Buy: SSP items are always n/a; others use threshold rule
+	// (forecast: stock < threshold, lainnya: stock <= threshold).
 	buyNotBuy := "not_buy"
 	if rm.RawMaterialType == "ssp" {
 		buyNotBuy = "n/a"
-	} else if stockQty <= threshold {
+	} else if shouldBuy(forecastRule, stockQty, threshold) {
 		buyNotBuy = "buy"
 	}
 

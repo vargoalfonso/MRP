@@ -211,7 +211,8 @@ func (h *HTTPHandler) ListDatasets(c *app.Context) *app.CostumeResponse {
 // ---------------------------------------------------------------------------
 
 // GetInventoryPlan mengembalikan hasil scheduler harian safety stock / buy-not-buy
-// dari API forecasting.
+// dari API forecasting. Hanya berisi uniq yang parameter safety stock-nya
+// "forecast"; hasil stockdays ada di GetInventoryStockdays.
 //
 //	GET /api/v1/forecasting/inventory-plan?uniq_code=R11&uniq_code=R12&inventory_type=raw_material&plan_date=2026-11-09
 func (h *HTTPHandler) GetInventoryPlan(c *app.Context) *app.CostumeResponse {
@@ -221,6 +222,23 @@ func (h *HTTPHandler) GetInventoryPlan(c *app.Context) *app.CostumeResponse {
 		PlanDate:      c.Query("plan_date"),
 	}
 	resp, err := h.svc.GetInventoryPlan(c.Request.Context(), opts)
+	if err != nil {
+		return app.NewError(c, err)
+	}
+	return app.NewSuccess(c, http.StatusOK, resp)
+}
+
+// GetInventoryStockdays mengembalikan hasil scheduler harian stockdays (RM / IRM
+// yang parameter stockdays-nya "forecast") dari API forecasting.
+//
+//	GET /api/v1/forecasting/inventory-plan/stockdays?uniq_code=BR50&inventory_type=raw_material&plan_date=2026-11-19
+func (h *HTTPHandler) GetInventoryStockdays(c *app.Context) *app.CostumeResponse {
+	opts := forecastingclient.GetInventoryPlanOptions{
+		UniqCodes:     c.QueryArray("uniq_code"),
+		InventoryType: c.Query("inventory_type"),
+		PlanDate:      c.Query("plan_date"),
+	}
+	resp, err := h.svc.GetInventoryStockdays(c.Request.Context(), opts)
 	if err != nil {
 		return app.NewError(c, err)
 	}

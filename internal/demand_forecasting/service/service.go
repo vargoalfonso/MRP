@@ -32,6 +32,7 @@ type Service interface {
 	ListDatasets(ctx context.Context, name string, limit int) ([]forecastingclient.DatasetListItem, error)
 	ListModelVersions(ctx context.Context, opts forecastingclient.ListModelVersionsOptions) ([]forecastingclient.ModelVersionItem, error)
 	GetInventoryPlan(ctx context.Context, opts forecastingclient.GetInventoryPlanOptions) ([]forecastingclient.InventoryPlanItem, error)
+	GetInventoryStockdays(ctx context.Context, opts forecastingclient.GetInventoryPlanOptions) ([]forecastingclient.InventoryStockdaysItem, error)
 
 	// Training schedule (Automation)
 	ListSchedules(ctx context.Context) ([]models.ForecastingSchedule, error)
@@ -387,6 +388,10 @@ func (s *service) ListDatasets(ctx context.Context, name string, limit int) ([]f
 
 func (s *service) GetInventoryPlan(ctx context.Context, opts forecastingclient.GetInventoryPlanOptions) ([]forecastingclient.InventoryPlanItem, error) {
 	return s.client.GetInventoryPlan(ctx, opts)
+}
+
+func (s *service) GetInventoryStockdays(ctx context.Context, opts forecastingclient.GetInventoryPlanOptions) ([]forecastingclient.InventoryStockdaysItem, error) {
+	return s.client.GetInventoryStockdays(ctx, opts)
 }
 
 func (s *service) ListModelVersions(ctx context.Context, opts forecastingclient.ListModelVersionsOptions) ([]forecastingclient.ModelVersionItem, error) {

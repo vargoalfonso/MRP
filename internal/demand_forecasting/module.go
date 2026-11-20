@@ -96,6 +96,9 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		g.GET("/inventory-plan",
 			roleMiddleware.RequirePermission(m.roleService, "forecasting", "view"),
 			m.base.RunAction(m.handler.GetInventoryPlan))
+		g.GET("/inventory-plan/stockdays",
+			roleMiddleware.RequirePermission(m.roleService, "forecasting", "view"),
+			m.base.RunAction(m.handler.GetInventoryStockdays))
 		g.GET("/deployments",
 			roleMiddleware.RequirePermission(m.roleService, "forecasting", "view"),
 			m.base.RunAction(m.handler.ListDeployments))
