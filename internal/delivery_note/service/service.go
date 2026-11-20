@@ -23,6 +23,7 @@ import (
 
 type IDeliveryNoteService interface {
 	Create(ctx context.Context, req models.CreateDNRequest) (*models.DeliveryNote, error)
+	Update(ctx context.Context, id int64, req models.UpdateDNRequest) (*models.DeliveryNote, error)
 	GetAll(ctx context.Context, page, limit int) ([]models.DeliveryNote, models.Pagination, error)
 	GetByID(ctx context.Context, id int64) (*models.DeliveryNote, error)
 	Scan(ctx context.Context, req models.QRPayload) (string, error)
