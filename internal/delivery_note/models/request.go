@@ -15,6 +15,28 @@ type CreateDNRequest struct {
 	Items []CreateDNItemRequest `json:"items" validate:"required,dive"`
 }
 
+// UpdateDNRequest is the PUT /delivery-notes/:id body.
+//
+// Only a DN that has not been processed yet can be edited, and only these fields:
+// the header (wo_number, delivery_to, delivery_total) and, per EXISTING item, qty and
+// incoming_date. PO, type, period, supplier and the set of items (so packing numbers
+// and QR codes that may already be printed) never change. Omitted header fields keep
+// their value.
+type UpdateDNRequest struct {
+	WONumber      *string `json:"wo_number"`
+	DeliveryTo    *int64  `json:"delivery_to"`
+	DeliveryTotal *int64  `json:"delivery_total"`
+
+	Items []UpdateDNItemRequest `json:"items" validate:"dive"`
+}
+
+type UpdateDNItemRequest struct {
+	ID  int64 `json:"id" validate:"required"`
+	Qty int64 `json:"qty" validate:"required"`
+	// IncomingDate uses the same dd/MM/yyyy format as create; empty keeps the current date.
+	IncomingDate string `json:"incoming_date"`
+}
+
 type CreateDNItemRequest struct {
 	ItemUniqCode string `json:"item_uniq_code" validate:"required"`
 	Qty          int64  `json:"qty" validate:"required"`

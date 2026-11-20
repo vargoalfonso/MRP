@@ -60,6 +60,7 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		deliveryNotePrivate.POST("", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "create"), m.base.RunAction(m.handler.CreateDeliveryNote))
 		deliveryNotePrivate.GET("/preview", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.PreviewDN))
 		deliveryNotePrivate.GET("/:id", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.GetDeliveryNoteByID))
+		deliveryNotePrivate.PUT("/:id", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "update"), m.base.RunAction(m.handler.UpdateDeliveryNote))
 		deliveryNotePrivate.GET("/:id/history", roleMiddleware.RequirePermission(m.roleService, "delivery_note", "view"), m.base.RunAction(m.handler.GetDeliveryNoteHistory))
 		deliveryNotePrivate.GET("/uniq/:uniq", m.base.RunAction(m.handler.GetDNPackingList))
 	}
