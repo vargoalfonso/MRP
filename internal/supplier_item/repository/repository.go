@@ -45,6 +45,8 @@ type IRepository interface {
 	CreateMany(ctx context.Context, items []*models.SupplierItem) error
 	ResolveMasterGradesByName(ctx context.Context, nameKeys []string) (map[string]string, error)
 	SupplierHasLegacyMaterialRow(ctx context.Context, supplierUUID, itemType, materialCode string) (bool, error)
+	ListBomUsage(ctx context.Context, uniqCodes []string) ([]models.BomUsageRow, error)
+	ListBomMaterialGrades(ctx context.Context, typeMaterials []string, search string) ([]models.BomMaterialGrade, error)
 }
 
 type repository struct {

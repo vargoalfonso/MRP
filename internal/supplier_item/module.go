@@ -31,6 +31,8 @@ func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
 		group.POST("", m.base.RunAction(m.handler.Create))
 		group.POST("/bulk-by-material-code", m.base.RunAction(m.handler.CreateByMaterialCode))
 		group.GET("/by-material-code", m.base.RunAction(m.handler.PreviewByMaterialCode))
+		group.GET("/bom-usage", m.base.RunAction(m.handler.BomUsage))
+		group.GET("/bom-material-grades", m.base.RunAction(m.handler.BomMaterialGrades))
 		group.GET("", m.base.RunAction(m.handler.List))
 		group.GET("/:id", m.base.RunAction(m.handler.GetByID))
 		group.PUT("/:id", m.base.RunAction(m.handler.Update))
