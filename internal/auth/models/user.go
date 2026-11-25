@@ -15,13 +15,13 @@ import (
 // OAuth columns (provider, provider_id, avatar_url) are nullable so local
 // accounts work without OAuth. For OAuth-only accounts, leave password empty.
 type User struct {
-	ID         int64          `gorm:"primaryKey;autoIncrement"                    json:"-"`
-	UUID       string         `gorm:"uniqueIndex;not null;default:uuid_generate_v4()" json:"id"`
-	Username   string         `gorm:"uniqueIndex;not null"                        json:"username"`
-	Email      string         `gorm:"uniqueIndex;not null"                        json:"email"`
-	Password   string         `gorm:"default:''"                                  json:"-"`
-	Roles      string         `gorm:"default:'user'"                              json:"roles"`
-	EmployeeID *string        `gorm:"index;default:null"                          json:"employee_id,omitempty"`
+	ID         int64   `gorm:"primaryKey;autoIncrement"                    json:"-"`
+	UUID       string  `gorm:"uniqueIndex;not null;default:uuid_generate_v4()" json:"id"`
+	Username   string  `gorm:"uniqueIndex;not null"                        json:"username"`
+	Email      string  `gorm:"uniqueIndex;not null"                        json:"email"`
+	Password   string  `gorm:"default:''"                                  json:"-"`
+	Roles      string  `gorm:"default:'user'"                              json:"roles"`
+	EmployeeID *string `gorm:"index;default:null"                          json:"employee_id,omitempty"`
 
 	// OAuth / SSO support
 	Provider   string  `gorm:"not null;default:'local'"    json:"provider"`

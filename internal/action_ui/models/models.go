@@ -1,0 +1,398 @@
+package models
+
+import (
+	"time"
+
+	"gorm.io/datatypes"
+)
+
+type WorkOrder struct {
+	ID             int64
+	UUID           string
+	WONumber       string
+	WOType         string
+	ReferenceWO    string
+	Status         string
+	ApprovalStatus string
+	CreatedDate    time.Time
+	TargetDate     time.Time
+	ScanStartDate  *time.Time
+	CloseDate      *time.Time
+	OperatorName   string
+	Notes          string
+	QRImageBase64  string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	CreatedBy      string
+	CreatedByName  string
+	WOKind         string
+	SourceMaterial string
+	TargetMaterial string
+	Model          string
+	GradeSize      string
+	InputQty       float64
+	InputUOM       string
+	OutputQty      float64
+	OutputUOM      string
+	DateIssued     *time.Time
+	DateCompleted  *time.Time
+	CycleTimeDays  int
+	Remarks        string
+}
+
+type WorkOrderItem struct {
+	ID                 int64
+	UUID               string
+	WOID               int64
+	ItemUniqCode       string
+	PartName           string
+	PartNumber         string
+	UOM                string
+	Quantity           float64
+	ProcessName        string
+	KanbanNumber       string
+	Status             string
+	MachineID          int
+	ProcessFlowJSON    string
+	CurrentStepSeq     int
+	LastScannedProcess string
+	ScanInCount        int
+	ScanOutCount       int
+	TotalGoodQty       float64
+	TotalNGQty         float64
+	TotalScrapQty      float64
+	// [overflow-qc] kanban sumber (self-ref work_order_items.id) utk kanban kelebihan QC
+	OverflowSourceItemID *int64
+	// [overflow-topup] daftar sumber kelebihan yg mengisi kanban ini (bisa >1)
+	OverflowSources datatypes.JSON `gorm:"column:overflow_sources;type:jsonb" json:"overflow_sources"`
+	Model           string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type ProductionScanLog struct {
+	ID             int64
+	UUID           string
+	WOID           int64
+	WOItemID       int64
+	MachineID      int64
+	RawMaterialID  *int64
+	KanbanNumber   string
+	ProcessName    string
+	ProductionLine string
+	ScanType       string
+	QtyInput       float64
+	QtyOutput      float64
+	QtyRMUsed      float64
+	NGMachine      float64
+	NGProcess      float64
+	QtyScrap       float64
+	QtyRework      float64
+	Shift          string
+	DandoriTime    string
+	SetupQCTime    string
+	ScannedBy      string
+	ScannedAt      time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	Warehouse      string
+}
+
+type QCLog struct {
+	ID           int64
+	UUID         string
+	QCTaskID     *int64
+	WOID         *int64
+	WOItemID     *int64
+	DNItemID     *int64
+	UniqCode     string
+	QCRound      int
+	QtyChecked   float64
+	QtyPass      float64
+	QtyDefect    float64
+	QtyScrap     float64
+	Status       string
+	ProcessName  string
+	DefectSource string
+	// [qc-reason] jenis + detail issue dari round 1 / 2
+	IssueType string
+	IssueNote string
+	CheckedBy string
+	CheckedAt time.Time
+	CreatedAt time.Time
+}
+
+func (QCLog) TableName() string { return "qc_logs" }
+
+type QCDefectItem struct {
+	ID               int64
+	QCLogID          int64
+	QCTaskID         *int64
+	WOID             *int64
+	WOItemID         *int64
+	DNItemID         *int64
+	UniqCode         string
+	DefectSource     string
+	DefectReasonCode string
+	DefectReasonText string
+	QtyDefect        float64
+	QtyScrap         float64
+	// [qc-issue-table] qty eksplisit per baris issue/reason
+	Qty          float64
+	IsRepairable bool
+	MachineID    *string
+	ProcessName  string
+	ReportedBy   string
+	ReportedAt   time.Time
+}
+
+func (QCDefectItem) TableName() string { return "qc_defect_items" }
+
+type FinishedGoods struct {
+	ID                    int64
+	UUID                  string
+	UniqCode              string
+	ItemID                int64
+	PartNumber            string
+	PartName              string
+	Model                 string
+	WONumber              string
+	WarehouseLocation     string
+	StockQty              float64
+	UOM                   string
+	KanbanCount           int
+	KanbanStandardQty     float64
+	MinThreshold          float64
+	MaxThreshold          float64
+	SafetyStockQty        float64
+	StockToCompleteKanban float64
+	Status                string
+	CreatedBy             string
+	CreatedAt             time.Time
+	UpdatedBy             string
+	UpdatedAt             time.Time
+	DeletedAt             *time.Time
+}
+
+type ProcessFlow struct {
+	OpSeq int `json:"op_seq"`
+	// process_id / process_code hanya ada di snapshot WO baru; dipakai untuk
+	// mencari nama proses terkini (display_name).
+	ProcessID   int64   `json:"process_id,omitempty"`
+	ProcessCode string  `json:"process_code,omitempty"`
+	ProcessName string  `json:"process_name"`
+	MachineName *string `json:"machine_name"`
+	// [assembly-stock] proses assembly (process_parameters.is_assembly): di Scan Out
+	// proses ini stok komponen WO Assembly dikurangi.
+	IsAssembly bool `json:"is_assembly,omitempty"`
+	// Routing menyimpan nilai desimal (mis. 12.5). Dengan tipe int, json.Unmarshal
+	// gagal sehingga Poka Yoke jatuh ke fallback 1 proses saja.
+	CycleTimeSec *float64 `json:"cycle_time_sec"`
+	SetupTimeMin *float64 `json:"setup_time_min"`
+}
+
+type RawMaterialLog struct {
+	ID       int64  `gorm:"primaryKey;autoIncrement;column:id"`
+	UUID     string `gorm:"column:uuid"`
+	WOID     int64  `gorm:"column:wo_id"`
+	WOItemID int64  `gorm:"column:wo_item_id"`
+	UniqCode string `gorm:"column:uniq_code"`
+	RMUUID   string `gorm:"column:rm_uuid"`
+
+	PartNumber string  `gorm:"column:part_number"`
+	PartName   string  `gorm:"column:part_name"`
+	UOM        string  `gorm:"column:uom"`
+	QtyUsed    float64 `gorm:"column:qty_used"`
+
+	// [proc-scope] Step/proses pemilik log ini. Satu WO item dipakai untuk
+	// SEMUA proses, jadi tanpa kolom ini log RM proses 1 ikut terbaca di
+	// proses 2 (daftar material & Step 2 jadi salah).
+	ProcessName string `gorm:"column:process_name;size:100;index"`
+	StepSeq     int    `gorm:"column:step_seq;index"`
+
+	ScannedBy string    `gorm:"column:scanned_by"`
+	ScannedAt time.Time `gorm:"column:scanned_at"`
+	CreatedAt time.Time `gorm:"column:created_at"`
+
+	Packings string `gorm:"column:packings;type:text"`
+}
+
+func (RawMaterialLog) TableName() string { return "raw_material_logs" }
+
+type MasterMachine struct {
+	ID              int `gorm:"primaryKey;autoIncrement"`
+	MachineNumber   string
+	MachineName     string
+	ProductionLine  string
+	ProcessID       *int64
+	MachineCapacity *int
+	QRImageBase64   *string `gorm:"column:qr_image_base64;type:text"`
+	Status          string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type DeliveryNoteItem struct {
+	ID             int64      `json:"id" gorm:"primaryKey;column:id"`
+	DNID           int64      `json:"dn_id" gorm:"column:dn_id;index"`             //foreign key ke delivery note
+	ItemUniqCode   string     `json:"item_uniq_code" gorm:"column:item_uniq_code"` //request, diambil dari item_uniq_code di purchase order items bedasarkan po_id
+	Quantity       int64      `json:"quantity" gorm:"column:quantity"`             //request, diambil dari ordered_qty di purchase order items bedasarkan po_id dan item_uniq_code
+	UOM            string     `json:"uom" gorm:"column:uom"`                       //request, diambil dari uom di purchase order items bedasarkan po_id dan item_uniq_code
+	Weight         int64      `json:"weight" gorm:"column:weight"`                 //request, diambil dari weight di purchase order items bedasarkan po_id dan item_uniq_code
+	KanbanID       int64      `json:"kanban_id" gorm:"column:kanban_id"`           //request, diambil dari table kanban_parameter bedasarkan item_uniq_code
+	QR             string     `json:"qr" gorm:"column:qr"`                         //hasil generate qr code yang berisi dn_number dan item_uniq_code, format datanya dn_number-item_uniq_code
+	CreatedAt      time.Time  `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt      time.Time  `json:"updated_at" gorm:"column:updated_at"`
+	OrderQty       int64      `json:"order_qty" gorm:"column:order_qty"`             //request, diambil dari ordered_qty di purchase order items bedasarkan po_id dan item_uniq_code
+	DateIncoming   *time.Time `json:"date_incoming" gorm:"column:date_incoming"`     //request, diisi ketika barang diterima
+	QtyStated      int64      `json:"qty_stated" gorm:"column:qty_stated"`           //request, diisi ketika barang diterima, diambil dari quantity di delivery note item
+	QtyReceived    int64      `json:"qty_received" gorm:"column:qty_received"`       //request, diisi ketika barang diterima, diambil dari quantity yang diterima di lapangan, bisa lebih kecil atau lebih besar dari qty_stated
+	WeightReceived float64    `json:"weight_received" gorm:"column:weight_received"` //request, diisi ketika barang diterima, diambil dari weight yang diterima di lapangan, bisa lebih kecil atau lebih besar dari weight di delivery note item
+	QualityStatus  string     `json:"quality_status" gorm:"column:quality_status"`   //request, diisi ketika barang diterima, bisa bernilai "good" atau "damaged"
+	PcsPerKanban   int64      `json:"pcs_per_kanban" gorm:"column:pcs_per_kanban"`   //request, diambil dari pcs_per_kanban di purchase order items bedasarkan po_id dan item_uniq_code
+	ReceivedAt     *time.Time `json:"received_at" gorm:"column:received_at"`         //request, diisi ketika barang diterima, berisi tanggal dan jam ketika barang diterima
+	PackingNumber  string     `json:"packing_number" gorm:"column:packing_number"`   //request, diambil dari kanban number di kanban parameter bedasarkan item_uniq_code
+	Check          string     `json:"check" gorm:"check"`                            //field untuk menampung nilai check ketika menerima barang,
+	QtySent        int64      `json:"qty_sent" gorm:"qty_sent"`
+}
+
+type ProductionIssue struct {
+	ID             int64  `db:"id" json:"id"`
+	UUID           string `db:"uuid" json:"uuid"`
+	WOID           int64  `db:"wo_id" json:"wo_id"`
+	WOItemID       int64  `db:"wo_item_id" json:"wo_item_id"`
+	MachineID      int64  `db:"machine_id" json:"machine_id,omitempty"`
+	ProcessName    string `db:"process_name" json:"process_name"`
+	ProductionLine string `db:"production_line" json:"production_line"`
+	IssueType      string `db:"issue_type" json:"issue_type"`
+	// [rm-source] detail bebas untuk jenis issue "Lainnya"
+	IssueNote     string     `db:"issue_note" json:"issue_note"`
+	IssueDuration int64      `db:"issue_duration" json:"issue_duration"` // menit
+	QtyAffected   float64    `db:"qty_affected" json:"qty_affected"`
+	ReportedBy    string     `db:"reported_by" json:"reported_by"`
+	ReportedAt    time.Time  `db:"reported_at" json:"reported_at"`
+	CreatedAt     time.Time  `db:"created_at" json:"created_at"`
+	UpdatedAt     *time.Time `db:"updated_at,omitempty" json:"updated_at,omitempty"`
+	DeletedAt     *time.Time `db:"deleted_at,omitempty" json:"deleted_at,omitempty"`
+}
+
+type WIP struct {
+	ID        int64     `gorm:"primaryKey"`
+	WoID      int64     `gorm:"column:wo_id"`
+	Status    string    `gorm:"column:status"`
+	CreatedAt time.Time `gorm:"column:created_at"`
+	UpdatedAt time.Time `gorm:"column:updated_at"`
+}
+
+func (WIP) TableName() string {
+	return "wips"
+}
+
+type WIPItem struct {
+	ID int64 `gorm:"primaryKey"`
+
+	WipID int64 `gorm:"column:wip_id"`
+
+	// 🔥 dari work_order_items
+	Uniq string `gorm:"column:uniq"` // optional display
+
+	PackingNumber string `gorm:"column:packing_number"`
+	WipType       string `gorm:"column:wip_type"` // draft
+
+	// 🔥 dari process_flow_json
+	ProcessName string `gorm:"column:process_name"`
+	MachineName string `gorm:"column:machine_name"`
+	OpSeq       int    `gorm:"column:op_seq"`
+
+	// [wip-scope] Proses yang MENGHASILKAN stok ini. Dipakai supaya baris
+	// antrean (queue) tampil sebagai hasil proses sebelumnya, bukan seolah
+	// proses berikutnya sudah berjalan.
+	FromProcess string `gorm:"column:from_process;size:100"`
+
+	Seq int `gorm:"column:seq"`
+	// 🔥 dari work_order_items
+	UOM string `gorm:"column:uom"`
+
+	// 🔥 input user
+	Stock int `gorm:"column:stock"`
+
+	// tracking
+	QtyIn        int `gorm:"column:qty_in"`
+	QtyOut       int `gorm:"column:qty_out"`
+	QtyRemaining int `gorm:"column:qty_remaining"`
+
+	Status string `gorm:"column:status"` // queue, process, done
+
+	CreatedAt time.Time `gorm:"column:created_at"`
+	UpdatedAt time.Time `gorm:"column:updated_at"`
+}
+
+func (WIPItem) TableName() string {
+	return "wip_items"
+}
+
+type WIPLog struct {
+	ID int64 `gorm:"primaryKey"`
+
+	WipItemID int64  `gorm:"column:wip_item_id"`
+	Action    string `gorm:"column:action"`
+	Qty       int    `gorm:"column:qty"`
+
+	CreatedAt time.Time `gorm:"column:created_at"`
+}
+
+func (WIPLog) TableName() string {
+	return "wip_logs"
+}
+
+// =====================================
+// MODEL
+// =====================================
+type InventoryMovementLog struct {
+	ID int64 `gorm:"primaryKey"`
+
+	MovementCategory string `gorm:"column:movement_category"` // raw_material / indirect_raw_material / subcon / finished_goods
+	MovementType     string `gorm:"column:movement_type"`     // incoming / outgoing / adjustment / transfer
+
+	UniqCode string `gorm:"column:uniq_code"`
+
+	EntityID *int64 `gorm:"column:entity_id"`
+
+	QtyChange    float64  `gorm:"column:qty_change"`
+	WeightChange *float64 `gorm:"column:weight_change"`
+
+	SourceFlag  *string `gorm:"column:source_flag"` // QC_FINAL / DELIVERY / ADJUSTMENT / wo_scan
+	DNNumber    *string `gorm:"column:dn_number"`
+	ReferenceID *string `gorm:"column:reference_id"` // WO Number / DO Number / SO Number
+	Notes       *string `gorm:"column:notes"`
+
+	LoggedBy *string   `gorm:"column:logged_by"`
+	LoggedAt time.Time `gorm:"column:logged_at"`
+}
+
+func (InventoryMovementLog) TableName() string {
+	return "inventory_movement_logs"
+}
+
+// =====================================
+// RAW MATERIAL MASTER (tabel: raw_materials)
+// =====================================
+type RawMaterial struct {
+	ID                int64      `gorm:"column:id;primaryKey"`
+	UUID              string     `gorm:"column:uuid"`
+	UniqCode          string     `gorm:"column:uniq_code"`
+	PartNumber        string     `gorm:"column:part_number"`
+	PartName          string     `gorm:"column:part_name"`
+	ItemID            *int64     `gorm:"column:item_id"`
+	RawMaterialType   string     `gorm:"column:raw_material_type"` // sheet_plate | wire | ssp | others
+	RMSource          string     `gorm:"column:rm_source"`
+	WarehouseLocation string     `gorm:"column:warehouse_location"`
+	UOM               string     `gorm:"column:uom"`
+	StockQty          float64    `gorm:"column:stock_qty"`
+	StockWeightKg     *float64   `gorm:"column:stock_weight_kg"`
+	Status            string     `gorm:"column:status"`
+	UpdatedAt         time.Time  `gorm:"column:updated_at"`
+	DeletedAt         *time.Time `gorm:"column:deleted_at"`
+}
+
+func (RawMaterial) TableName() string { return "raw_materials" }

@@ -10,7 +10,7 @@ type CreateEmployeeRequest struct {
 	UnitCost     float64    `json:"unit_cost"`
 	JoinDate     *time.Time `json:"join_date"`
 	RoleID       int64      `json:"role_id" binding:"required"`
-	DepartmentID int64      `json:"department_id" binding:"required"`
+	DepartmentID *int64     `json:"department_id"`
 	ReportsToID  *int64     `json:"reports_to_id"`
 	Status       string     `json:"status" binding:"required,oneof=active inactive"`
 	Notes        string     `json:"notes"`

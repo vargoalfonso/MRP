@@ -18,21 +18,28 @@ type ProcessRouteInput struct {
 	CycleTimeSec  *float64       `json:"cycle_time_sec"`
 	SetupTimeMin  *float64       `json:"setup_time_min"`
 	MachineStroke *string        `json:"machine_stroke"`
+	Remark        *string        `json:"remark" validate:"omitempty,max=2000"`
 	ToolingRef    *string        `json:"tooling_ref" validate:"omitempty,max=500"`
 	Toolings      []ToolingInput `json:"toolings"`
 }
 
 type MaterialSpecInput struct {
-	MaterialGrade *string  `json:"material_grade"`
-	Form          *string  `json:"form" validate:"omitempty,oneof=Plate Coil Pipe Rod Wire Other"`
-	WidthMm       *float64 `json:"width_mm"`
-	DiameterMm    *float64 `json:"diameter_mm"`
-	ThicknessMm   *float64 `json:"thickness_mm"`
-	LengthMm      *float64 `json:"length_mm"`
-	WeightKg      *float64 `json:"weight_kg"`
-	SupplierID    *string  `json:"supplier_id" validate:"omitempty,uuid"`
-	CycleTimeSec  *float64 `json:"cycle_time_sec"`
-	SetupTimeMin  *float64 `json:"setup_time_min"`
+	RawMaterialMasterID *int64   `json:"raw_material_master_id"`
+	MaterialGrade       *string  `json:"material_grade"`
+	Grade               *string  `json:"grade"`
+	TypeMaterial        *string  `json:"type_material" validate:"omitempty,oneof=subcon raw indirect"` // "subcon" hanya diterima untuk kompatibilitas klien lama
+	IsSubcon            bool     `json:"is_subcon"`
+	Form                *string  `json:"form" validate:"omitempty,oneof=Plate Coil Pipe Rod Wire Other"`
+	WidthMm             *float64 `json:"width_mm"`
+	DiameterMm          *float64 `json:"diameter_mm"`
+	ThicknessMm         *float64 `json:"thickness_mm"`
+	LengthMm            *float64 `json:"length_mm"`
+	WeightKg            *float64 `json:"weight_kg"`
+	SupplierID          *string  `json:"supplier_id" validate:"omitempty,uuid"`
+	SupplierName        *string  `json:"supplier_name"`
+	CycleTimeSec        *float64 `json:"cycle_time_sec"`
+	SetupTimeMin        *float64 `json:"setup_time_min"`
+	CustomerCycle       *string  `json:"customer_cycle"`
 }
 
 // ChildInput — one child node, recursive up to level 4.
@@ -42,10 +49,11 @@ type ChildInput struct {
 	UniqCode   *string `json:"uniq_code"`
 	PartName   *string `json:"part_name"`
 	PartNumber *string `json:"part_number"`
-	UomID      *int64  `json:"uom_id"`
+	Model      *string `json:"model"`
+	Uom        *string `json:"uom"`
 
 	// BOM line
-	Level       int16    `json:"level" validate:"required,min=1,max=4"`
+	Level       int16    `json:"level" validate:"required,min=1,max=6"`
 	QtyPerUniq  float64  `json:"qty_per_uniq" validate:"required,gt=0"`
 	ScrapFactor *float64 `json:"scrap_factor"`
 	IsPhantom   *bool    `json:"is_phantom"`
@@ -65,7 +73,8 @@ type CreateBomRequest struct {
 	UniqCode    string  `json:"uniq_code" validate:"required,max=64"`
 	PartName    string  `json:"part_name" validate:"required,max=255"`
 	PartNumber  *string `json:"part_number"`
-	UomID       int64   `json:"uom_id" validate:"required"`
+	Model       *string `json:"model"`
+	Uom         string  `json:"uom" validate:"required,max=32"`
 	Status      string  `json:"status" validate:"omitempty,oneof=Active Inactive"`
 	Description *string `json:"description"`
 
@@ -82,16 +91,148 @@ type CreateBomRequest struct {
 	Children []ChildInput `json:"children"`
 }
 
+// UpdateBomRequest — body for PUT /api/v1/products/bom/:id
+// All fields are optional (partial update).
+// process_routes: if the key is present in JSON (even as empty array), all
+// existing routes are replaced. Pass null or omit the key to leave unchanged.
+type UpdateBomRequest struct {
+	PartName    *string `json:"part_name"  validate:"omitempty,max=255"`
+	PartNumber  *string `json:"part_number"`
+	Model       *string `json:"model"`
+	Status      *string `json:"status"     validate:"omitempty,oneof=Active Inactive"`
+	Description *string `json:"description"`
+	BomStatus   *string `json:"bom_status" validate:"omitempty,oneof=Draft Released Obsolete Rejected"`
+	PictureURL  *string `json:"picture_url"`
+
+	// Pointer-to-slice: nil = no change; non-nil (including empty) = replace all routes.
+	ProcessRoutes *[]ProcessRouteInput `json:"process_routes"`
+
+	// nil = no change; non-nil = upsert.
+	MaterialSpec *MaterialSpecInput `json:"material_spec"`
+}
+
+// UpdateBomChildRequest — body for PUT /api/v1/products/bom/:id/lines/:line_id
+// Edits a single child node (BomLine + its underlying Item).
+// All fields are optional (partial update).
+// process_routes: nil = no change; non-nil (even empty) = replace all routes for this child item.
+type UpdateBomChildRequest struct {
+	// BomLine fields
+	QtyPerUniq  *float64 `json:"qty_per_uniq"  validate:"omitempty,gt=0"`
+	ScrapFactor *float64 `json:"scrap_factor"`
+	IsPhantom   *bool    `json:"is_phantom"`
+
+	// Child item fields
+	PartName   *string `json:"part_name"   validate:"omitempty,max=255"`
+	PartNumber *string `json:"part_number"`
+	Status     *string `json:"status"      validate:"omitempty,oneof=Active Inactive"`
+
+	// Asset / routing / spec
+	PictureURL    *string              `json:"picture_url"`
+	ProcessRoutes *[]ProcessRouteInput `json:"process_routes"`
+	MaterialSpec  *MaterialSpecInput   `json:"material_spec"`
+}
+
+type CreateBomRevisionRequest struct {
+	SourceVersion *int    `json:"source_version"`
+	ChangeNote    *string `json:"change_note" validate:"omitempty,max=2000"`
+}
+
+type AddProcessRouteRequest struct {
+	LineID        *int64         `json:"line_id"`
+	OpSeq         int            `json:"op_seq" validate:"required,min=10"`
+	ProcessID     int64          `json:"process_id" validate:"required"`
+	MachineID     *int64         `json:"machine_id"`
+	CycleTimeSec  *float64       `json:"cycle_time_sec"`
+	SetupTimeMin  *float64       `json:"setup_time_min"`
+	MachineStroke *string        `json:"machine_stroke"`
+	ToolingRef    *string        `json:"tooling_ref" validate:"omitempty,max=500"`
+	Toolings      []ToolingInput `json:"toolings"`
+}
+
+type PatchProcessRouteRequest struct {
+	OpSeq         *int            `json:"op_seq" validate:"omitempty,min=10"`
+	ProcessID     *int64          `json:"process_id"`
+	MachineID     *int64          `json:"machine_id"`
+	CycleTimeSec  *float64        `json:"cycle_time_sec"`
+	SetupTimeMin  *float64        `json:"setup_time_min"`
+	MachineStroke *string         `json:"machine_stroke"`
+	ToolingRef    *string         `json:"tooling_ref" validate:"omitempty,max=500"`
+	Toolings      *[]ToolingInput `json:"toolings"`
+}
+
+type ReleaseBomRequest struct {
+	Notes *string `json:"notes" validate:"omitempty,max=2000"`
+}
+
 // ---------------------------------------------------------------------------
 // List / query params
 // ---------------------------------------------------------------------------
 
 type ListBomQuery struct {
-	UniqCode       string
-	Status         string
-	Search         string // searches uniq_code + part_name
-	Page           int    // default 1
-	Limit          int    // default 20, max 200
-	OrderBy        string
-	OrderDirection string
+	UniqCode            string
+	Status              string
+	Search              string // searches uniq_code + part_name
+	SupplierID          string // UUID — filter by material spec supplier
+	TypeMaterial        string // raw | indirect | subcon (subcon => item_material_specs.is_subcon = true)
+	ExcludeSupplierUUID string // exclude uniq_codes already inserted for this supplier
+	Page                int    // default 1
+	Limit               int    // default 20, max 200
+	OrderBy             string
+	OrderDirection      string
+}
+
+// ---------------------------------------------------------------------------
+// Approve / Reject BOM
+// POST /api/v1/products/bom/:id/approval
+// ---------------------------------------------------------------------------
+
+type ApproveBomRequest struct {
+	Action string  `json:"action" validate:"required,oneof=approve reject"`
+	Notes  *string `json:"notes"`
+}
+
+// ---------------------------------------------------------------------------
+// full clone-edit-submit
+// POST /api/v1/products/bom/:id/replace  (multipart: field "payload" = JSON, file "upload_<key>" per new asset)
+// ---------------------------------------------------------------------------
+
+// ReplaceBomChildInput represents one child node in the full BOM tree being submitted.
+// Children are flat in bom_lines but the payload may be nested; BE flattens during processing.
+type ReplaceBomChildInput struct {
+	UniqCode       string  `json:"uniq_code" validate:"required,max=64"`
+	ParentUniqCode string  `json:"parent_uniq_code" validate:"required,max=64"`
+	Level          int16   `json:"level" validate:"required,min=1,max=4"`
+	QtyPerUniq     float64 `json:"qty_per_uniq" validate:"required,gt=0"`
+	ScrapFactor    float64 `json:"scrap_factor"`
+	IsPhantom      bool    `json:"is_phantom"`
+	PartName       string  `json:"part_name" validate:"required,max=255"`
+	PartNumber     *string `json:"part_number"`
+	Model          *string `json:"model"`
+	Uom            string  `json:"uom" validate:"required,max=32"`
+	// AssetID non-nil → reuse existing asset row (file unchanged).
+	// Nil + UploadKey non-nil → new file was sent under multipart key "upload_<UploadKey>".
+	// Both nil → no asset change (keep whatever is on the item).
+	AssetID       *int64                 `json:"asset_id"`
+	UploadKey     *string                `json:"upload_key"`
+	MaterialSpec  *MaterialSpecInput     `json:"material_spec"`
+	ProcessRoutes []ProcessRouteInput    `json:"process_routes"`
+	Children      []ReplaceBomChildInput `json:"children"`
+}
+
+// ReplaceBomRequest is the JSON payload in the "payload" multipart field.
+type ReplaceBomRequest struct {
+	ChangeNote  *string `json:"change_note" validate:"omitempty,max=2000"`
+	PartName    string  `json:"part_name" validate:"required,max=255"`
+	PartNumber  *string `json:"part_number"`
+	Model       *string `json:"model"`
+	Uom         string  `json:"uom" validate:"required,max=32"`
+	Status      string  `json:"status" validate:"omitempty,oneof=Active Inactive Draft"`
+	Description *string `json:"description"`
+	// QtyPerUniq: QPU parent (opsional). nil = pertahankan nilai BOM lama.
+	QtyPerUniq    *float64               `json:"qty_per_uniq" validate:"omitempty,gt=0"`
+	AssetID       *int64                 `json:"asset_id"`
+	UploadKey     *string                `json:"upload_key"`
+	MaterialSpec  *MaterialSpecInput     `json:"material_spec"`
+	ProcessRoutes []ProcessRouteInput    `json:"process_routes"`
+	Children      []ReplaceBomChildInput `json:"children"`
 }

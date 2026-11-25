@@ -1,0 +1,909 @@
+// Package service provides business logic for the Finished Goods module.
+package service
+
+import (
+	"context"
+	"errors"
+	"math"
+	"strings"
+	"time"
+
+	fgModels "github.com/ganasa18/go-template/internal/finished_goods/models"
+	"github.com/ganasa18/go-template/internal/finished_goods/repository"
+	"github.com/ganasa18/go-template/pkg/apperror"
+	"gorm.io/gorm"
+)
+
+// ---------------------------------------------------------------------------
+// Interface
+// ---------------------------------------------------------------------------
+
+type IService interface {
+	// Dashboard summary (4 cards)
+	GetSummary(ctx context.Context) (*fgModels.FGSummary, error)
+
+	// Status Monitoring tab
+	GetStatusMonitoring(ctx context.Context, f repository.StatusMonitoringFilter) (*fgModels.FGStatusMonitoringResponse, error)
+
+	// FG Inventory tab
+	ListFinishedGoods(ctx context.Context, f repository.FinishedGoodsFilter) (*fgModels.FinishedGoodsListResponse, error)
+	GetParameterizedSummary(ctx context.Context, uniqCode string) (*fgModels.FGParameterizedSummary, error)
+	ListCreateUniqOptions(ctx context.Context, q string, limit int) (*fgModels.FGCreateUniqOptionsResponse, error)
+	GetFinishedGoodsByID(ctx context.Context, id int64) (*fgModels.FinishedGoodsItem, error)
+	CreateFinishedGoods(ctx context.Context, req fgModels.CreateFinishedGoodsRequest, createdBy string) (*fgModels.FinishedGoodsItem, error)
+	BulkCreateFinishedGoods(ctx context.Context, req fgModels.BulkCreateFinishedGoodsRequest, createdBy string) (*fgModels.FGBulkCreateResponse, error)
+	UpdateFinishedGoods(ctx context.Context, id int64, req fgModels.UpdateFinishedGoodsRequest, updatedBy string) (*fgModels.FinishedGoodsItem, error)
+
+	// History Logs tab (In-Out Activity Log)
+	GetHistory(ctx context.Context, uniqCode string, page, limit int) (*fgModels.FGHistoryResponse, error)
+
+	// Packing List (FG detail modal). Rows are resolved from the work order
+	// barcode (work_order_items.kanban_number) and the delivery note that
+	// consumes the same packing number.
+	GetPackingList(ctx context.Context, uniqCode string) (*fgModels.FGPackingListResponse, error)
+
+	// GenerateQR builds the QR for a finished good. The QR carries the kanban
+	// list / packing list resolved from the work order (1 uniq = 1 QR).
+	GenerateQR(ctx context.Context, uniqCode string) (*string, error)
+}
+
+// ---------------------------------------------------------------------------
+// Implementation
+// ---------------------------------------------------------------------------
+
+type service struct {
+	repo repository.IRepository
+	db   *gorm.DB
+}
+
+func New(repo repository.IRepository, db *gorm.DB) IService {
+	return &service{repo: repo, db: db}
+}
+
+// movementReasonLabel maps a raw movement_type to a human-friendly reason
+// shown in the In-Out Activity Log.
+func movementReasonLabel(movementType string) string {
+	switch movementType {
+	case "incoming_production":
+		return "Incoming Production"
+	// [fg-history] pergerakan dari action-ui (Production & QC Process)
+	case "production_usage":
+		return "Used in Production (Assembly)"
+	case "qc_final":
+		return "QC Final (Pass)"
+	case "qc_ng_rework":
+		return "QC NG → Rework"
+	case "qc_scrap":
+		return "QC Scrap"
+	case "qc_adjustment":
+		return "QC Adjustment"
+	case "outgoing":
+		return "Outgoing"
+	case "delivery_scan":
+		return "Delivery Notes"
+	case "manual_add":
+		return "Manual Add"
+	case "manual_deduct":
+		return "Manual Deduct"
+	case "stock_opname":
+		return "Stock Opname"
+	case "wo_complete":
+		return "WO Complete"
+	case "delete":
+		return "Delete"
+	default:
+		cleaned := strings.ReplaceAll(movementType, "_", " ")
+		if cleaned == "" {
+			return "-"
+		}
+		return strings.ToUpper(cleaned[:1]) + cleaned[1:]
+	}
+}
+
+// GetHistory returns the In-Out Activity Log for one uniq_code, newest first.
+func (s *service) GetHistory(ctx context.Context, uniqCode string, page, limit int) (*fgModels.FGHistoryResponse, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if page <= 0 {
+		page = 1
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	offset := (page - 1) * limit
+
+	rows, total, err := s.repo.ListMovementLogs(ctx, uniqCode, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]fgModels.FGMovementLogItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, fgModels.FGMovementLogItem{
+			ID:           row.ID,
+			UniqCode:     row.UniqCode,
+			MovementType: row.MovementType,
+			Reason:       movementReasonLabel(row.MovementType),
+			QtyChange:    row.QtyChange,
+			QtyBefore:    row.QtyBefore,
+			QtyAfter:     row.QtyAfter,
+			WONumber:     row.WONumber,
+			DNNumber:     row.DNNumber,
+			ReferenceID:  row.ReferenceID,
+			Notes:        row.Notes,
+			LoggedBy:     row.LoggedBy,
+			LoggedAt:     row.LoggedAt,
+		})
+	}
+
+	totalPages := 1
+	if limit > 0 {
+		totalPages = int((total + int64(limit) - 1) / int64(limit))
+		if totalPages < 1 {
+			totalPages = 1
+		}
+	}
+
+	return &fgModels.FGHistoryResponse{
+		UniqCode: uniqCode,
+		Items:    items,
+		Pagination: fgModels.FGPagination{
+			Total:      total,
+			Page:       page,
+			Limit:      limit,
+			TotalPages: totalPages,
+		},
+	}, nil
+}
+
+// GenerateQR returns the QR for a finished good, taken directly from the QR that
+// the work order already generated and stored per item
+// (work_order_items.qr_image_base64). We do NOT generate a new QR here — the
+// work order QR is already split per uniq, so one uniq always maps to exactly
+// one QR. Returns "work order not found" when no QR has been stored yet.
+func (s *service) GenerateQR(ctx context.Context, uniqCode string) (*string, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return nil, apperror.BadRequest("uniq_code is required")
+	}
+
+	qr, err := s.repo.FindWOQRByUniqCode(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	if strings.TrimSpace(qr) == "" {
+		return nil, errors.New("work order not found")
+	}
+
+	return &qr, nil
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// computeStatus derives the FG status from stock vs thresholds.
+func computeStatus(stockQty float64, minThreshold, maxThreshold *float64) string {
+	if minThreshold != nil && stockQty < *minThreshold {
+		return fgModels.FGStatusLowStock
+	}
+	if maxThreshold != nil && stockQty > *maxThreshold {
+		return fgModels.FGStatusOverstock
+	}
+	return fgModels.FGStatusNormal
+}
+
+// computeKanbanCount returns floor(stock / kanbanStd), 0 if kanbanStd is nil or 0.
+func computeKanbanCount(stockQty float64, kanbanStd *int) *int {
+	if kanbanStd == nil || *kanbanStd == 0 {
+		return nil
+	}
+	v := int(math.Floor(stockQty / float64(*kanbanStd)))
+	return &v
+}
+
+// computeStockToComplete returns max(0, safety - stock).
+func computeStockToComplete(stockQty float64, safetyStockQty *float64) *float64 {
+	if safetyStockQty == nil {
+		return nil
+	}
+	v := math.Max(0, *safetyStockQty-stockQty)
+	return &v
+}
+
+// computeKanbanNeed rounds deficit up to full kanban/box count.
+func computeKanbanNeed(stockQty float64, targetStockQty *float64, kanbanStd *int) *int {
+	if targetStockQty == nil || kanbanStd == nil || *kanbanStd <= 0 {
+		return nil
+	}
+	deficit := math.Max(0, *targetStockQty-stockQty)
+	v := int(math.Ceil(deficit / float64(*kanbanStd)))
+	return &v
+}
+
+// computeStockToKanbanPCS converts kanban need back to pcs using full-box rounding.
+func computeStockToKanbanPCS(kanbanNeed *int, kanbanStd *int) *float64 {
+	if kanbanNeed == nil || kanbanStd == nil || *kanbanStd <= 0 {
+		return nil
+	}
+	v := float64(*kanbanNeed * *kanbanStd)
+	return &v
+}
+
+func computeStockAfterReplenish(stockQty float64, stockToKanbanPCS *float64) *float64 {
+	if stockToKanbanPCS == nil {
+		return nil
+	}
+	v := stockQty + *stockToKanbanPCS
+	return &v
+}
+
+// kanbanProgressPct returns floor(stock / safety * 100), capped at 100.
+func kanbanProgressPct(stockQty float64, safetyStockQty *float64) int {
+	if safetyStockQty == nil || *safetyStockQty == 0 {
+		return 0
+	}
+	pct := int(math.Floor(stockQty / *safetyStockQty * 100))
+	if pct > 100 {
+		return 100
+	}
+	return pct
+}
+
+// toItem converts a DB model to the API response shape.
+func toItem(fg *fgModels.FinishedGoods) *fgModels.FinishedGoodsItem {
+	targetStockQty := fg.SafetyStockQty
+	currentKanban := computeKanbanCount(fg.StockQty, fg.KanbanStandardQty)
+	stockGapToTarget := computeStockToComplete(fg.StockQty, targetStockQty)
+	kanbanNeed := computeKanbanNeed(fg.StockQty, targetStockQty, fg.KanbanStandardQty)
+	stockToKanbanPCS := computeStockToKanbanPCS(kanbanNeed, fg.KanbanStandardQty)
+	stockAfterReplenish := computeStockAfterReplenish(fg.StockQty, stockToKanbanPCS)
+
+	item := &fgModels.FinishedGoodsItem{
+		ID:                    fg.ID,
+		UUID:                  fg.UUID.String(),
+		UniqCode:              fg.UniqCode,
+		PartNumber:            fg.PartNumber,
+		PartName:              fg.PartName,
+		Model:                 fg.Model,
+		WONumber:              fg.WONumber,
+		WarehouseLocation:     fg.WarehouseLocation,
+		StockQty:              fg.StockQty,
+		TargetStockQty:        targetStockQty,
+		UOM:                   fg.UOM,
+		KanbanCount:           fg.KanbanCount,
+		CurrentKanban:         currentKanban,
+		KanbanStandardQty:     fg.KanbanStandardQty,
+		SafetyStockQty:        fg.SafetyStockQty,
+		MinThreshold:          fg.MinThreshold,
+		MaxThreshold:          fg.MaxThreshold,
+		StockToCompleteKanban: fg.StockToCompleteKanban,
+		StockGapToTarget:      stockGapToTarget,
+		KanbanNeed:            kanbanNeed,
+		StockToKanbanPCS:      stockToKanbanPCS,
+		StockAfterReplenish:   stockAfterReplenish,
+		KanbanProgress:        kanbanProgressPct(fg.StockQty, fg.SafetyStockQty),
+		Status:                fg.Status,
+		CreatedBy:             fg.CreatedBy,
+		CreatedAt:             fg.CreatedAt,
+		UpdatedAt:             fg.UpdatedAt,
+	}
+	return item
+}
+
+func toListItem(fg *fgModels.FinishedGoods) fgModels.FinishedGoodsListItem {
+	return fgModels.FinishedGoodsListItem{
+		ID:                fg.ID,
+		UUID:              fg.UUID.String(),
+		UniqCode:          fg.UniqCode,
+		PartNumber:        fg.PartNumber,
+		PartName:          fg.PartName,
+		Model:             fg.Model,
+		WONumber:          fg.WONumber,
+		WarehouseLocation: fg.WarehouseLocation,
+		UOM:               fg.UOM,
+		CreatedAt:         fg.CreatedAt,
+		UpdatedAt:         fg.UpdatedAt,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Summary
+// ---------------------------------------------------------------------------
+
+func (s *service) GetSummary(ctx context.Context) (*fgModels.FGSummary, error) {
+	return s.repo.GetSummary(ctx)
+}
+
+// ---------------------------------------------------------------------------
+// Status Monitoring
+// ---------------------------------------------------------------------------
+
+func (s *service) GetStatusMonitoring(ctx context.Context, f repository.StatusMonitoringFilter) (*fgModels.FGStatusMonitoringResponse, error) {
+	return s.repo.GetStatusMonitoring(ctx, f)
+}
+
+// ---------------------------------------------------------------------------
+// List
+// ---------------------------------------------------------------------------
+
+func (s *service) ListFinishedGoods(ctx context.Context, f repository.FinishedGoodsFilter) (*fgModels.FinishedGoodsListResponse, error) {
+	rows, total, err := s.repo.ListFinishedGoods(ctx, f)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]fgModels.FinishedGoodsListItem, 0, len(rows))
+	for i := range rows {
+		items = append(items, toListItem(&rows[i]))
+	}
+
+	totalPages := 1
+	if f.Limit > 0 {
+		totalPages = int(math.Ceil(float64(total) / float64(f.Limit)))
+	}
+
+	return &fgModels.FinishedGoodsListResponse{
+		Items: items,
+		Pagination: fgModels.FGPagination{
+			Total:      total,
+			Page:       f.Page,
+			Limit:      f.Limit,
+			TotalPages: totalPages,
+		},
+	}, nil
+}
+
+func (s *service) GetParameterizedSummary(ctx context.Context, uniqCode string) (*fgModels.FGParameterizedSummary, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return nil, apperror.BadRequest("uniq_code is required")
+	}
+
+	type row struct {
+		UniqCode          string   `gorm:"column:uniq_code"`
+		PartNumber        *string  `gorm:"column:part_number"`
+		PartName          *string  `gorm:"column:part_name"`
+		Model             *string  `gorm:"column:model"`
+		WONumber          *string  `gorm:"column:wo_number"`
+		WarehouseLocation *string  `gorm:"column:warehouse_location"`
+		StockQty          float64  `gorm:"column:stock_qty"`
+		UOM               *string  `gorm:"column:uom"`
+		KanbanQty         *int     `gorm:"column:kanban_qty"`
+		MinStock          *float64 `gorm:"column:min_stock"`
+		MaxStock          *float64 `gorm:"column:max_stock"`
+	}
+
+	var r row
+	err := s.db.WithContext(ctx).Raw(`
+		SELECT
+			fg.uniq_code,
+			fg.part_number,
+			fg.part_name,
+			fg.model,
+			fg.wo_number,
+			fg.warehouse_location,
+			fg.stock_qty,
+			fg.uom,
+			kp.kanban_qty,
+			kp.min_stock,
+			kp.max_stock
+		FROM finished_goods fg
+		LEFT JOIN LATERAL (
+			SELECT kanban_qty, min_stock, max_stock
+			FROM kanban_parameters
+			WHERE item_uniq_code = fg.uniq_code
+				AND COALESCE(status, 'active') ILIKE 'active'
+			ORDER BY updated_at DESC, id DESC
+			LIMIT 1
+		) kp ON TRUE
+		WHERE fg.deleted_at IS NULL
+			AND fg.uniq_code = ?
+		LIMIT 1
+	`, uniqCode).Scan(&r).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("failed to get parameterized finished-goods summary", err)
+	}
+	if r.UniqCode == "" {
+		return nil, apperror.NotFound("finished goods tidak ditemukan")
+	}
+
+	targetStockQty := r.MinStock
+	currentKanban := computeKanbanCount(r.StockQty, r.KanbanQty)
+	stockGapToTarget := computeStockToComplete(r.StockQty, targetStockQty)
+	kanbanNeed := computeKanbanNeed(r.StockQty, targetStockQty, r.KanbanQty)
+	stockToKanbanPCS := computeStockToKanbanPCS(kanbanNeed, r.KanbanQty)
+	stockAfterReplenish := computeStockAfterReplenish(r.StockQty, stockToKanbanPCS)
+	status := computeStatus(r.StockQty, r.MinStock, r.MaxStock)
+
+	return &fgModels.FGParameterizedSummary{
+		UniqCode:            r.UniqCode,
+		PartNumber:          r.PartNumber,
+		PartName:            r.PartName,
+		Model:               r.Model,
+		WONumber:            r.WONumber,
+		WarehouseLocation:   r.WarehouseLocation,
+		StockQty:            r.StockQty,
+		UOM:                 r.UOM,
+		KanbanStandardQty:   r.KanbanQty,
+		MinThreshold:        r.MinStock,
+		MaxThreshold:        r.MaxStock,
+		TargetStockQty:      targetStockQty,
+		CurrentKanban:       currentKanban,
+		StockGapToTarget:    stockGapToTarget,
+		KanbanNeed:          kanbanNeed,
+		StockToKanbanPCS:    stockToKanbanPCS,
+		StockAfterReplenish: stockAfterReplenish,
+		Status:              status,
+		ParameterSource:     "kanban_parameters",
+	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Create Form Options
+// ---------------------------------------------------------------------------
+
+func (s *service) ListCreateUniqOptions(ctx context.Context, q string, limit int) (*fgModels.FGCreateUniqOptionsResponse, error) {
+	q = strings.TrimSpace(q)
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	type row struct {
+		UniqCode     string   `gorm:"column:uniq_code"`
+		PartNumber   *string  `gorm:"column:part_number"`
+		PartName     *string  `gorm:"column:part_name"`
+		Model        *string  `gorm:"column:model"`
+		LastWONumber *string  `gorm:"column:last_wo_number"`
+		KanbanQty    *int     `gorm:"column:kanban_qty"`
+		MinThreshold *float64 `gorm:"column:min_threshold"`
+		MaxThreshold *float64 `gorm:"column:max_threshold"`
+	}
+
+	rows := make([]row, 0, limit)
+	err := s.db.WithContext(ctx).Raw(`
+		SELECT
+			kp.item_uniq_code   AS uniq_code,
+			woi.part_number     AS part_number,
+			woi.part_name       AS part_name,
+			i.model             AS model,
+			w.wo_number         AS last_wo_number,
+			kp.kanban_qty       AS kanban_qty,
+			kp.min_stock        AS min_threshold,
+			kp.max_stock        AS max_threshold
+		FROM kanban_parameters kp
+		LEFT JOIN LATERAL (
+			SELECT woi2.part_number, woi2.part_name, woi2.wo_id
+			FROM work_order_items woi2
+			WHERE woi2.item_uniq_code = kp.item_uniq_code
+			ORDER BY woi2.created_at DESC
+			LIMIT 1
+		) woi ON TRUE
+		LEFT JOIN work_orders w ON w.id = woi.wo_id
+		LEFT JOIN items i
+			ON i.uniq_code = kp.item_uniq_code
+			AND i.deleted_at IS NULL
+		WHERE kp.status ILIKE 'active'
+			AND ($1 = ''
+				OR kp.item_uniq_code           ILIKE $1 || '%'
+				OR COALESCE(woi.part_name, '')  ILIKE $1 || '%'
+				OR COALESCE(woi.part_number, '') ILIKE $1 || '%')
+		ORDER BY kp.item_uniq_code
+		LIMIT $2
+	`, q, limit).Scan(&rows).Error
+	if err != nil {
+		return nil, apperror.InternalWrap("failed to list finished-goods create uniq options", err)
+	}
+
+	out := make([]fgModels.FGCreateUniqOptionItem, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, fgModels.FGCreateUniqOptionItem{
+			UniqCode:     r.UniqCode,
+			PartNumber:   r.PartNumber,
+			PartName:     r.PartName,
+			Model:        r.Model,
+			LastWONumber: r.LastWONumber,
+			KanbanQty:    r.KanbanQty,
+			MinThreshold: r.MinThreshold,
+			MaxThreshold: r.MaxThreshold,
+		})
+	}
+
+	return &fgModels.FGCreateUniqOptionsResponse{Items: out}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Get by ID
+// ---------------------------------------------------------------------------
+
+func (s *service) GetFinishedGoodsByID(ctx context.Context, id int64) (*fgModels.FinishedGoodsItem, error) {
+	fg, err := s.repo.GetFinishedGoodsByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return toItem(fg), nil
+}
+
+// ---------------------------------------------------------------------------
+// Create
+// ---------------------------------------------------------------------------
+
+func (s *service) CreateFinishedGoods(ctx context.Context, req fgModels.CreateFinishedGoodsRequest, createdBy string) (*fgModels.FinishedGoodsItem, error) {
+	// Look up part details + last WO + initial quantity from work_order_items
+	type bomRow struct {
+		PartNumber *string `gorm:"column:part_number"`
+		PartName   *string `gorm:"column:part_name"`
+		Model      *string `gorm:"column:model"`
+		WONumber   *string `gorm:"column:wo_number"`
+		Quantity   float64 `gorm:"column:quantity"`
+	}
+	var bom bomRow
+	_ = s.db.WithContext(ctx).Raw(`
+		SELECT woi.part_number, woi.part_name, i.model, w.wo_number, woi.quantity
+		FROM work_order_items woi
+		JOIN work_orders w ON w.id = woi.wo_id
+		LEFT JOIN items i ON i.uniq_code = woi.item_uniq_code AND i.deleted_at IS NULL
+		WHERE woi.item_uniq_code = ?
+		ORDER BY w.created_at DESC
+		LIMIT 1
+	`, req.UniqCode).Scan(&bom)
+
+	// Part info: last work order -> master item -> values from the request
+	// (bulk upload). Previously a uniq without any work order was saved with
+	// empty part number / name / model.
+	if bom.PartNumber == nil || bom.PartName == nil || bom.Model == nil {
+		var it struct {
+			PartNumber *string `gorm:"column:part_number"`
+			PartName   *string `gorm:"column:part_name"`
+			Model      *string `gorm:"column:model"`
+		}
+		_ = s.db.WithContext(ctx).Raw(`
+			SELECT part_number, part_name, model
+			FROM items
+			WHERE uniq_code = ? AND deleted_at IS NULL
+			LIMIT 1
+		`, req.UniqCode).Scan(&it)
+		bom.PartNumber = pickStr(bom.PartNumber, it.PartNumber)
+		bom.PartName = pickStr(bom.PartName, it.PartName)
+		bom.Model = pickStr(bom.Model, it.Model)
+	}
+	bom.PartNumber = pickStr(bom.PartNumber, req.PartNumber)
+	bom.PartName = pickStr(bom.PartName, req.PartName)
+	bom.Model = pickStr(bom.Model, req.Model)
+
+	var woNumber *string
+	if req.WONumberOverride != nil && *req.WONumberOverride != "" {
+		woNumber = req.WONumberOverride
+	} else if bom.WONumber != nil && *bom.WONumber != "" {
+		woNumber = bom.WONumber
+	}
+
+	// Initial stock from WO item quantity; bulk upload can override via StockQty
+	initialStock := bom.Quantity
+
+	// Look up kanban parameters
+	type kanbanRow struct {
+		KanbanQty int     `gorm:"column:kanban_qty"`
+		MinStock  float64 `gorm:"column:min_stock"`
+		MaxStock  float64 `gorm:"column:max_stock"`
+	}
+	var kanban kanbanRow
+	_ = s.db.WithContext(ctx).Raw(`
+		SELECT kanban_qty, min_stock, max_stock
+		FROM kanban_parameters
+		WHERE item_uniq_code = ?
+		LIMIT 1
+	`, req.UniqCode).Scan(&kanban)
+
+	// Compute derived fields
+	var minThreshold, maxThreshold, safetyStockQty *float64
+	var kanbanStandardQty *int
+	if kanban.KanbanQty > 0 {
+		kanbanStandardQty = &kanban.KanbanQty
+	}
+	if kanban.MinStock > 0 {
+		minThreshold = &kanban.MinStock
+		safetyStockQty = &kanban.MinStock // replenishment target = min_stock
+	}
+	if kanban.MaxStock > 0 {
+		maxThreshold = &kanban.MaxStock
+	}
+
+	now := time.Now()
+
+	// Check if record already exists (including soft-deleted) — upsert behaviour
+	var existing fgModels.FinishedGoods
+	err := s.db.WithContext(ctx).
+		Unscoped().
+		Where("uniq_code = ?", req.UniqCode).
+		First(&existing).Error
+
+	if err == nil {
+		// Keep what is already stored when nothing better was resolved.
+		bom.PartNumber = pickStr(bom.PartNumber, existing.PartNumber)
+		bom.PartName = pickStr(bom.PartName, existing.PartName)
+		bom.Model = pickStr(bom.Model, existing.Model)
+		woNumber = pickStr(woNumber, existing.WONumber)
+
+		// Record exists: restore if soft-deleted, update warehouse + kanban params
+		stockToComplete := computeStockToComplete(existing.StockQty, safetyStockQty)
+		kanbanCount := computeKanbanCount(existing.StockQty, kanbanStandardQty)
+		status := computeStatus(existing.StockQty, minThreshold, maxThreshold)
+
+		updates := map[string]interface{}{
+			"deleted_at":               nil,
+			"warehouse_location":       req.WarehouseLocation,
+			"wo_number":                woNumber,
+			"part_number":              bom.PartNumber,
+			"part_name":                bom.PartName,
+			"model":                    bom.Model,
+			"kanban_standard_qty":      kanbanStandardQty,
+			"min_threshold":            minThreshold,
+			"max_threshold":            maxThreshold,
+			"safety_stock_qty":         safetyStockQty,
+			"kanban_count":             kanbanCount,
+			"stock_to_complete_kanban": stockToComplete,
+			"status":                   status,
+			"updated_by":               createdBy,
+			"updated_at":               now,
+		}
+		if err := s.db.WithContext(ctx).Unscoped().Model(&fgModels.FinishedGoods{}).
+			Where("uniq_code = ?", req.UniqCode).
+			Updates(updates).Error; err != nil {
+			return nil, apperror.InternalWrap("fg upsert update", err)
+		}
+		existing.WarehouseLocation = &req.WarehouseLocation
+		existing.WONumber = woNumber
+		existing.KanbanStandardQty = kanbanStandardQty
+		existing.MinThreshold = minThreshold
+		existing.MaxThreshold = maxThreshold
+		existing.SafetyStockQty = safetyStockQty
+		existing.DeletedAt = nil
+		return toItem(&existing), nil
+	}
+
+	// New record — initial stock from WO item quantity
+	stockToComplete := computeStockToComplete(initialStock, safetyStockQty)
+	kanbanCount := computeKanbanCount(initialStock, kanbanStandardQty)
+	status := computeStatus(initialStock, minThreshold, maxThreshold)
+
+	fg := &fgModels.FinishedGoods{
+		UniqCode:              req.UniqCode,
+		PartNumber:            bom.PartNumber,
+		PartName:              bom.PartName,
+		Model:                 bom.Model,
+		WONumber:              woNumber,
+		WarehouseLocation:     &req.WarehouseLocation,
+		StockQty:              initialStock,
+		KanbanCount:           kanbanCount,
+		KanbanStandardQty:     kanbanStandardQty,
+		MinThreshold:          minThreshold,
+		MaxThreshold:          maxThreshold,
+		SafetyStockQty:        safetyStockQty,
+		StockToCompleteKanban: stockToComplete,
+		Status:                status,
+		CreatedBy:             &createdBy,
+		UpdatedBy:             &createdBy,
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	}
+
+	if err := s.repo.CreateFinishedGoods(ctx, fg); err != nil {
+		return nil, err
+	}
+
+	src := "manual"
+	_ = s.repo.AppendMovementLog(ctx, &fgModels.FGMovementLog{
+		FgID:         fg.ID,
+		UniqCode:     fg.UniqCode,
+		MovementType: "manual_add",
+		QtyChange:    initialStock,
+		QtyBefore:    0,
+		QtyAfter:     initialStock,
+		SourceFlag:   &src,
+		WONumber:     fg.WONumber,
+		LoggedBy:     &createdBy,
+		LoggedAt:     now,
+	})
+
+	return toItem(fg), nil
+}
+
+// pickStr returns the first non-blank value (trimmed), or nil.
+func pickStr(vals ...*string) *string {
+	for _, v := range vals {
+		if v == nil {
+			continue
+		}
+		if t := strings.TrimSpace(*v); t != "" {
+			return &t
+		}
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Bulk Create
+// ---------------------------------------------------------------------------
+
+func (s *service) BulkCreateFinishedGoods(ctx context.Context, req fgModels.BulkCreateFinishedGoodsRequest, createdBy string) (*fgModels.FGBulkCreateResponse, error) {
+	results := make([]fgModels.FGBulkCreateResult, 0, len(req.Items))
+	created := 0
+	failed := 0
+
+	for i, item := range req.Items {
+		singleReq := fgModels.CreateFinishedGoodsRequest{
+			UniqCode:          item.UniqCode,
+			WarehouseLocation: item.WarehouseLocation,
+			WONumberOverride:  item.WONumber,
+			PartNumber:        item.PartNumber,
+			PartName:          item.PartName,
+			Model:             item.Model,
+		}
+		fg, err := s.CreateFinishedGoods(ctx, singleReq, createdBy)
+		if err != nil {
+			failed++
+			errMsg := err.Error()
+			results = append(results, fgModels.FGBulkCreateResult{
+				Index:    i,
+				UniqCode: item.UniqCode,
+				Status:   "failed",
+				Error:    &errMsg,
+			})
+			continue
+		}
+
+		// Apply stock_qty from the file when provided. An explicit 0 is honoured
+		// (before, only > 0 was applied, so 0 fell back to the work order qty).
+		if item.StockQty != nil {
+			stockReq := fgModels.UpdateFinishedGoodsRequest{StockQty: item.StockQty}
+			if updated, uerr := s.UpdateFinishedGoods(ctx, fg.ID, stockReq, createdBy); uerr != nil {
+				failed++
+				errMsg := "created but failed to set stock: " + uerr.Error()
+				results = append(results, fgModels.FGBulkCreateResult{
+					Index:    i,
+					UniqCode: item.UniqCode,
+					Status:   "failed",
+					Error:    &errMsg,
+				})
+				continue
+			} else if updated != nil {
+				fg = updated
+			}
+		}
+
+		created++
+		uuidStr := fg.UUID
+		results = append(results, fgModels.FGBulkCreateResult{
+			Index:    i,
+			UniqCode: item.UniqCode,
+			Status:   "created",
+			ID:       &fg.ID,
+			UUID:     &uuidStr,
+		})
+	}
+
+	return &fgModels.FGBulkCreateResponse{
+		Created: created,
+		Failed:  failed,
+		Results: results,
+	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Update
+// ---------------------------------------------------------------------------
+
+func (s *service) UpdateFinishedGoods(ctx context.Context, id int64, req fgModels.UpdateFinishedGoodsRequest, updatedBy string) (*fgModels.FinishedGoodsItem, error) {
+	existing, err := s.repo.GetFinishedGoodsByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.StockQty != nil && *req.StockQty < 0 {
+		return nil, apperror.BadRequest("stock_qty cannot be negative")
+	}
+
+	updates := map[string]interface{}{
+		"updated_by": updatedBy,
+		"updated_at": time.Now(),
+	}
+
+	newStock := existing.StockQty
+	if req.WONumber != nil {
+		updates["wo_number"] = req.WONumber
+	}
+	if req.WarehouseLocation != nil {
+		updates["warehouse_location"] = req.WarehouseLocation
+	}
+	if req.StockQty != nil {
+		newStock = *req.StockQty
+		updates["stock_qty"] = newStock
+		// Recompute derived fields
+		updates["kanban_count"] = computeKanbanCount(newStock, existing.KanbanStandardQty)
+		updates["stock_to_complete_kanban"] = computeStockToComplete(newStock, existing.SafetyStockQty)
+		updates["status"] = computeStatus(newStock, existing.MinThreshold, existing.MaxThreshold)
+	}
+
+	if err := s.repo.UpdateFinishedGoods(ctx, id, updates); err != nil {
+		return nil, err
+	}
+
+	// Append movement log if stock changed
+	if req.StockQty != nil {
+		src := "manual"
+		_ = s.repo.AppendMovementLog(ctx, &fgModels.FGMovementLog{
+			FgID:         id,
+			UniqCode:     existing.UniqCode,
+			MovementType: "manual_deduct",
+			QtyChange:    newStock - existing.StockQty,
+			QtyBefore:    existing.StockQty,
+			QtyAfter:     newStock,
+			SourceFlag:   &src,
+			Notes:        req.Remarks,
+			LoggedBy:     &updatedBy,
+			LoggedAt:     time.Now(),
+		})
+	}
+
+	return s.GetFinishedGoodsByID(ctx, id)
+}
+
+// ---------------------------------------------------------------------------
+// Packing List
+// ---------------------------------------------------------------------------
+
+// GetPackingList returns the packing/kanban rows for one finished-good uniq,
+// including the DN number, qty saat ini, qty maksimal, and the progress
+// percentage rendered by the FG detail modal.
+func (s *service) GetPackingList(ctx context.Context, uniqCode string) (*fgModels.FGPackingListResponse, error) {
+	uniqCode = strings.TrimSpace(uniqCode)
+	if uniqCode == "" {
+		return nil, apperror.BadRequest("uniq_code is required")
+	}
+
+	rows, err := s.repo.ListPackingList(ctx, uniqCode)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]fgModels.FGPackingListItem, 0, len(rows))
+	var totalCurrent, totalMax float64
+	for _, row := range rows {
+		progress := 0
+		if row.QtyMax > 0 {
+			progress = int(math.Floor((row.QtyCurrent / row.QtyMax) * 100))
+			if progress < 0 {
+				progress = 0
+			}
+			if progress > 100 {
+				progress = 100
+			}
+		}
+		totalCurrent += row.QtyCurrent
+		totalMax += row.QtyMax
+
+		items = append(items, fgModels.FGPackingListItem{
+			DNNumber:      row.DNNumber,
+			PackingNumber: row.PackingNumber,
+			Quantity:      row.Quantity,
+			QtyCurrent:    row.QtyCurrent,
+			QtyMax:        row.QtyMax,
+			Progress:      progress,
+			Status:        row.Status,
+			WONumber:      row.WONumber,
+			Source:        row.Source,
+		})
+	}
+
+	return &fgModels.FGPackingListResponse{
+		UniqCode:        uniqCode,
+		Items:           items,
+		TotalPacking:    len(items),
+		TotalQtyCurrent: totalCurrent,
+		TotalQtyMax:     totalMax,
+	}, nil
+}

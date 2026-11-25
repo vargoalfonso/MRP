@@ -13,16 +13,16 @@ import (
 type Code string
 
 const (
-	CodeBadRequest       Code = "BAD_REQUEST"
-	CodeUnauthorized     Code = "UNAUTHORIZED"
-	CodeForbidden        Code = "FORBIDDEN"
-	CodeNotFound         Code = "NOT_FOUND"
-	CodeConflict         Code = "CONFLICT"
-	CodeUnprocessable    Code = "UNPROCESSABLE_ENTITY"
-	CodeInternalError    Code = "INTERNAL_SERVER_ERROR"
-	CodeServiceUnavail   Code = "SERVICE_UNAVAILABLE"
-	CodeTokenExpired     Code = "TOKEN_EXPIRED"
-	CodeTokenInvalid     Code = "TOKEN_INVALID"
+	CodeBadRequest     Code = "BAD_REQUEST"
+	CodeUnauthorized   Code = "UNAUTHORIZED"
+	CodeForbidden      Code = "FORBIDDEN"
+	CodeNotFound       Code = "NOT_FOUND"
+	CodeConflict       Code = "CONFLICT"
+	CodeUnprocessable  Code = "UNPROCESSABLE_ENTITY"
+	CodeInternalError  Code = "INTERNAL_SERVER_ERROR"
+	CodeServiceUnavail Code = "SERVICE_UNAVAILABLE"
+	CodeTokenExpired   Code = "TOKEN_EXPIRED"
+	CodeTokenInvalid   Code = "TOKEN_INVALID"
 )
 
 // AppError is the standard application error. It carries an HTTP status code,
@@ -53,6 +53,17 @@ func New(httpStatus int, code Code, message string) *AppError {
 // Wrap wraps a cause error inside an AppError.
 func Wrap(httpStatus int, code Code, message string, cause error) *AppError {
 	return &AppError{HTTPStatus: httpStatus, Code: code, Message: message, Cause: cause}
+}
+
+// IsNotFound returns true if the error is a NotFound AppError.
+func IsNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	if appErr, ok := As(err); ok {
+		return appErr.HTTPStatus == http.StatusNotFound
+	}
+	return false
 }
 
 // As extracts an *AppError from err if one exists in the chain.
@@ -86,6 +97,10 @@ func Conflict(msg string) *AppError {
 	return New(http.StatusConflict, CodeConflict, msg)
 }
 
+func UnprocessableEntity(msg string) *AppError {
+	return New(http.StatusUnprocessableEntity, CodeUnprocessable, msg)
+}
+
 func Internal(msg string) *AppError {
 	return New(http.StatusInternalServerError, CodeInternalError, msg)
 }
@@ -100,4 +115,8 @@ func TokenExpired() *AppError {
 
 func TokenInvalid() *AppError {
 	return New(http.StatusUnauthorized, CodeTokenInvalid, "token is invalid")
+}
+
+func GatewayTimeout(msg string, cause error) *AppError {
+	return Wrap(http.StatusGatewayTimeout, CodeServiceUnavail, msg, cause)
 }

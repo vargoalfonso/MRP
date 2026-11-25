@@ -1,0 +1,2 @@
+ALTER TABLE process_parameters
+    ADD COLUMN IF NOT EXISTS is_assembly BOOLEAN NOT NULL DEFAULT FALSE;

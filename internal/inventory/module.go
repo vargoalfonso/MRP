@@ -1,0 +1,154 @@
+package inventory
+
+import (
+	"github.com/ganasa18/go-template/config"
+	authMiddleware "github.com/ganasa18/go-template/internal/auth/middleware"
+	authService "github.com/ganasa18/go-template/internal/auth/service"
+	baseHandler "github.com/ganasa18/go-template/internal/base/handler"
+	invHandler "github.com/ganasa18/go-template/internal/inventory/handler"
+	invService "github.com/ganasa18/go-template/internal/inventory/service"
+	appmodule "github.com/ganasa18/go-template/internal/module"
+	roleMiddleware "github.com/ganasa18/go-template/internal/role/middleware"
+	roleService "github.com/ganasa18/go-template/internal/role/service"
+	"github.com/gin-gonic/gin"
+)
+
+var _ appmodule.HTTPModule = (*HTTPModule)(nil)
+
+type HTTPModule struct {
+	cfg           *config.Config
+	base          *baseHandler.BaseHTTPHandler
+	handler       *invHandler.HTTPHandler
+	authenticator authService.Authenticator
+	roleService   roleService.IRoleService
+	service       invService.IService
+}
+
+func NewHTTPModule(
+	cfg *config.Config,
+	base *baseHandler.BaseHTTPHandler,
+	handler *invHandler.HTTPHandler,
+	authenticator authService.Authenticator,
+	roleSvc roleService.IRoleService,
+	svc invService.IService,
+) appmodule.HTTPModule {
+	return &HTTPModule{
+		cfg:           cfg,
+		base:          base,
+		handler:       handler,
+		authenticator: authenticator,
+		roleService:   roleSvc,
+		service:       svc,
+	}
+}
+
+// RegisterRoutes registers all inventory endpoints.
+// Base: /api/v1/inventory
+//
+// Raw Material Database:
+//
+//	GET    /raw-materials                  list + stats cards
+//	POST   /raw-materials                  create
+//	POST   /raw-materials/bulk             bulk create
+//	POST   /raw-materials/backfill-initial-packings  buat Packing ID utk opening stock lama
+//	POST   /raw-materials/:id/initial-packings       buat Packing ID utk satu RM
+//	GET    /raw-materials/incoming         incoming RM scan list (Action UI tab)
+//	GET    /raw-materials/packing-list     packing list per uniq_code (WO barcode)
+//	GET    /raw-materials/:id              detail
+//	PUT    /raw-materials/:id              update
+//	DELETE /raw-materials/:id              soft delete
+//	GET    /raw-materials/:id/history      movement logs
+//
+// Indirect Raw Material:
+//
+//	GET    /indirect-materials             list + stats cards
+//	POST   /indirect-materials             create
+//	POST   /indirect-materials/bulk        bulk create
+//	GET    /indirect-materials/incoming    incoming indirect scan list
+//	GET    /indirect-materials/packing-list packing list per uniq_code (WO barcode)
+//	GET    /indirect-materials/:id         detail
+//	PUT    /indirect-materials/:id         update
+//	DELETE /indirect-materials/:id         soft delete
+//	GET    /indirect-materials/:id/history movement logs
+//
+// Subcon Inventory:
+//
+//	GET    /subcon-materials                         stock in vendor list
+//	POST   /subcon-materials                         create
+//	GET    /subcon-materials/received                stock received from vendor
+//	GET    /subcon-materials/:id                     detail
+//	PUT    /subcon-materials/:id                     update
+//	DELETE /subcon-materials/:id                     soft delete
+//	GET    /subcon-materials/:id/history             movement logs
+//	POST   /subcon-materials/:id/approve             approve (status-only)
+//	POST   /subcon-materials/:id/reject              reject (status-only)
+func (m *HTTPModule) RegisterRoutes(r gin.IRouter) {
+	auth := authMiddleware.JWTMiddleware(m.authenticator)
+	perm := func(resource, action string) gin.HandlerFunc {
+		return roleMiddleware.RequirePermission(m.roleService, resource, action)
+	}
+
+	g := r.Group("/api/v1/inventory")
+	g.Use(auth)
+
+	// Canonical material specification shared by BOM and inventory.
+	masters := g.Group("/raw-material-masters")
+	masters.GET("", perm("inventory", "view"), m.base.RunAction(m.handler.ListRawMaterialMasters))
+	masters.GET("/planning", perm("inventory", "view"), m.base.RunAction(m.handler.ListRawMaterialPlanning))
+	masters.POST("", perm("inventory", "create"), m.base.RunAction(m.handler.CreateRawMaterialMaster))
+	masters.GET("/:id", perm("inventory", "view"), m.base.RunAction(m.handler.GetRawMaterialMaster))
+	masters.PUT("/:id", perm("inventory", "update"), m.base.RunAction(m.handler.UpdateRawMaterialMaster))
+	masters.DELETE("/:id", perm("inventory", "delete"), m.base.RunAction(m.handler.DeleteRawMaterialMaster))
+
+	// --- Raw Material Database ---
+	rm := g.Group("/raw-materials")
+	rm.GET("", perm("inventory", "view"), m.base.RunAction(m.handler.ListRawMaterials))
+	rm.POST("", perm("inventory", "create"), m.base.RunAction(m.handler.CreateRawMaterial))
+	rm.POST("/bulk", perm("inventory", "create"), m.base.RunAction(m.handler.BulkCreateRawMaterials))
+	// [initial-packing] Packing ID untuk opening stock (tanpa DN)
+	rm.POST("/backfill-initial-packings", perm("inventory", "create"), m.base.RunAction(m.handler.BackfillInitialPackings))
+	rm.POST("/:id/initial-packings", perm("inventory", "create"), m.base.RunAction(m.handler.EnsureInitialPackings))
+	// NOTE: static sub-routes (/incoming) must be registered before /:id
+	rm.GET("/incoming", perm("inventory", "view"), m.base.RunAction(m.handler.ListIncomingRM))
+	// [packing-list] packing/kanban hasil scan barcode work order (harus sebelum /:id)
+	rm.GET("/packing-list", perm("inventory", "view"), m.base.RunAction(m.handler.GetPackingList))
+	rm.GET("/:id", perm("inventory", "view"), m.base.RunAction(m.handler.GetRawMaterialByID))
+	rm.PUT("/:id", perm("inventory", "update"), m.base.RunAction(m.handler.UpdateRawMaterial))
+	rm.DELETE("/:id", perm("inventory", "delete"), m.base.RunAction(m.handler.DeleteRawMaterial))
+	rm.GET("/:id/history", perm("inventory", "view"), m.base.RunAction(m.handler.GetRawMaterialHistory))
+	rm.GET("/:id/create-qr", m.base.RunAction(m.handler.CreateQR))
+
+	// --- Indirect Raw Material ---
+	ind := g.Group("/indirect-materials")
+	ind.GET("", perm("inventory", "view"), m.base.RunAction(m.handler.ListIndirectMaterials))
+	ind.POST("", perm("inventory", "create"), m.base.RunAction(m.handler.CreateIndirectMaterial))
+	ind.POST("/bulk", perm("inventory", "create"), m.base.RunAction(m.handler.BulkCreateIndirectMaterials))
+	ind.GET("/incoming", perm("inventory", "view"), m.base.RunAction(m.handler.ListIncomingIndirect))
+	// [packing-list] packing/kanban hasil scan barcode work order (harus sebelum /:id)
+	ind.GET("/packing-list", perm("inventory", "view"), m.base.RunAction(m.handler.GetPackingList))
+	ind.GET("/:id", perm("inventory", "view"), m.base.RunAction(m.handler.GetIndirectByID))
+	ind.PUT("/:id", perm("inventory", "update"), m.base.RunAction(m.handler.UpdateIndirectMaterial))
+	ind.DELETE("/:id", perm("inventory", "delete"), m.base.RunAction(m.handler.DeleteIndirectMaterial))
+	ind.GET("/:id/history", perm("inventory", "view"), m.base.RunAction(m.handler.GetIndirectHistory))
+	ind.GET("/:id/create-qr", m.base.RunAction(m.handler.CreateQRIndirect))
+
+	// --- Subcon Inventory ---
+	sc := g.Group("/subcon-materials")
+	sc.GET("", perm("inventory", "view"), m.base.RunAction(m.handler.ListSubconInventory))
+	sc.POST("", perm("inventory", "create"), m.base.RunAction(m.handler.CreateSubconInventory))
+	// NOTE: /received must be registered before /:id
+	sc.GET("/received", perm("inventory", "view"), m.base.RunAction(m.handler.ListSubconReceived))
+	// [subcon-fix] /incoming = log DN masuk (received) utk halaman detail subcon.
+	// Harus terdaftar sebelum /:id agar "incoming" tidak dianggap sebagai :id.
+	sc.GET("/incoming", perm("inventory", "view"), m.base.RunAction(m.handler.ListSubconReceived))
+	sc.GET("/:id", perm("inventory", "view"), m.base.RunAction(m.handler.GetSubconByID))
+	sc.PUT("/:id", perm("inventory", "update"), m.base.RunAction(m.handler.UpdateSubconInventory))
+	sc.DELETE("/:id", perm("inventory", "delete"), m.base.RunAction(m.handler.DeleteSubconInventory))
+	sc.GET("/:id/history", perm("inventory", "view"), m.base.RunAction(m.handler.GetSubconHistory))
+	sc.POST("/:id/approve", perm("inventory", "update"), m.base.RunAction(m.handler.ApproveSubconInventory))
+	sc.POST("/:id/reject", perm("inventory", "update"), m.base.RunAction(m.handler.RejectSubconInventory))
+	sc.GET("/:id/create-qr", m.base.RunAction(m.handler.CreateQRSubcon))
+
+	// --- Kanban Summary (async per-row, used by DN list UI) ---
+	g.GET("/kanban-summary", perm("inventory", "view"), m.base.RunAction(m.handler.GetKanbanSummary))
+}

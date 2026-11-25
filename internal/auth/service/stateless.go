@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/ganasa18/go-template/pkg/apperror"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type stateless struct {
@@ -38,7 +41,7 @@ func (s *stateless) Login(ctx context.Context, req models.LoginRequest) (*models
 		return nil, apperror.Unauthorized("invalid credentials")
 	}
 
-	accessToken, expiresAt, err := s.buildToken(user.UUID, strings.Split(user.Roles, ","))
+	accessToken, expiresAt, err := s.buildToken(user.UUID, user.Username, strings.Split(user.Roles, ","))
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +66,7 @@ func (s *stateless) RefreshTokens(_ context.Context, _ string) (*models.TokenPai
 func (s *stateless) RevokeToken(_ context.Context, _ string) error { return nil }
 
 // buildToken signs a new access JWT and returns the token string + expiry.
-func (s *stateless) buildToken(userID string, roles []string) (string, time.Time, error) {
+func (s *stateless) buildToken(userID, username string, roles []string) (string, time.Time, error) {
 	expiresAt := time.Now().Add(s.cfg.JWTAccessTTL)
 	claims := models.Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -72,8 +75,9 @@ func (s *stateless) buildToken(userID string, roles []string) (string, time.Time
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			ID:        uuid.New().String(), // jti
 		},
-		UserID: userID,
-		Roles:  roles,
+		UserID:   userID,
+		Username: username,
+		Roles:    roles,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -103,4 +107,108 @@ func parseToken(tokenStr, secret string) (*models.Claims, error) {
 		return nil, apperror.TokenInvalid()
 	}
 	return claims, nil
+}
+
+func (s *stateless) SetPassword(ctx context.Context, token string, password string, confirm string) error {
+
+	// ==============================
+	// 🔥 VALIDASI PASSWORD MATCH
+	// ==============================
+	if password != confirm {
+		return fmt.Errorf("password dan konfirmasi password tidak sama")
+	}
+
+	if len(password) < 6 {
+		return fmt.Errorf("password minimal 6 karakter")
+	}
+
+	// ==============================
+	// 🔥 AMBIL TOKEN
+	// ==============================
+	act, err := s.repo.FindValidActivation(ctx, token)
+	if err != nil {
+		return fmt.Errorf("token tidak valid")
+	}
+
+	if act.Used {
+		return fmt.Errorf("token sudah digunakan")
+	}
+
+	if time.Now().After(act.ExpiredAt) {
+		return fmt.Errorf("token expired")
+	}
+
+	// ==============================
+	// 🔥 HASH PASSWORD
+	// ==============================
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	// ==============================
+	// 🔥 UPDATE USER
+	// ==============================
+	err = s.repo.UpdateUserPassword(ctx, act.UserID, string(hashed))
+	if err != nil {
+		return err
+	}
+
+	// ==============================
+	// 🔥 MARK TOKEN USED
+	// ==============================
+	err = s.repo.MarkTokenUsed(ctx, act.ID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *stateless) GetTokenDetail(ctx context.Context, token string) (*models.GetTokenResponse, error) {
+
+	// ==============================
+	// 🔥 GET TOKEN
+	// ==============================
+	activation, err := s.repo.GetByToken(ctx, token)
+	if err != nil {
+		return nil, errors.New("token not found")
+	}
+
+	// ==============================
+	// 🔥 CHECK USED
+	// ==============================
+	if activation.Used {
+		return nil, errors.New("token already used")
+	}
+
+	// ==============================
+	// 🔥 CHECK EXPIRED
+	// ==============================
+	if time.Now().After(activation.ExpiredAt) {
+		return nil, errors.New("token expired")
+	}
+
+	// ==============================
+	// 🔥 GET USER
+	// ==============================
+	user, err := s.repo.GetByID(ctx, activation.UserID)
+	if err != nil {
+		return nil, errors.New("user not found")
+	}
+
+	employee, err := s.repo.FindUserByEmployeeEmail(ctx, user.Email)
+	if err != nil {
+		return nil, errors.New("employee not found")
+	}
+
+	response := &models.GetTokenResponse{
+		Fullname:  employee.FullName,
+		Email:     employee.Email,
+		Token:     activation.Token,
+		ExpiredAt: activation.ExpiredAt,
+		CreatedAt: activation.CreatedAt,
+	}
+
+	return response, nil
 }
