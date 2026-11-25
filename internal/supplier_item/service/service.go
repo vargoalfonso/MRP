@@ -23,6 +23,8 @@ type SupplierItemService interface {
 	Delete(ctx context.Context, uuid string) error
 	PreviewByMaterialCode(ctx context.Context, q models.MaterialCodePreviewQuery) ([]models.MaterialCodeUniq, error)
 	CreateByMaterialCode(ctx context.Context, req models.BulkByMaterialCodeRequest) (*models.BulkByMaterialCodeResult, error)
+	ListBomUsage(ctx context.Context, q models.BomUsageQuery) ([]models.BomUsageRow, error)
+	ListBomMaterialGrades(ctx context.Context, q models.BomMaterialGradeQuery) ([]models.BomMaterialGrade, error)
 }
 
 type service struct {

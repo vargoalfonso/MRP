@@ -961,7 +961,6 @@ func (r *repository) ListBomItems(ctx context.Context, f ListFilter) ([]models.B
 					)
 				LEFT JOIN item_material_specs cims ON cims.item_revision_id = cir.id
 				WHERE bl.bom_item_id = bom_item.id
-				  AND bl.deleted_at IS NULL
 				  AND (
 					ci.uniq_code ILIKE ?
 					OR ci.part_name ILIKE ?
