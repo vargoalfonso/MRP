@@ -90,6 +90,11 @@ type IRepository interface {
 	// NULL type_material) are simply absent from the map and treated as subcon
 	// by the caller.
 	ResolveTypeMaterialByUniq(ctx context.Context, uniqCodes []string) (map[string]string, error)
+
+	// ResolveItemTypeFlagsByUniq returns the raw type_material AND is_subcon per
+	// uniq_code (lowercased key) so one item can be classified into several
+	// budget types (e.g. raw + subcon).
+	ResolveItemTypeFlagsByUniq(ctx context.Context, uniqCodes []string) (map[string]models.ItemTypeFlags, error)
 }
 
 type repo struct{ db *gorm.DB }
@@ -628,6 +633,7 @@ func (r *repo) ListCurrentBomChildrenByParentUniq(ctx context.Context, parentUni
 		MaterialGrade  *string
 		Grade          *string
 		TypeMaterial   *string
+		IsSubcon       bool
 		Form           *string
 		WidthMm        *float64
 		DiameterMm     *float64
@@ -653,7 +659,11 @@ func (r *repo) ListCurrentBomChildrenByParentUniq(ctx context.Context, parentUni
 			NULLIF(TRIM(COALESCE(c.uom, '')), '') AS uom,
 			ims.material_grade,
 			ims.grade,
-			CASE WHEN ims.is_subcon THEN 'subcon' ELSE NULLIF(TRIM(COALESCE(ims.type_material, '')), '') END AS type_material,
+			-- type_material asli dipertahankan (mis. 'raw') supaya item raw yang juga
+			-- subcon tidak kehilangan tipe rawnya; 'subcon' hanya dipakai sebagai
+			-- fallback bila type_material kosong dan is_subcon = true.
+			CASE WHEN COALESCE(ims.is_subcon, false) AND NULLIF(TRIM(COALESCE(ims.type_material, '')), '') IS NULL THEN 'subcon' ELSE NULLIF(TRIM(COALESCE(ims.type_material, '')), '') END AS type_material,
+			COALESCE(ims.is_subcon, false) AS is_subcon,
 			ims.form,
 			ims.width_mm,
 			ims.diameter_mm,
@@ -694,6 +704,7 @@ func (r *repo) ListCurrentBomChildrenByParentUniq(ctx context.Context, parentUni
 				MaterialGrade: row.MaterialGrade,
 				Grade:         row.Grade,
 				TypeMaterial:  row.TypeMaterial,
+				IsSubcon:      row.IsSubcon,
 				Form:          row.Form,
 				WidthMm:       row.WidthMm,
 				DiameterMm:    row.DiameterMm,

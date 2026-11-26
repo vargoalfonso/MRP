@@ -121,7 +121,7 @@ func (s *svc) bulkCreateFromOrderDocument(ctx context.Context, req models.BulkFr
 	for _, item := range req.Items {
 		typeLookupCodes = append(typeLookupCodes, itemTypeUniqCode(item))
 	}
-	typeMap, err := s.repo.ResolveTypeMaterialByUniq(ctx, typeLookupCodes)
+	flagsMap, err := s.repo.ResolveItemTypeFlagsByUniq(ctx, typeLookupCodes)
 	if err != nil {
 		return nil, apperror.InternalWrap("resolve type_material failed", err)
 	}
@@ -134,21 +134,23 @@ func (s *svc) bulkCreateFromOrderDocument(ctx context.Context, req models.BulkFr
 	groups := make(map[string]*orderGroup, len(req.Items))
 
 	for idx, item := range req.Items {
-		itemType := budgetTypeFromMaterial(typeMap[strings.ToLower(strings.TrimSpace(itemTypeUniqCode(item)))])
-
-		// raw_material / indirect digabung per (dokumen, tipe); subcon tidak
-		// digabung: satu item = satu entry.
-		key := ref + "|" + itemType
-		if itemType == budgetTypeSubcon {
-			key = fmt.Sprintf("%s|%s|%d", ref, itemType, idx)
+		// Satu item bisa masuk ke lebih dari satu tipe (type_material + is_subcon).
+		itemTypes := budgetTypesFromFlags(flagsMap[strings.ToLower(strings.TrimSpace(itemTypeUniqCode(item)))])
+		for _, itemType := range itemTypes {
+			// raw_material / indirect digabung per (dokumen, tipe); subcon tidak
+			// digabung: satu item = satu entry.
+			key := ref + "|" + itemType
+			if itemType == budgetTypeSubcon {
+				key = fmt.Sprintf("%s|%s|%d", ref, itemType, idx)
+			}
+			g, ok := groups[key]
+			if !ok {
+				g = &orderGroup{budgetType: itemType}
+				groups[key] = g
+				groupOrder = append(groupOrder, key)
+			}
+			g.items = append(g.items, item)
 		}
-		g, ok := groups[key]
-		if !ok {
-			g = &orderGroup{budgetType: itemType}
-			groups[key] = g
-			groupOrder = append(groupOrder, key)
-		}
-		g.items = append(g.items, item)
 	}
 
 	subtype := req.BudgetSubtype
