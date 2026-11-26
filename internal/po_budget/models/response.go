@@ -302,6 +302,7 @@ type PrlChildMaterialSpecResponse struct {
 	MaterialGrade *string  `json:"material_grade,omitempty"`
 	Grade         *string  `json:"grade,omitempty"`
 	TypeMaterial  *string  `json:"type_material,omitempty"`
+	IsSubcon      bool     `json:"is_subcon"`
 	Form          *string  `json:"form,omitempty"`
 	WidthMm       *float64 `json:"width_mm,omitempty"`
 	DiameterMm    *float64 `json:"diameter_mm,omitempty"`

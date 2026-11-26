@@ -1113,13 +1113,15 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 	for _, item := range req.Items {
 		typeLookupCodes = append(typeLookupCodes, itemTypeUniqCode(item))
 	}
-	typeMap, err := s.repo.ResolveTypeMaterialByUniq(ctx, typeLookupCodes)
+	flagsMap, err := s.repo.ResolveItemTypeFlagsByUniq(ctx, typeLookupCodes)
 	if err != nil {
 		return nil, apperror.InternalWrap("resolve type_material failed", err)
 	}
-	resolveItemBudgetType := func(item models.BulkItemInput) string {
+	// Satu item bisa masuk ke lebih dari satu tipe: type_material (raw/indirect)
+	// DAN is_subcon=true -> muncul di tab masing-masing.
+	resolveItemBudgetTypes := func(item models.BulkItemInput) []string {
 		code := strings.ToLower(strings.TrimSpace(itemTypeUniqCode(item)))
-		return budgetTypeFromMaterial(typeMap[code])
+		return budgetTypesFromFlags(flagsMap[code])
 	}
 
 	// Group items by (prl_id, resolved budget_type). raw_material and indirect
@@ -1161,22 +1163,22 @@ func (s *svc) BulkCreateFromPRL(ctx context.Context, budgetType string, req mode
 			continue
 		}
 
-		itemType := resolveItemBudgetType(item)
+		for _, itemType := range resolveItemBudgetTypes(item) {
+			// Group key: raw/indirect share a key per (prl, type); subcon is split
+			// per item by appending the item index so it never collapses.
+			key := r.PrlID + "|" + itemType
+			if itemType == budgetTypeSubcon {
+				key = fmt.Sprintf("%s|%s|%d", r.PrlID, itemType, idx)
+			}
 
-		// Group key: raw/indirect share a key per (prl, type); subcon is split
-		// per item by appending the item index so it never collapses.
-		key := r.PrlID + "|" + itemType
-		if itemType == budgetTypeSubcon {
-			key = fmt.Sprintf("%s|%s|%d", r.PrlID, itemType, idx)
+			g, ok := groups[key]
+			if !ok {
+				g = &prlGroup{prlRef: r.PrlID, budgetType: itemType, row: r}
+				groups[key] = g
+				groupOrder = append(groupOrder, key)
+			}
+			g.items = append(g.items, item)
 		}
-
-		g, ok := groups[key]
-		if !ok {
-			g = &prlGroup{prlRef: r.PrlID, budgetType: itemType, row: r}
-			groups[key] = g
-			groupOrder = append(groupOrder, key)
-		}
-		g.items = append(g.items, item)
 	}
 
 	for _, key := range groupOrder {
